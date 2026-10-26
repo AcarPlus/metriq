@@ -8,6 +8,7 @@ import tkinter.font as tkfont
 from tkinter import colorchooser
 
 import gfx
+import helptexts
 import i18n
 import themes
 from i18n import t
@@ -208,7 +209,10 @@ class ThemeTab:
                 w.bind("<Button-3>", lambda e, tk_=tok: self.reset_token(tk_))
             fr.grid(row=row, column=col * 2 + 1, sticky="w", pady=3)
             self.swatch[tok] = b
-        ui.label(p, t("th_grad_hint"), dim=True, size=9).pack(anchor="w", pady=(2, 0))
+        gh = tk.Frame(p, bg=C["bg"])
+        gh.pack(anchor="w", pady=(2, 0))
+        ui.label(gh, t("th_grad_hint"), dim=True, size=9).pack(side="left")
+        helptexts.info_icon(gh, "th_grad", bg=C["bg"], size=12).pack(side="left", padx=(6, 0))
 
     def _build_shape(self, p):
         C, ui = self.C, self.ui
@@ -218,7 +222,7 @@ class ThemeTab:
         self.vl = {}
         for r, (key, lbl, lo, hi, res) in enumerate((("radius", "th_radius", 0, 28, 1),
                                                      ("row_spacing", "th_spacing", 0.8, 1.5, 0.05))):
-            ui.label(grid, t(lbl)).grid(row=r, column=0, sticky="w", padx=(0, 16), pady=5)
+            ui.label_help(grid, t(lbl), "th_" + key).grid(row=r, column=0, sticky="w", padx=(0, 16), pady=5)
             sc = tk.Scale(grid, from_=lo, to=hi, resolution=res, orient="horizontal", length=230, showvalue=False,
                           bg=C["bg"], fg=C["fg"], troughcolor=C["track"], highlightthickness=0, bd=0,
                           sliderrelief="flat", sliderlength=16, width=12, activebackground=C["ui"], takefocus=0,
@@ -231,7 +235,7 @@ class ThemeTab:
         fams = [auto] + families()
         for r, (tok, lbl) in enumerate((("font_text", "th_font_text"), ("font_num", "th_font_num"),
                                         ("font_head", "th_font_head")), start=2):
-            ui.label(grid, t(lbl)).grid(row=r, column=0, sticky="w", padx=(0, 16), pady=5)
+            ui.label_help(grid, t(lbl), "th_fonts").grid(row=r, column=0, sticky="w", padx=(0, 16), pady=5)
             cb = ui.combo(grid, fams, 0, 30)
             cb.grid(row=r, column=1, columnspan=2, sticky="w", pady=5)
             cb.bind("<<ComboboxSelected>>", lambda e, k=tok, c=cb: self.on_font(k, c))
@@ -242,15 +246,15 @@ class ThemeTab:
         self._heading(p, t("th_values"))
         grid = tk.Frame(p, bg=C["bg"])
         grid.pack(anchor="w")
-        ui.label(grid, t("th_mode")).grid(row=0, column=0, sticky="w", padx=(0, 16), pady=5)
+        ui.label_help(grid, t("th_mode"), "th_mode").grid(row=0, column=0, sticky="w", padx=(0, 16), pady=5)
         self.mode_vals = list(themes.MODES)
         self.cb_mode = ui.combo(grid, [t("th_mode_smooth"), t("th_mode_stepped")], self.mode_vals.index(self.mode), 26)
         self.cb_mode.grid(row=0, column=1, sticky="w", pady=5)
         self.cb_mode.bind("<<ComboboxSelected>>", self.on_mode)
         self.v_auto = tk.BooleanVar(value=not self.steps)
-        su.Check(grid, t("th_auto"), self.v_auto, C, (ui.F_TXT, 10), command=self.on_auto).grid(
+        su.Check(grid, t("th_auto"), self.v_auto, C, (ui.F_TXT, 10), command=self.on_auto, help="th_auto").grid(
             row=1, column=1, sticky="w", pady=5)
-        ui.label(grid, t("th_thresholds")).grid(row=2, column=0, sticky="w", padx=(0, 16), pady=5)
+        ui.label_help(grid, t("th_thresholds"), "th_steps").grid(row=2, column=0, sticky="w", padx=(0, 16), pady=5)
         row = tk.Frame(grid, bg=C["bg"])
         row.grid(row=2, column=1, sticky="w", pady=5)
         self.step_vars, self.step_entries = [], []
@@ -521,8 +525,9 @@ class ThemeTab:
         # switch + toast
         tx = x1 + 10 + pw + 12
         if gfx.AVAILABLE and tx + 40 < x1 + rw:
-            self._img(gfx.track(34, 16, themes.mix(P["track"], P["ui"], 0.55), P["border"]), tx, mid - 8)
-            self._img(gfx.knob(5.0, P["fg"]), tx + 34 - 5 - 3, mid)
+            tx, ty = int(round(tx)), int(round(mid - 8))
+            self._img(gfx.track(34, 16, themes.mix(P["track"], P["ui"], 0.55), P["border"]), tx, ty)
+            self._img(gfx.knob(5.0, P["fg"]), tx + 34 - 5 - 3, ty + 8, "center")      # centre of the "all" end
             toast = "✓ " + t("reset_done")
             tfn = _txt(sty, 9, True)
             tw = tkfont.Font(family=tfn[0], size=tfn[1], weight="bold").measure(toast) + 22

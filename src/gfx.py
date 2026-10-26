@@ -196,3 +196,19 @@ def knob(r, col):
     def make():
         return _render(dia, dia, lambda d, k: _disc(d, k, dia / 2, dia / 2, r, col))
     return _get(("knob", round(r, 2), col), make)
+
+
+def info(dia, col):
+    """Small "i" in a ring (help marker), transparent background, dia x dia pixels."""
+    dia = max(10, int(dia))
+
+    def make():
+        def paint(d, k):
+            lw = max(1.1, dia * 0.085)
+            d.ellipse([lw / 2 * k, lw / 2 * k, (dia - lw / 2) * k - 1, (dia - lw / 2) * k - 1], outline=col,
+                      width=max(1, int(round(lw * k))))
+            c = dia / 2
+            _disc(d, k, c, dia * 0.30, dia * 0.075, col)
+            _line(d, k, c, dia * 0.45, c, dia * 0.72, max(1.1, dia * 0.12), col)
+        return _render(dia, dia, paint)
+    return _get(("info", dia, col), make)
