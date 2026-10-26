@@ -19,10 +19,10 @@ import crashscan_ui
 import hwctl
 import i18n
 import layout
+import themes
 import version
+from settings_theme import ThemeTab
 from i18n import t
-
-ACCENT = "#58a6ff"
 
 
 # ====================================================================== small themed widgets
@@ -54,10 +54,10 @@ class Check(tk.Frame):
             c, on = self.box, bool(self.var.get())
             c.delete("all")
             focus = self.focus_displayof() is c
-            edge = ACCENT if (on or focus) else self.C["faint"]
-            c.create_rectangle(2, 2, 16, 16, outline=edge, width=1, fill=ACCENT if on else self.C["track"])
+            edge = self.C["ui"] if (on or focus) else self.C["faint"]
+            c.create_rectangle(2, 2, 16, 16, outline=edge, width=1, fill=self.C["ui"] if on else self.C["track"])
             if on:
-                c.create_line(5, 9.5, 8, 12.5, 13, 5.5, fill=self.C["bg"], width=2, capstyle="round",
+                c.create_line(5, 9.5, 8, 12.5, 13, 5.5, fill=self.C["on_ui"], width=2, capstyle="round",
                               joinstyle="round")
         except tk.TclError:
             pass
@@ -73,6 +73,7 @@ class ScrollFrame(tk.Frame):
 
     def __init__(self, parent, bg):
         super().__init__(parent, bg=bg)
+        self.cap, self.reserve = None, 0      # max natural height counted for the window size; fixed space above
         self.cv = tk.Canvas(self, bg=bg, highlightthickness=0, bd=0)
         self.sb = ttk.Scrollbar(self, orient="vertical", command=self.cv.yview, style="HP.Vertical.TScrollbar")
         self.cv.configure(yscrollcommand=self.sb.set)
@@ -98,6 +99,9 @@ class ScrollFrame(tk.Frame):
         self.cv.yview_scroll(int(-delta / 120 * 3) or (-1 if delta > 0 else 1), "units")
 
 
+themes_keys = {"theme", "theme_overrides", "value_color_mode", "value_steps"}
+
+
 def _to_float(s):
     return float(str(s).strip().replace(",", "."))
 
@@ -112,7 +116,7 @@ class SettingsWindow:
         self.api = api
         self.root = api.root
         self.C = api.C
-        self.F_TXT, self.F_HEAD, self.F_NUM = api.fonts
+        self.F_TXT, self.F_HEAD, self.F_NUM = api.fonts_now()
         self.win = tk.Toplevel(self.root)
         self.win.title(t("st_title"))
         self.win.configure(bg=self.C["bg"])
@@ -166,20 +170,20 @@ class SettingsWindow:
                     selectbackground=C["track"], selectforeground=C["fg"], padding=3)
         s.map("HP.TCombobox", fieldbackground=[("readonly", C["track"])], foreground=[("readonly", C["fg"])],
               selectbackground=[("readonly", C["track"])], selectforeground=[("readonly", C["fg"])],
-              bordercolor=[("focus", ACCENT)], arrowcolor=[("active", C["fg"])])
+              bordercolor=[("focus", C["ui"])], arrowcolor=[("active", C["fg"])])
         s.configure("HP.Vertical.TScrollbar", background=C["track"], troughcolor=C["bg"], bordercolor=C["bg"],
                     arrowcolor=C["dim"], lightcolor=C["track"], darkcolor=C["track"], gripcount=0)
         s.map("HP.Vertical.TScrollbar", background=[("active", C["border"])])
         s.configure("HP.Treeview", background=C["card"], fieldbackground=C["card"], foreground=C["fg"],
                     rowheight=24, borderwidth=0, font=f, bordercolor=C["border"], lightcolor=C["border"],
                     darkcolor=C["border"])
-        s.map("HP.Treeview", background=[("selected", "#1f3a5f")], foreground=[("selected", C["fg"])])
+        s.map("HP.Treeview", background=[("selected", C["select"])], foreground=[("selected", C["fg"])])
         s.configure("HP.Treeview.Heading", background=C["track"], foreground=C["name"], relief="flat",
                     font=(self.F_TXT, 10, "bold"))
         s.map("HP.Treeview.Heading", background=[("active", C["border"])])
         self.win.option_add("*TCombobox*Listbox.background", C["track"])
         self.win.option_add("*TCombobox*Listbox.foreground", C["fg"])
-        self.win.option_add("*TCombobox*Listbox.selectBackground", "#1f3a5f")
+        self.win.option_add("*TCombobox*Listbox.selectBackground", C["select"])
         self.win.option_add("*TCombobox*Listbox.selectForeground", C["fg"])
         self.win.option_add("*TCombobox*Listbox.font", f)
 
@@ -187,7 +191,7 @@ class SettingsWindow:
         try:
             import ctypes
             hwnd = int(self.win.wm_frame(), 16)
-            val = ctypes.c_int(1)
+            val = ctypes.c_int(1 if themes.current().is_dark() else 0)
             ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(val), 4)
         except Exception:
             pass
@@ -202,23 +206,23 @@ class SettingsWindow:
         C = self.C
         return tk.Entry(parent, textvariable=var, width=width, bg=C["track"], fg=C["fg"], insertbackground=C["fg"],
                         relief="flat", highlightthickness=1, highlightbackground=C["border"],
-                        highlightcolor=ACCENT, font=(self.F_TXT, 10), disabledbackground=C["track"],
-                        selectbackground="#1f3a5f", selectforeground=C["fg"])
+                        highlightcolor=C["ui"], font=(self.F_TXT, 10), disabledbackground=C["track"],
+                        selectbackground=C["select"], selectforeground=C["fg"])
 
     def spinbox(self, parent, var, lo, hi, inc, fmt, width=7):
         C = self.C
         return tk.Spinbox(parent, textvariable=var, from_=lo, to=hi, increment=inc, format=fmt, width=width,
                           bg=C["track"], fg=C["fg"], insertbackground=C["fg"], buttonbackground=C["track"],
                           relief="flat", highlightthickness=1, highlightbackground=C["border"],
-                          highlightcolor=ACCENT, font=(self.F_TXT, 10), justify="left",
-                          selectbackground="#1f3a5f", selectforeground=C["fg"])
+                          highlightcolor=C["ui"], font=(self.F_TXT, 10), justify="left",
+                          selectbackground=C["select"], selectforeground=C["fg"])
 
     def button(self, parent, text, cmd, primary=False, bg=None, width=None, font_size=10):
         C = self.C
-        base = ACCENT if primary else C["track"]
-        hover = "#79b8ff" if primary else C["border"]
-        b = tk.Button(parent, text=text, command=cmd, bg=base, fg=C["bg"] if primary else C["fg"],
-                      activebackground=hover, activeforeground=C["bg"] if primary else C["fg"], relief="flat", bd=0,
+        base = C["ui"] if primary else C["track"]
+        hover = C["ui_hover"] if primary else C["border"]
+        b = tk.Button(parent, text=text, command=cmd, bg=base, fg=C["on_ui"] if primary else C["fg"],
+                      activebackground=hover, activeforeground=C["on_ui"] if primary else C["fg"], relief="flat", bd=0,
                       padx=14, pady=5, cursor="hand2", font=(self.F_TXT, font_size, "bold" if primary else "normal"),
                       highlightthickness=0, takefocus=1)
         if width:
@@ -245,7 +249,7 @@ class SettingsWindow:
 
     def mark(self, w, ok):
         C = self.C
-        w.config(highlightbackground=C["border"] if ok else C["red"], highlightcolor=ACCENT if ok else C["red"])
+        w.config(highlightbackground=C["border"] if ok else C["red"], highlightcolor=C["ui"] if ok else C["red"])
 
     def add_check(self, store, tab, widgets, fn):
         """Register a validator. Returns recheck() which re-marks only these widgets."""
@@ -287,6 +291,7 @@ class SettingsWindow:
         self._tab_log(log.inner, cfg)
         self._tab_hw(hw.inner, cfg)
         self._tab_layout()
+        self._tab_theme(cfg)
         crashscan_ui.add_tab(self)
 
         self.msg = tk.Label(outer, text="", bg=C["bg"], fg=C["red"], font=(self.F_TXT, 10), anchor="w",
@@ -320,6 +325,10 @@ class SettingsWindow:
         widget.grid(row=r, column=1, sticky="w", pady=6)
         if hint:
             self.label(parent, hint, dim=True, size=9).grid(row=r, column=2, sticky="w", padx=(10, 0))
+
+    # ---------------- theme (see settings_theme.py)
+    def _tab_theme(self, cfg):
+        self.theme_tab = ThemeTab(self, cfg)
 
     # ---------------- appearance
     def _tab_look(self, p, cfg):
@@ -669,7 +678,7 @@ class SettingsWindow:
             te = self.entry(hdr, tv, 26)
             te.pack(side="left", ipady=2)
             tv.trace_add("write", lambda *a: self._dirty())
-            colv = sec.get("color") or layout.ICON_COLORS.get(sec.get("icon"), ACCENT)
+            colv = themes.accent_for(sec.get("icon"), sec.get("color"))
             sw = tk.Button(hdr, text="  ", bg=colv, activebackground=colv, relief="flat", bd=0, width=3, cursor="hand2",
                            highlightthickness=1, highlightbackground=C["border"])
             sw.config(command=lambda s=sec, b=sw: self.pick_color(s, b))
@@ -727,7 +736,7 @@ class SettingsWindow:
         sf.cv.yview_moveto(y0)
 
     def pick_color(self, sec, btn):
-        cur = sec.get("color") or layout.ICON_COLORS.get(sec.get("icon"), ACCENT)
+        cur = themes.accent_for(sec.get("icon"), sec.get("color"))
         res = colorchooser.askcolor(color=cur, parent=self.win, title=t("st_lay_color"))
         if res and res[1]:
             sec["color"] = res[1].lower()
@@ -885,7 +894,7 @@ class SettingsWindow:
             wx, wy, ww, wh = 0, 0, win.winfo_screenwidth(), win.winfo_screenheight()
         chrome = 190
         avail_h = int(wh * 0.92) - chrome
-        simple = [sf.req_height() for sf in self.scrolls if sf is not self.lay_sf]
+        simple = [min(sf.req_height(), sf.cap or 10 ** 6) + sf.reserve for sf in self.scrolls if sf is not self.lay_sf]
         lay_h = self.lay_sf.req_height() + self.layout_tool.winfo_reqheight() + 70
         want = max(simple + [min(lay_h, 560)]) + 10
         content_h = max(300, min(want, avail_h))
@@ -894,7 +903,7 @@ class SettingsWindow:
         for sf in self.scrolls:
             if sf is self.lay_sf:
                 continue
-            sf.cv.configure(height=content_h, width=width - 70)
+            sf.cv.configure(height=content_h - sf.reserve, width=width - 70)
         lay_list_h = content_h - self.layout_tool.winfo_reqheight() - 40
         self.lay_sf.cv.configure(height=max(150, lay_list_h), width=width - 70)
         win.update_idletasks()
@@ -963,6 +972,7 @@ class SettingsWindow:
             "manage_hwinfo": bool(self.v_manage.get()),
             "sync_hwinfo_interval": bool(self.v_sync.get()),
         }
+        d.update(self.theme_tab.read())
         return d
 
     def validate(self):
@@ -995,6 +1005,7 @@ class SettingsWindow:
             self.sync_layout()
             lay_cfg = copy.deepcopy(self.lay)
         lang_changed = "language" in changes
+        theme_changed = bool(themes_keys & set(changes))
         ok = self.api.apply(changes, lay_mode, lay_cfg)
         self.initial = new
         if lay_mode == "explicit":
@@ -1002,7 +1013,12 @@ class SettingsWindow:
         elif lay_mode == "auto":
             self.lay_is_auto = True
         self.lay_mode = "keep"
-        if lang_changed:
+        if lang_changed or theme_changed:
+            if theme_changed:          # the settings window follows the theme
+                self.C, (self.F_TXT, self.F_HEAD, self.F_NUM) = self.api.C, self.api.fonts_now()
+                self.win.configure(bg=self.C["bg"])
+                self._style()
+                self._dark_title()
             self.build_ui()
         else:
             try:

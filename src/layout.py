@@ -7,8 +7,11 @@ case-insensitive regular expressions (re.search). Label alternatives below: HWiN
 import re
 import sys
 
+import themes
 from i18n import t
 
+# default section colours as stored in config files (the dark theme's accents); a section that still carries
+# one of the built-in colours follows the active theme (themes.accent_for)
 ICON_COLORS = {"gauge": "#58a6ff", "bolt": "#e3b341", "temp": "#ff7b72", "fan": "#39c5cf", "net": "#bc8cff",
                "fps": "#7ee787"}
 ICONS = tuple(ICON_COLORS)
@@ -147,8 +150,9 @@ def resolve_columns(setting, W, H):
     return 3 if W / max(1.0, H) >= 2.0 else 2
 
 
-def section_units(sec):
-    return HEAD + FOOT + len(sec.rows)
+def section_units(sec, sp=1.0):
+    """Height of a section in row heights; sp = row spacing factor (theme)."""
+    return HEAD + FOOT + len(sec.rows) * sp
 
 
 def partition(sections, n):
@@ -186,19 +190,19 @@ def partition(sections, n):
 
 class Plan:
     """Result of plan(): everything build() needs to place the columns."""
-    __slots__ = ("W", "H", "ncol", "cols", "m", "g", "gut", "cwc", "rh", "rh_fit", "with_bar", "heights", "fits")
+    __slots__ = ("W", "H", "ncol", "cols", "m", "g", "gut", "cwc", "rh", "rh_fit", "with_bar", "heights", "fits", "sp")
 
 
-def plan(sections, W, H, setting="auto", scale=100):
+def plan(sections, W, H, setting="auto", scale=100, spacing=1.0):
     p = Plan()
-    p.W, p.H = W, H
+    p.W, p.H, p.sp = W, H, spacing
     p.cols = partition(sections, resolve_columns(setting, W, H))
     p.ncol = len(p.cols)
     p.m = max(10.0, min(W, H) * 0.016)
     p.g = max(8.0, H * 0.005)
     p.gut = p.m * 0.9 if p.ncol > 1 else 0.0
     p.cwc = (W - 2 * p.m - (p.ncol - 1) * p.gut) / p.ncol
-    units = [sum(section_units(s) for s in c) for c in p.cols]
+    units = [sum(section_units(s, spacing) for s in c) for c in p.cols]
     nsec = [len(c) for c in p.cols]
     p.rh_fit = min((H - 2 * p.m - n * p.g) / (u + STATUS) for u, n in zip(units, nsec))
     base = min(p.rh_fit, max(MIN_RH, p.cwc * RH_CAP))
@@ -214,27 +218,7 @@ def plan(sections, W, H, setting="auto", scale=100):
 
 
 # ------------------------------------------------------------------ colours / limits (gradient)
-STOPS = [(0.0, "#2ea043"), (0.25, "#7cc242"), (0.5, "#e3b341"), (0.75, "#f0883e"), (1.0, "#f85149")]
-
-
-def _mix(c1, c2, tt):
-    a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
-    b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
-    return "#%02x%02x%02x" % tuple(round(x + (y - x) * tt) for x, y in zip(a, b))
-
-
-def _build_lut(n=256):
-    lut = []
-    for k in range(n):
-        tt = k / (n - 1)
-        for (t0, c0), (t1, c1) in zip(STOPS, STOPS[1:]):
-            if tt <= t1:
-                lut.append(_mix(c0, c1, (tt - t0) / (t1 - t0)))
-                break
-    return lut
-
-
-LUT = _build_lut()
+# the gradient itself (smooth or stepped) belongs to the active theme, see themes.py
 
 
 def frac(row, v):
@@ -246,11 +230,8 @@ def frac(row, v):
 
 
 def value_color(row, v, default):
-    if not row.limits:
-        return default
-    green, red = row.limits
-    tt = min(1.0, max(0.0, (v - green) / (red - green)))
-    return LUT[round(tt * 255)]
+    """Colour of a value between the row's green and red limit (theme gradient, smooth or stepped)."""
+    return themes.value_color(row, v, default)
 
 
 # ================================================================== auto-detection
