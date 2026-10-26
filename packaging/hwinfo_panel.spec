@@ -45,10 +45,10 @@ a = Analysis(
         (os.path.join(SRC, "hidden.vbs"), "."),
         (os.path.join(SRC, "set_interval.ps1"), "."),
     ],
-    hiddenimports=['psutil'],
+    hiddenimports=['psutil', 'PIL', 'PIL.Image', 'PIL.ImageDraw', 'PIL.ImageTk'],
     hookspath=[],
     runtime_hooks=[],
-    excludes=["unittest", "pydoc", "test", "numpy", "PIL", "matplotlib"],
+    excludes=["unittest", "pydoc", "test", "numpy", "matplotlib"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

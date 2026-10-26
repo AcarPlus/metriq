@@ -15,6 +15,7 @@ import webbrowser
 
 import backend
 import config
+import gfx
 import hwctl
 import i18n
 import layout
@@ -104,6 +105,9 @@ def round_rect(cv, x0, y0, x1, y1, r, **kw):
     pts = [x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1, x1 - r, y1,
            x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0]
     return cv.create_polygon(pts, smooth=True, **kw)
+
+
+GFX = gfx.AVAILABLE      # Pillow present: anti-aliased images instead of canvas primitives
 
 
 def draw_icon(cv, kind, cx, cy, s, col, bg, tags=()):
@@ -234,7 +238,7 @@ def main():
           "hw_exe": hwctl.detect_hwinfo(cfg["hwinfo_path"]), "tasks": hwctl.tasks_installed(),
           "mon": config.pick_monitor(cfg["monitor"]), "mode": str(cfg["window_mode"]).lower(),
           "upd": None, "upd_busy": False, "upd_prog": 0, "upd_err": 0, "upd_gen": 0, "upd_after": None,
-          "closing": False}
+          "closing": False, "t0": time.time(), "upd_dismissed": None}
     upd_q = queue.Queue()          # worker threads -> Tk (drained by upd_pump via root.after)
 
     def hwinfo_managed():
@@ -318,6 +322,8 @@ def main():
 
     def build(W, H):
         cv.delete("all")
+        if GFX:
+            gfx.begin()
         st["items"].clear()
         st["last"].clear()
         st["empty"] = None
@@ -373,12 +379,19 @@ def main():
                 accent = sec.color
                 hh, pb = rh * HEAD, rh * FOOT
                 ch = hh + len(sec.rows) * rh + pb
-                round_rect(cv, cx0, yy, cx1, yy + ch, 16, fill=C["card"], outline=C["border"])
-                cv.create_line(cx0 + 1.5, yy + 16, cx0 + 1.5, yy + ch - 16, fill=accent, width=3)
                 hy = yy + hh * 0.5
                 bubble = mix(C["card"], accent, 0.16)
-                cv.create_oval(col_name, hy - isz * 1.6, col_name + isz * 3.2, hy + isz * 1.6, fill=bubble, outline="")
-                draw_icon(cv, sec.icon, col_name + isz * 1.6, hy, isz, accent, bubble)
+                if GFX:
+                    bx0, by0 = int(round(cx0)), int(round(yy))
+                    cv.create_image(bx0, by0, image=gfx.card(int(round(cx1)) - bx0, int(round(yy + ch)) - by0, 16,
+                                                             C["card"], C["border"], accent), anchor="nw")
+                    cv.create_image(col_name + isz * 1.6, hy, image=gfx.icon(sec.icon, isz, accent, bubble, bubble))
+                else:
+                    round_rect(cv, cx0, yy, cx1, yy + ch, 16, fill=C["card"], outline=C["border"])
+                    cv.create_line(cx0 + 1.5, yy + 16, cx0 + 1.5, yy + ch - 16, fill=accent, width=3)
+                    cv.create_oval(col_name, hy - isz * 1.6, col_name + isz * 3.2, hy + isz * 1.6, fill=bubble,
+                                   outline="")
+                    draw_icon(cv, sec.icon, col_name + isz * 1.6, hy, isz, accent, bubble)
                 title_x = col_name + isz * 3.9
                 title_avail = (col_now + 6 + unit_w - lbl_now_w) - title_x - 10
                 hs = -fs_head
@@ -414,7 +427,8 @@ def main():
                     st["items"][id(row)] = it
                     ry += rh
                 yy += ch + g
-        # ----- status bar (full width, 2 lines: controls + info)
+        # ----- status bar (full width, a single row: record pill, mode switch, interval, reset, gear);
+        # messages are shown as small toasts just above it (see draw_toasts)
         sx0, sx1 = m, W - m
         sw_span = sx1 - sx0
         rs = min(rh, max(layout.MIN_RH, sw_span * 0.042))      # its text must not grow with a huge row height
@@ -422,78 +436,115 @@ def main():
         col_name = sx0 + spad
         sb_h = rs * (STATUS - 0.2)
         sy = H - m - sb_h
-        round_rect(cv, sx0, sy, sx1, sy + sb_h, 16, fill=C["card"], outline=C["border"])
-        my = sy + sb_h * 0.36
-        iy = sy + sb_h * 0.76
-        pw = min(sw_span * 0.25, max(rs * 6.8, 130))
         s = st["status"]
-        s["pill"] = round_rect(cv, col_name - 6, my - rs * 0.55, col_name - 6 + pw, my + rs * 0.55, rs * 0.52,
-                               fill=C["track"], outline="", tags="logbtn")
-        s["dot"] = cv.create_oval(col_name + rs * 0.2, my - rs * 0.18, col_name + rs * 0.56, my + rs * 0.18,
-                                  fill=C["red"], outline="", tags="logbtn")
+        s.clear()
+        s["gfx"] = GFX
+        if GFX:
+            bx0, by0 = int(round(sx0)), int(round(sy))
+            cv.create_image(bx0, by0, image=gfx.card(int(round(sx1)) - bx0, int(round(sy + sb_h)) - by0, 16,
+                                                     C["card"], C["border"]), anchor="nw")
+        else:
+            round_rect(cv, sx0, sy, sx1, sy + sb_h, 16, fill=C["card"], outline=C["border"])
+        my = sy + sb_h / 2
+        pw, ph = min(sw_span * 0.25, max(rs * 6.8, 130)), rs * 1.1
+        px0 = col_name - 6
+        if GFX:
+            s["pill_fn"] = lambda on: gfx.pill(pw, ph, mix(C["card"], C["green"] if on else C["red"], 0.18),
+                                               C["green"] if on else C["red"], 6 + rs * 0.38, rs * 0.18)
+            s["pill"] = cv.create_image(int(round(px0)), int(round(my - ph / 2)), image=s["pill_fn"](cfg["logging"]),
+                                        anchor="nw", tags="logbtn")
+        else:
+            s["pill"] = round_rect(cv, px0, my - ph / 2, px0 + pw, my + ph / 2, rs * 0.52, fill=C["track"], outline="",
+                                   tags="logbtn")
+            s["dot"] = cv.create_oval(col_name + rs * 0.2, my - rs * 0.18, col_name + rs * 0.56, my + rs * 0.18,
+                                      fill=C["red"], outline="", tags="logbtn")
         s["txt"] = cv.create_text(col_name + rs * 0.8, my, text="", anchor="w",
                                   font=(F_TXT, -max(10, int(rs * 0.50)), "bold"), fill=C["fg"], tags="logbtn")
         # recording mode switch: required rows <-> all sensors
         fs_sw = -max(9, int(rs * 0.38))
         f_sw = (F_TXT, fs_sw, "bold")
         sw_w, sw_h = rs * 1.7, rs * 0.8
-        lx = col_name - 6 + pw + min(sw_span * 0.05, rs * 1.2)
+        lx = px0 + pw + min(sw_span * 0.05, rs * 1.2)
         s["sw_l"] = cv.create_text(lx, my, text=t("sw_required"), anchor="w", font=f_sw, fill=C["fg"],
                                    tags="modebtn")
         tx0 = lx + tkfont.Font(family=F_TXT, size=fs_sw, weight="bold").measure(t("sw_required")) + rs * 0.35
-        s["sw_track"] = round_rect(cv, tx0, my - sw_h / 2, tx0 + sw_w, my + sw_h / 2, sw_h / 2,
-                                   fill=C["track"], outline=C["border"], tags="modebtn")
+        kmy = my
+        if GFX:                                  # whole pixels: the track image and the knob stay aligned
+            tx0, sw_w, sw_h = float(round(tx0)), float(round(sw_w)), float(2 * round(sw_h / 2))
+            kmy = round(my - sw_h / 2) + sw_h / 2
+            s["track_fn"] = lambda all_: gfx.track(sw_w, sw_h, mix(C["track"], "#58a6ff", 0.55) if all_ else C["track"],
+                                                   C["border"])
+            s["sw_track"] = cv.create_image(tx0, round(my - sw_h / 2), image=s["track_fn"](cfg.get("log_all", False)),
+                                            anchor="nw", tags="modebtn")
+        else:
+            s["sw_track"] = round_rect(cv, tx0, my - sw_h / 2, tx0 + sw_w, my + sw_h / 2, sw_h / 2,
+                                       fill=C["track"], outline=C["border"], tags="modebtn")
         kr = sw_h / 2 - 3
-        s["sw_geo"] = (tx0 + 3 + kr, tx0 + sw_w - 3 - kr, my, kr)
+        s["sw_geo"] = (tx0 + 3 + kr, tx0 + sw_w - 3 - kr, kmy, kr)
         kx = s["sw_geo"][1] if cfg.get("log_all") else s["sw_geo"][0]
-        s["sw_knob"] = cv.create_oval(kx - kr, my - kr, kx + kr, my + kr, fill=C["fg"], outline="", tags="modebtn")
+        if GFX:
+            s["sw_knob"] = cv.create_image(kx, kmy, image=gfx.knob(kr, C["fg"]), tags="modebtn")
+        else:
+            s["sw_knob"] = cv.create_oval(kx - kr, my - kr, kx + kr, my + kr, fill=C["fg"], outline="",
+                                          tags="modebtn")
         s["sw_r"] = cv.create_text(tx0 + sw_w + rs * 0.35, my, text=t("sw_all"), anchor="w", font=f_sw,
                                    fill=C["faint"], tags="modebtn")
-        # right end: [interval label] [spinbox] [gear button]
+        # right end: [interval label] [spinbox] [reset button] [gear button]
         gs = max(rs * 0.42, 8.0)
         hit = gs * 1.45
         gx = sx1 - spad - hit
-        s["gear_bg"] = cv.create_oval(gx - hit, my - hit, gx + hit, my + hit, fill=C["card"], outline="",
-                                      tags="gearbtn")
-        draw_icon(cv, "gear", gx, my, gs, C["dim"], C["card"], tags=("gearbtn",))
-        # reset MIN / MAX / AVG button, left of the gear
         rx = gx - hit * 2 - 4
-        s["reset_bg"] = cv.create_oval(rx - hit, my - hit, rx + hit, my + hit, fill=C["card"], outline="",
-                                       tags="resetbtn")
-        draw_icon(cv, "reset", rx, my, gs, C["dim"], C["card"], tags=("resetbtn",))
+        if GFX:
+            s["gear_bg"] = cv.create_image(gx, my, image=gfx.button("gear", hit, gs, C["dim"], C["card"]),
+                                           tags="gearbtn")
+            s["reset_bg"] = cv.create_image(rx, my, image=gfx.button("reset", hit, gs, C["dim"], C["card"]),
+                                            tags="resetbtn")
+        else:
+            s["gear_bg"] = cv.create_oval(gx - hit, my - hit, gx + hit, my + hit, fill=C["card"], outline="",
+                                          tags="gearbtn")
+            draw_icon(cv, "gear", gx, my, gs, C["dim"], C["card"], tags=("gearbtn",))
+            s["reset_bg"] = cv.create_oval(rx - hit, my - hit, rx + hit, my + hit, fill=C["card"], outline="",
+                                           tags="resetbtn")
+            draw_icon(cv, "reset", rx, my, gs, C["dim"], C["card"], tags=("resetbtn",))
         spin_w = max(44.0, min(sw_span * 0.1, rs * 3.2))
         spin_r = rx - hit - 6
         cv.create_text(spin_r - spin_w - 8, my, text=t("interval_lbl"), anchor="e", font=(F_TXT, fs_sw),
                        fill=C["dim"])
         spin.config(font=(F_NUM, -max(10, int(rs * 0.52))))
         cv.create_window(spin_r, my, window=spin, anchor="e", width=spin_w, height=rs * 1.0)
-        s["info"] = cv.create_text(col_name, iy, text="", anchor="w", font=(F_TXT, fs_sw), fill=C["dim"])
-        # update notice (right end of the info line): clickable when a newer release was found
-        s["upd"] = cv.create_text(sx1 - spad, iy, text="", anchor="e", font=(F_TXT, fs_sw, "bold"),
-                                  fill=layout.ICON_COLORS["gauge"], state="hidden", tags="updbtn")
-        s["f_info"] = meas_font(F_TXT, fs_sw)
-        s["f_upd"] = meas_font(F_TXT, fs_sw, "bold")
-        s["info_w"] = (sx1 - spad) - col_name
+        # toasts sit centred just above the bar
+        ft = -max(10, int(rs * 0.42))
+        s["toast_geo"] = ((sx0 + sx1) / 2, sy - max(4.0, rs * 0.25), sw_span - 2 * spad)
+        s["f_toast"], s["f_toast_t"] = meas_font(F_TXT, ft, "bold"), (F_TXT, ft, "bold")
         for tag, fn in (("logbtn", toggle), ("modebtn", toggle_mode), ("gearbtn", open_settings),
-                        ("resetbtn", reset_stats), ("updbtn", upd_click)):
+                        ("resetbtn", reset_stats), ("updbtn", upd_click), ("updx", upd_dismiss)):
             cv.tag_bind(tag, "<Button-1>", fn)
             cv.tag_bind(tag, "<Enter>", lambda e: cv.config(cursor="hand2"))
             cv.tag_bind(tag, "<Leave>", lambda e: cv.config(cursor=""))
 
+        acc = layout.ICON_COLORS["gauge"]
+
         def gear_hover(on):
-            acc = layout.ICON_COLORS["gauge"]
             bgc = mix(C["card"], acc, 0.16) if on else C["card"]
+            if GFX:
+                cv.itemconfig(s["gear_bg"], image=gfx.button("gear", hit, gs, acc if on else C["dim"], bgc))
+                return
             cv.itemconfig("gear_fill", fill=acc if on else C["dim"])
             cv.itemconfig("gear_hole", fill=bgc)
             cv.itemconfig(s["gear_bg"], fill=bgc)
+
         def reset_hover(on):
-            acc = layout.ICON_COLORS["gauge"]
+            bgc = mix(C["card"], acc, 0.16) if on else C["card"]
+            if GFX:
+                cv.itemconfig(s["reset_bg"], image=gfx.button("reset", hit, gs, acc if on else C["dim"], bgc))
+                return
             cv.itemconfig("reset_fill", fill=acc if on else C["dim"], outline=acc if on else C["dim"])
-            cv.itemconfig(s["reset_bg"], fill=mix(C["card"], acc, 0.16) if on else C["card"])
+            cv.itemconfig(s["reset_bg"], fill=bgc)
         cv.tag_bind("resetbtn", "<Enter>", lambda e: (cv.config(cursor="hand2"), reset_hover(True)))
         cv.tag_bind("resetbtn", "<Leave>", lambda e: (cv.config(cursor=""), reset_hover(False)))
         cv.tag_bind("gearbtn", "<Enter>", lambda e: (cv.config(cursor="hand2"), gear_hover(True)))
         cv.tag_bind("gearbtn", "<Leave>", lambda e: (cv.config(cursor=""), gear_hover(False)))
+        s["hover"] = (gear_hover, reset_hover)
         refresh_status()
 
     def set_text(iid, txt, color=None):
@@ -506,44 +557,85 @@ def main():
         else:
             cv.itemconfig(iid, text=txt)
 
+    def status_msgs():
+        """Messages for the toast stack above the status bar: [(text, colour, kind)], kind "upd" = update notice."""
+        now = time.time()
+        msgs = []
+        if now - st.get("reset_note", 0) < 3:
+            msgs.append(("✓ " + t("reset_done"), C["green"], None))
+        if now - st.get("err_note", 0) < 6:
+            msgs.append((t("st_write_err"), C["red"], None))
+        if now - st.get("log_err", 0) < 6:
+            msgs.append((t("log_err"), C["red"], None))
+        ap = st.get("applying")
+        hint = current_hint()
+        if ap and now - ap[0] < 12:
+            msgs.append((t("applying", ms=ap[1]), C["dim"], None))
+        elif st.get("frozen") and st["items"]:
+            msgs.append((t("frozen", src=backend.display_name(src.active)) + (" · " + hint if hint else ""),
+                         C["red"] if not st["ok"] else C["yellow"], None))
+        elif not st["ok"] and not st["empty"]:          # (with no rows at all the hint is shown mid-window)
+            msgs.append((hint or wait_text(), C["red"], None))
+        note = st.get("note")
+        if note and note != "created" and now - st["t0"] < 12:
+            msgs.append((note, C["yellow"], None))
+        utxt, ucol, uclick = upd_state()
+        if utxt:
+            msgs.append((utxt, ucol, "upd" if uclick else "updbusy"))
+        return msgs
+
+    def draw_toasts(msgs):
+        """Small rounded pills stacked upwards from just above the status bar; rebuilt only when they change."""
+        s = st["status"]
+        key = tuple(msgs)
+        if s.get("toast_key") == key:
+            return
+        s["toast_key"] = key
+        cv.delete("toast")
+        cx, y, maxw = s["toast_geo"]
+        f = s["f_toast"]
+        th = f.metrics("linespace") + 10
+        for text, col, kind in msgs:
+            xw = f.measure("  ✕") if kind == "upd" else 0
+            tw = min(maxw - 2 * th, f.measure(text) + xw)
+            text = fit_text(f, text, tw - xw)
+            w = int(tw + th)
+            x0, y0 = int(round(cx - w / 2)), int(round(y - th))
+            fill, line = mix(C["card"], col, 0.22), mix(C["card"], col, 0.6)
+            tags = ("toast", "updbtn") if kind == "upd" else ("toast",)
+            if GFX:
+                cv.create_image(x0, y0, image=gfx.card(w, int(th), th / 2, fill, line), anchor="nw", tags=tags)
+            else:
+                round_rect(cv, x0, y0, x0 + w, y0 + th, th / 2, fill=fill, outline=line, tags=tags)
+            cv.create_text(x0 + th / 2, y0 + th / 2, text=text, anchor="w", font=s["f_toast_t"], fill=col, tags=tags)
+            if kind == "upd":
+                cv.create_text(x0 + w - th / 2, y0 + th / 2, text="✕", anchor="e", font=s["f_toast_t"], fill=C["dim"],
+                               tags=("toast", "updx"))
+            y -= th + 6
+
     def refresh_status():
         s = st["status"]
         if not s:
             return
         on = cfg["logging"]
         all_ = cfg.get("log_all", False)
-        cv.itemconfig(s["pill"], fill=mix(C["card"], C["green"] if on else C["red"], 0.18))
-        cv.itemconfig(s["dot"], fill=C["green"] if on else C["red"])
+        if s["gfx"]:
+            if s.get("pill_on") != on:
+                s["pill_on"] = on
+                cv.itemconfig(s["pill"], image=s["pill_fn"](on))
+            if s.get("track_all") != all_:
+                s["track_all"] = all_
+                cv.itemconfig(s["sw_track"], image=s["track_fn"](all_))
+        else:
+            cv.itemconfig(s["pill"], fill=mix(C["card"], C["green"] if on else C["red"], 0.18))
+            cv.itemconfig(s["dot"], fill=C["green"] if on else C["red"])
+            cv.itemconfig(s["sw_track"], fill=mix(C["track"], "#58a6ff", 0.55) if all_ else C["track"])
         cv.itemconfig(s["txt"], text=t("log_on") if on else t("log_off"))
-        cv.itemconfig(s["sw_track"], fill=mix(C["track"], "#58a6ff", 0.55) if all_ else C["track"])
         cv.itemconfig(s["sw_l"], fill=C["faint"] if all_ else C["fg"])
         cv.itemconfig(s["sw_r"], fill=C["fg"] if all_ else C["faint"])
-        hint = current_hint()
-        conn = conn_text() if st["ok"] else (hint or wait_text())
-        if st.get("frozen") and st["items"]:
-            conn = t("frozen", src=backend.display_name(src.active)) + (" · " + hint if hint else "")
-        ap = st.get("applying")
-        if ap and time.time() - ap[0] < 12:
-            conn = t("applying", ms=ap[1])
-        if on:
-            f = os.path.basename(logger.path) if logger.path else t("file_wait")
-        else:
-            f = t("file_hint")
-        mode_txt = t("mode_all", n=st.get("nall", 0)) if all_ else t("mode_req", n=st.get("nreq", 0))
-        info = f"{time.strftime('%H:%M:%S')}   ·   {conn}   ·   {mode_txt}   ·   {f}"
-        if st.get("note"):
-            info = st["note"] + "   ·   " + info
-        if time.time() - st.get("reset_note", 0) < 3:
-            info = "✓ " + t("reset_done") + "   ·   " + info
-        utxt, ucol, uclick = upd_state()
-        if utxt:
-            info = fit_text(s["f_info"], info, s["info_w"] - s["f_upd"].measure(utxt) - 24)
-            cv.itemconfig(s["upd"], text=utxt, fill=ucol, state="normal")
-            cv.itemconfig(s["upd"], tags=("updbtn",) if uclick else ())
-        else:
-            cv.itemconfig(s["upd"], state="hidden")
-        cv.itemconfig(s["info"], text=info, fill=C["dim"] if st["ok"] else C["red"])
+        draw_toasts(status_msgs())
         if st["empty"]:
+            hint = current_hint()
             cv.itemconfig(st["empty"], text=t("hint_empty") + ("\n\n" + hint if hint else ""))
 
     def animate_knob(target_x, steps=8):
@@ -552,19 +644,29 @@ def main():
         cur = cv.coords(s["sw_knob"])
         if not cur:
             return
-        cx = (cur[0] + cur[2]) / 2
+        img = len(cur) == 2                       # anti-aliased knob is an image (centre point), else an oval
+        cx = cur[0] if img else (cur[0] + cur[2]) / 2
+
+        def put(x):
+            if img:
+                cv.coords(s["sw_knob"], x, my)
+            else:
+                cv.coords(s["sw_knob"], x - kr, my - kr, x + kr, my + kr)
         if steps <= 1 or abs(target_x - cx) < 0.5:
-            cv.coords(s["sw_knob"], target_x - kr, my - kr, target_x + kr, my + kr)
+            put(target_x)
             return
-        nx = cx + (target_x - cx) * 0.45
-        cv.coords(s["sw_knob"], nx - kr, my - kr, nx + kr, my + kr)
+        put(cx + (target_x - cx) * 0.45)
         root.after(16, lambda: animate_knob(target_x, steps - 1))
+
+    def save_cfg(*keys):
+        if not config.save_keys(cfg, *keys):
+            st["err_note"] = time.time()          # shown as a toast: config.json could not be written
 
     def toggle_mode(e=None):
         cfg["log_all"] = not cfg.get("log_all", False)
         logger.close()          # new file when the mode changes
         logger.last = 0
-        config.save_keys(cfg, "log_all")
+        save_cfg("log_all")
         s = st["status"]
         if s:
             animate_knob(s["sw_geo"][1] if cfg["log_all"] else s["sw_geo"][0])
@@ -577,7 +679,7 @@ def main():
         else:
             logger.close()
         logger.last = 0
-        config.save_keys(cfg, "logging")
+        save_cfg("logging")
         refresh_status()
 
     pending = {"id": None, "apply": None}
@@ -591,7 +693,7 @@ def main():
         cfg["interval"] = v
         spin.delete(0, "end")
         spin.insert(0, f"{v:.1f}")
-        config.save_keys(cfg, "interval")
+        save_cfg("interval")
         if sync_on():
             # wait 1.5 s so that clicking the spinbox arrows does not restart HWiNFO on every step
             if pending.get("apply"):
@@ -822,7 +924,7 @@ def main():
             return t("upd_downloading", p=st["upd_prog"]), layout.ICON_COLORS["gauge"], False
         if time.time() - st["upd_err"] < 5:
             return t("upd_failed"), C["red"], False
-        if info and cfg.get("check_updates", True):
+        if info and cfg.get("check_updates", True) and info["version"] != st["upd_dismissed"]:
             return t("upd_available", v=info["version"]), layout.ICON_COLORS["gauge"], True
         return "", None, False
 
@@ -895,6 +997,12 @@ def main():
             upd_q.put(("dl_ok", updater.download(info, cb)))
         except Exception:
             upd_q.put(("dl_err",))
+
+    def upd_dismiss(e=None):
+        """The small x on the update notice: hide it (until a still newer release appears)."""
+        if st["upd"]:
+            st["upd_dismissed"] = st["upd"]["version"]
+            refresh_status()
 
     def upd_click(e=None):
         info = st["upd"]
@@ -983,7 +1091,7 @@ def main():
                     vals = logvals
                 logger.write(time.strftime("%Y-%m-%d %H:%M:%S"), hdr, vals)
             except Exception:
-                pass
+                st["log_err"] = time.time()
         refresh_status()
         root.after(500, tick)
 

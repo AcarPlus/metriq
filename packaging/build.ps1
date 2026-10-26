@@ -47,7 +47,7 @@ if (-not (Test-Path -LiteralPath $vpy)) {
     & $base[0] @pre -m venv $venv
     if ($LASTEXITCODE -ne 0) { throw 'venv creation failed' }
 }
-& $vpy -m pip install --disable-pip-version-check --upgrade pip pyinstaller psutil
+& $vpy -m pip install --disable-pip-version-check --upgrade pip pyinstaller psutil pillow
 if ($LASTEXITCODE -ne 0) { throw 'pip install pyinstaller failed' }
 
 if (Test-Path -LiteralPath (Join-Path $root 'dist\HWiNFO Panel')) { Remove-Item -LiteralPath (Join-Path $root 'dist\HWiNFO Panel') -Recurse -Force }

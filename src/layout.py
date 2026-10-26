@@ -127,7 +127,7 @@ def count_matches(sections, rd):
 
 
 # ------------------------------------------------------------------ multi-column geometry (pure, no tkinter)
-HEAD, FOOT, STATUS = 1.75, 0.35, 3.0     # section header / footer / status bar, in row heights
+HEAD, FOOT, STATUS = 1.75, 0.35, 2.0     # section header / footer / status bar, in row heights
 GAP_UNITS = 0.3                           # typical gap between cards in row heights (partition weight only)
 MIN_RH = 14.0
 RH_CAP = 0.08                             # row height never exceeds this share of the column width
