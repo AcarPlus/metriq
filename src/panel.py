@@ -15,6 +15,7 @@ import webbrowser
 
 import backend
 import config
+import crashscan
 import gfx
 import hwctl
 import i18n
@@ -44,6 +45,7 @@ class Logger:
     def close(self):
         if self.f:
             self.f.close()
+            crashscan.mark_closed(self.path)      # clean stop (the crash detective looks for recordings without it)
         self.f = self.w = self.path = None
 
     def write(self, stamp, header, values):
@@ -52,6 +54,7 @@ class Logger:
             os.makedirs(d, exist_ok=True)
             self.path = os.path.join(d, stamp.replace(" ", "_").replace(":", "-") + ".csv")
             self.f = open(self.path, "a", newline="", encoding="utf-8-sig")
+            crashscan.mark_open(self.path)
             self.w = csv.writer(self.f, delimiter=self.delim)
             self.w.writerow([t("csv_time")] + header)
         self.w.writerow([stamp] + values)

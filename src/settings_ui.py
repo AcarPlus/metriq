@@ -15,6 +15,7 @@ from tkinter import colorchooser, filedialog, messagebox, ttk
 
 import backend
 import config
+import crashscan_ui
 import hwctl
 import i18n
 import layout
@@ -286,6 +287,7 @@ class SettingsWindow:
         self._tab_log(log.inner, cfg)
         self._tab_hw(hw.inner, cfg)
         self._tab_layout()
+        crashscan_ui.add_tab(self)
 
         self.msg = tk.Label(outer, text="", bg=C["bg"], fg=C["red"], font=(self.F_TXT, 10), anchor="w",
                             justify="left")
