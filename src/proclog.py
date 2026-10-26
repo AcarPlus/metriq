@@ -29,6 +29,7 @@ config.DEFAULTS.setdefault("proc_detail", False)               # side file "<nam
 config.DEFAULTS.setdefault("proc_log_filter", "all")           # programs of the side file: "all" or [exe names]
 config.DEFAULTS.setdefault("log_max_mb", 0)                    # start a new CSV file above this size (0 = no limit)
 config.DEFAULTS.setdefault("log_keep_days", 0)                 # delete our CSV files older than this at start (0 = keep)
+config.DEFAULTS.setdefault("usage_popup_top", 1)               # programs listed in the (i) balloons of the panel (1..10)
 
 # a row of the side file is only written when the program is above one of these
 DETAIL_MIN_PCT, DETAIL_MIN_MB, DETAIL_MIN_DISK = 0.5, 50.0, 0.5
@@ -313,18 +314,13 @@ i18n.register({
         # process window
         "pw_title": "Processes",
         "pw_search": "Search",
-        "pw_min": "Hide below",
-        "pw_min_tip": "CPU / GPU %, RAM / VRAM as % of memory, disk MB/s",
-        "pw_all": "All programs",
         "pw_name": "Program",
         "pw_log": "Log",
         "pw_log_hdr": "Add to log",
         "pw_apps": "Apps", "pw_background": "Background", "pw_windows": "Windows processes",
         "pw_nogpu": "GPU counters unavailable",
         "pw_wait": "sampling…",
-        "pw_count": "{n} programs shown",
         "pw_proc": "PID {pid}",
-        "pw_hint": "Click a column header to sort; click ☐ to include a program in the process CSV",
         # settings
         "ps_top": "Top programs in the CSV",
         "ps_top_hint": "0 = off; 1–99 = number of programs added as columns",
@@ -348,18 +344,13 @@ i18n.register({
         "pl_side_err": "kayıt başarısız: işlem CSV dosyası yazılamıyor",
         "pw_title": "İşlemler",
         "pw_search": "Ara",
-        "pw_min": "Altını gizle",
-        "pw_min_tip": "CPU / GPU %, RAM / VRAM belleğin %'si, disk MB/s",
-        "pw_all": "Tüm programlar",
         "pw_name": "Program",
         "pw_log": "Kayıt",
         "pw_log_hdr": "Kayda ekle",
         "pw_apps": "Uygulamalar", "pw_background": "Arka plan", "pw_windows": "Windows işlemleri",
         "pw_nogpu": "GPU sayaçları kullanılamıyor",
         "pw_wait": "örnekleniyor…",
-        "pw_count": "{n} program gösteriliyor",
         "pw_proc": "PID {pid}",
-        "pw_hint": "Sıralamak için sütun başlığına tıklayın; işlem CSV'sine eklemek için ☐ kutusuna tıklayın",
         "ps_top": "CSV'de en çok kullanan programlar",
         "ps_top_hint": "0 = kapalı; 1–99 = sütun olarak eklenen program sayısı",
         "ps_detail": "İşlem CSV'si (<ad>_processes.csv)",

@@ -73,6 +73,14 @@ class ProcSection:
         st.label_help(p, t("ps_est"), "est").grid(row=row + 6, column=0, sticky="w", padx=(0, 16), pady=6)
         self.lbl_est = tk.Label(p, text="", bg=C["bg"], fg=C["yellow"], font=(st.F_TXT, 10, "bold"), anchor="w")
         self.lbl_est.grid(row=row + 6, column=1, columnspan=2, sticky="w", pady=6)
+        # --- how many programs the panel's (i) balloons list
+        import procwin
+        self.v_pop = tk.StringVar(value=str(procwin.popup_top(cfg)))
+        self.e_pop = st.spinbox(p, self.v_pop, 1, 10, 1, "%.0f", 5)
+        st._grid_row(p, row + 7, t("ps_popup"), self.e_pop, t("ps_popup_hint"))
+        rp = st.add_check(st.checks, 1, [self.e_pop],
+                          lambda: self.v_pop.get().strip().isdigit() and 1 <= int(self.v_pop.get()) <= 10)
+        self.v_pop.trace_add("write", lambda *a: rp())
         for v in (st.v_interval, st.v_logall):
             v.trace_add("write", lambda *a: self.refresh())
         st.win.bind("<FocusIn>", lambda e: self.refresh(), add="+")
@@ -90,6 +98,7 @@ class ProcSection:
             "proc_detail": bool(self.v_detail.get()),
             "log_max_mb": num(self.v_max, lambda x: int(x) if x == int(x) else round(x, 1)),
             "log_keep_days": num(self.v_keep, int),
+            "usage_popup_top": _int(self.v_pop.get(), 1) if self.v_pop.get().strip().isdigit() else self.v_pop.get(),
         }
 
     def choose(self):

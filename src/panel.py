@@ -460,7 +460,7 @@ def main():
                     my = ry + rp / 2
                     nm_id = cv.create_text(col_name, my, text=fit_text(fnt_name, row.name, name_avail), anchor="w",
                                            font=f_name, fill=C["name"])
-                    procs.tag_row(cv, nm_id, row)          # CPU / RAM / GPU / VRAM / disk rows open the process window
+                    procs.tag_row(cv, nm_id, row, cx0 + name_right)   # CPU / RAM / GPU / VRAM / disk rows open the process window (+ (i) balloon)
                     it = {"accent": accent}
                     if row.bar and p.with_bar:
                         bh = max(4, rh * 0.22)
