@@ -1,5 +1,5 @@
-' Runs the HWiNFO Panel scheduled tasks without flashing a console window.
-' install.ps1 copies this file to "%ProgramFiles%\HWiNFO Panel\" (writable by administrators only) and
+' Runs the metriQ scheduled tasks without flashing a console window.
+' install.ps1 copies this file to "%ProgramFiles%\metriQ\" (writable by administrators only) and
 ' registers the tasks with the paths below as fixed task arguments.
 '
 ' Usage:  wscript.exe hidden.vbs start  "<path>\HWiNFO64.EXE"

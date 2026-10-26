@@ -1,4 +1,10 @@
-# HWiNFO Panel
+<p align="center"><img src="docs/logo.png" alt="metriQ logo" width="160"></p>
+
+# metriQ
+
+*metriQ was called "HWiNFO Panel" up to v1.1.x.* The name changed because the app also works without HWiNFO now.
+Existing installs upgrade in place (the Setup removes the old program folder and shortcuts; settings and logs are
+moved to the new data folder on first start, see [Install](#install)).
 
 A compact always-on-top dashboard for Windows that shows live sensor data: clocks, usage, power, temperatures, fans,
 network/disk throughput and FPS, each with a colour gradient (green to red), a bar, and panel-side MIN / MAX / AVG.
@@ -13,11 +19,11 @@ The data comes from one of three sources: [HWiNFO](https://www.hwinfo.com/) (wid
 
 ## ⬇ Download
 
-**[Download the latest Setup (HWiNFO-Panel-Setup.exe)](../../releases/latest)** — Windows 10 / 11, no Python needed.
+**[Download the latest Setup (metriQ-Setup.exe)](../../releases/latest)** — Windows 10 / 11, no Python needed.
 
 1. Run the Setup. It checks for HWiNFO and offers to install it for you (free, via winget) and to turn on its
    *Shared Memory Support*. You can skip it: the panel then uses its built-in data source.
-2. Start **HWiNFO Panel** from the Start menu. It starts HWiNFO with it and closes it again when you close the panel.
+2. Start **metriQ** from the Start menu. It starts HWiNFO with it and closes it again when you close the panel.
 3. Press the ⚙ gear (or **S**) for settings: language, monitor, 1–3 columns, rows, colours, logging.
 
 The Setup is not code-signed yet, so Windows SmartScreen may show *"Windows protected your PC"*: click
@@ -25,7 +31,7 @@ The Setup is not code-signed yet, so Windows SmartScreen may show *"Windows prot
 Signing: see the [Code signing policy](#code-signing-policy).
 
 **Türkçe:** [En son Setup'ı indir](../../releases/latest) → çalıştır (HWiNFO yoksa kurmayı teklif eder) → Başlat
-menüsünden **HWiNFO Panel**'i aç. Ayarlar için ⚙ ya da **S**. Ayrıntılar: [Türkçe](#türkçe).
+menüsünden **metriQ**'i aç. Ayarlar için ⚙ ya da **S**. Ayrıntılar: [Türkçe](#türkçe).
 > HWiNFO is a trademark of its owner. This project only *reads* the sensor data that HWiNFO publishes through its
 > documented shared memory interface (or that LibreHardwareMonitor publishes through its local web server).
 
@@ -112,18 +118,25 @@ with a real PresentMon.*
 
 ## Install
 
-**Option 1 - Setup (recommended, no Python needed).** Download `HWiNFO-Panel-Setup-<version>.exe` from the
-[Releases](../../releases) page and run it. It installs to `%ProgramFiles%\HWiNFO Panel`, adds a Start Menu shortcut
+**Option 1 - Setup (recommended, no Python needed).** Download `metriQ-Setup-<version>.exe` from the
+[Releases](../../releases) page and run it. It installs to `%ProgramFiles%\metriQ`, adds a Start Menu shortcut
 (optional desktop icon, optional "start with Windows") and, if HWiNFO64 is found, registers the three scheduled tasks
-`\HWiNFO Panel\Start`, `Stop`, `SetInterval` (needs administrator rights, asked once) so the panel can start / stop
+`\metriQ\Start`, `Stop`, `SetInterval` (needs administrator rights, asked once) so the panel can start / stop
 HWiNFO and change its polling interval without a UAC prompt each time. The interval file the tasks read lives in
-`%ProgramData%\HWiNFO Panel`. Without HWiNFO64 the panel still works in read-only mode (install HWiNFO and run the
+`%ProgramData%\metriQ`. Without HWiNFO64 the panel still works in read-only mode (install HWiNFO and run the
 Setup again). English and Turkish wizard. Uninstall from *Settings > Apps*; it removes the tasks and the program folder
-and keeps your settings and logs in `%LOCALAPPDATA%\HWiNFO Panel`. An older `config.json` written by the Store-Python
+and keeps your settings and logs in `%LOCALAPPDATA%\metriQ`. An older `config.json` written by the Store-Python
 source version is taken over on first start.
 
-**Option 2 - portable zip.** Unzip `HWiNFO-Panel-<version>-portable.zip` anywhere and run `HWiNFO Panel.exe`
-(read-only mode, no tasks; set `HWINFO_PANEL_DIR` to keep the settings next to it).
+**Upgrading from "HWiNFO Panel" (v1.1.x):** just run the new Setup. It replaces the old install (same uninstall entry),
+removes the old program folder (`%ProgramFiles%\HWiNFO Panel`), its shortcuts and its old scheduled tasks
+(`\HWiNFO Panel\...`) and carries a "start with Windows" entry over. On the first start metriQ MOVES your old data
+folder `%LOCALAPPDATA%\HWiNFO Panel` (`config.json`, `logs\`, ...) to `%LOCALAPPDATA%\metriQ` (only when the new folder
+has no `config.json` yet; a `log_dir` that pointed into the old folder is rewritten). v1.1.x can still update itself to
+this version. The old environment variable `HWINFO_PANEL_DIR` is still accepted as a fallback for `METRIQ_DIR`.
+
+**Option 2 - portable zip.** Unzip `metriQ-<version>-portable.zip` anywhere and run `metriQ.exe`
+(read-only mode, no tasks; set `METRIQ_DIR` to keep the settings next to it).
 
 **Option 3 - from source** (Python 3.10+ with tkinter):
 
@@ -135,16 +148,16 @@ source version is taken over on first start.
    powershell -ExecutionPolicy Bypass -File scripts\install.ps1
    ```
 
-   * creates the Start Menu shortcut **HWiNFO Panel** (with its own taskbar icon),
+   * creates the Start Menu shortcut **metriQ** (with its own taskbar icon),
    * asks once for administrator rights (UAC) to copy `hidden.vbs` and `set_interval.ps1` to
-     `%ProgramFiles%\HWiNFO Panel` and to register three scheduled tasks
-     `\HWiNFO Panel\Start`, `Stop`, `SetInterval`. They let the panel start/stop HWiNFO (which itself needs
+     `%ProgramFiles%\metriQ` and to register three scheduled tasks
+     `\metriQ\Start`, `Stop`, `SetInterval`. They let the panel start/stop HWiNFO (which itself needs
      administrator rights) without a UAC prompt each time. Use `-NoTasks` to skip this part.
    * `-HwinfoPath "D:\Tools\HWiNFO64\HWiNFO64.EXE"` if your HWiNFO is not found automatically.
 
    You can also skip the installer completely: `pythonw src\panel.py` (or `python src\panel.py`) works, in read-only mode.
 
-4. Start **HWiNFO Panel** from the Start Menu.
+4. Start **metriQ** from the Start Menu.
 
 > **Unsigned builds:** the release files are not code-signed yet, so Windows SmartScreen may show "Windows protected
 > your PC / unknown publisher" (click *More info* > *Run anyway*), and **Smart App Control**, if enabled on your PC,
@@ -153,7 +166,7 @@ source version is taken over on first start.
 **Build locally** (Python 3.10+ with tkinter; PyInstaller is installed into `build\venv` only):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File packaging\build.ps1               # dist\HWiNFO Panel\HWiNFO Panel.exe
+powershell -ExecutionPolicy Bypass -File packaging\build.ps1               # dist\metriQ\metriQ.exe
 powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Zip -Installer   # + portable zip and Setup (needs Inno Setup 6)
 ```
 
@@ -163,22 +176,23 @@ Pushing a tag `v*` builds and publishes both files via GitHub Actions (`.github/
 Uninstall (source install): `powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1` removes the tasks, the Program Files folder and the
 shortcut and keeps your settings and logs; add `-Purge` to delete them as well.
 
-Security note: the tasks run only the two files in `%ProgramFiles%\HWiNFO Panel` (writable by administrators only).
+Security note: the tasks run only the two files in `%ProgramFiles%\metriQ` (writable by administrators only).
 The only user-writable input is a text file containing the interval, which is accepted only as an integer
 (clamped to 250 to 60000 ms).
 
 ## Files and settings
 
-Everything personal lives in `%LOCALAPPDATA%\HWiNFO Panel\` (created on first run, never part of the repository):
+Everything personal lives in `%LOCALAPPDATA%\metriQ\` (created on first run, never part of the repository):
 
 | File | Purpose |
 |---|---|
 | `config.json` | your settings and (optionally) your layout |
 | `logs\` | CSV recordings (default folder, see `log_dir`) |
-| `hwinfo_interval.txt` | interval handed to the `SetInterval` task (Setup installs use `%ProgramData%\HWiNFO Panel\hwinfo_interval.txt` instead) |
+| `hwinfo_interval.txt` | interval handed to the `SetInterval` task (Setup installs use `%ProgramData%\metriQ\hwinfo_interval.txt` instead) |
 | `panel.log` | traceback if the panel crashed at start |
 
-Set the environment variable `HWINFO_PANEL_DIR` to use another folder (portable use).
+Set the environment variable `METRIQ_DIR` to use another folder (portable use; `HWINFO_PANEL_DIR`, the name before
+v1.2.0, still works).
 
 ### config.json
 
@@ -195,7 +209,7 @@ Set the environment variable `HWINFO_PANEL_DIR` to use another folder (portable 
 | `interval` | 0.5 to 30 | CSV logging interval in seconds |
 | `logging` | `true` / `false` | recording on/off (also toggled in the panel) |
 | `log_all` | `true` / `false` | `false` = only the rows shown, `true` = every sensor reading of the source |
-| `log_dir` | path or `""` | CSV folder; `""` = `%LOCALAPPDATA%\HWiNFO Panel\logs` |
+| `log_dir` | path or `""` | CSV folder; `""` = `%LOCALAPPDATA%\metriQ\logs` |
 | `csv_delimiter`, `csv_decimal` | `"auto"` or a character | `auto` uses the Windows list separator / decimal symbol so Excel opens the file correctly |
 | `sync_hwinfo_interval` | `true` / `false` | also set HWiNFO's polling interval to `interval` (needs the installed tasks; HWiNFO source only) |
 | `manage_hwinfo` | `true` / `false` | start HWiNFO with the panel, stop it on close (needs the installed tasks; HWiNFO source only) |
@@ -297,7 +311,7 @@ Until signing is in place, releases are unsigned (see the SmartScreen note above
 * Values freeze every 12 hours with the free HWiNFO: install the tasks (`scripts\install.ps1`) for automatic restart.
 * Wrong monitor: `python tools\list_monitors.py`, then set `"monitor"`.
 * Python icon instead of the panel icon in the taskbar when started with `python src\panel.py`: use the Start Menu shortcut.
-* Crash on start: see `%LOCALAPPDATA%\HWiNFO Panel\panel.log`.
+* Crash on start: see `%LOCALAPPDATA%\metriQ\panel.log`.
 
 ## Development
 
@@ -307,7 +321,7 @@ Until signing is in place, releases are unsigned (see the SmartScreen note above
 `hwctl.py` (HWiNFO detection and tasks), `i18n.py` (strings), `panel.py` (UI), `settings_ui.py` (settings window),
 `winicon.py` (taskbar identity), `version.py`, `packaging/` (PyInstaller spec, Inno Setup script, build script),
 `gfx.py` (anti-aliased icons and cards; needs the optional `pip install pillow`, without it the panel draws plain canvas shapes),
-`src\make_icon.py` (regenerates `panel.ico`). License: [MIT](docs/LICENSE).
+`src\make_icon.py` (regenerates `metriq.ico`). License: [MIT](docs/LICENSE).
 
 ---
 
@@ -315,7 +329,9 @@ Until signing is in place, releases are unsigned (see the SmartScreen note above
 
 Canlı sensör verisi gösteren, her zaman üstte duran küçük bir Windows panosu: saat/kullanım, güç, sıcaklık, fan,
 ağ/disk ve FPS; her satırda yeşilden kırmızıya renk, çubuk ve panel tarafında MİN / MAKS / ORT. İsterseniz değerleri
-CSV dosyasına kaydeder. HWiNFO / REALiX veya LibreHardwareMonitor projesiyle bağlantısı yoktur.
+CSV dosyasına kaydeder. HWiNFO / REALiX veya LibreHardwareMonitor projesiyle bağlantısı yoktur. (**metriQ**, v1.1.x'e
+kadar "HWiNFO Panel" adını taşıyordu; yeni Setup eski kurulumun üzerine kurulur, eski ayar ve kayıt klasörü
+`%LOCALAPPDATA%\HWiNFO Panel` ilk açılışta `%LOCALAPPDATA%\metriQ` altına taşınır.)
 
 **Gereksinimler:** Windows 10/11; Python 3.10+ (tkinter dahil; yalnızca kaynaktan çalıştırmak için); bir veri kaynağı (aşağıda). HWiNFO için: Ayarlar >
 **Shared Memory Support** açık olmalı (ücretsiz sürümde paylaşılan bellek her başlatmada **12 saat** ile sınırlıdır).
@@ -347,12 +363,12 @@ sentetik veriyle test edildi, çalışan bir LHM ile henüz denenmedi.* **Yerle�
 deneysel):** Intel [PresentMon](https://github.com/GameTechDev/PresentMon/releases) konsol uygulamasının yolunu
 Ayarlar > Veri kaynağı'nda girin (`presentmon_path`); yönetici hakkı veya *Performance Log Users* grubu gerekir.
 
-**Kurulum:** üç yol var. (1) **Önerilen:** [Releases](../../releases) sayfasından `HWiNFO-Panel-Setup-<sürüm>.exe`
-dosyasını indirip çalıştırın (Python gerekmez; Türkçe/İngilizce sihirbaz). `%ProgramFiles%\HWiNFO Panel` altına kurulur,
+**Kurulum:** üç yol var. (1) **Önerilen:** [Releases](../../releases) sayfasından `metriQ-Setup-<sürüm>.exe`
+dosyasını indirip çalıştırın (Python gerekmez; Türkçe/İngilizce sihirbaz). `%ProgramFiles%\metriQ` altına kurulur,
 Başlat menüsü kısayolu ekler (isteğe bağlı masaüstü simgesi ve "Windows ile başlat"); HWiNFO64 bulunursa (yönetici
 onayıyla, bir kez) HWiNFO'yu her seferinde UAC sormadan açıp kapatan 3 zamanlanmış görevi kurar. HWiNFO64 yoksa panel
 salt okunur çalışır (HWiNFO'yu kurup Setup'ı yeniden çalıştırın). Kaldırma: Ayarlar > Uygulamalar (ayarlar ve kayıtlar
-`%LOCALAPPDATA%\HWiNFO Panel` altında kalır). (2) **Taşınabilir zip:** açın, `HWiNFO Panel.exe` çalıştırın (görev yok,
+`%LOCALAPPDATA%\metriQ` altında kalır). (2) **Taşınabilir zip:** açın, `metriQ.exe` çalıştırın (görev yok,
 salt okunur). (3) **Kaynaktan:** klasörü bir yere koyun, HWiNFO'da Shared Memory Support'u açın, bu klasörde
 `powershell -ExecutionPolicy Bypass -File scripts\install.ps1` çalıştırın (`-NoTasks` ile görevler atlanır). Kaldırma:
 `scripts\uninstall.ps1` (ayarlar ve kayıtlar kalır, silmek için `-Purge`).
@@ -361,7 +377,7 @@ salt okunur). (3) **Kaynaktan:** klasörü bir yere koyun, HWiNFO'da Shared Memo
 (bu durumda kaynaktan çalıştırın). **Yerelde derleme:** `powershell -ExecutionPolicy Bypass -File packaging\build.ps1`
 (`-Zip -Installer` ile zip ve Setup; Inno Setup 6 gerekir).
 
-**Ayarlar:** `%LOCALAPPDATA%\HWiNFO Panel\config.json` ilk açılışta oluşur. `language` (`auto`/`tr`/`en`), `monitor`,
+**Ayarlar:** `%LOCALAPPDATA%\metriQ\config.json` ilk açılışta oluşur. `language` (`auto`/`tr`/`en`), `monitor`,
 `window_mode`, `interval`, `log_dir`, `manage_hwinfo` vb. yukarıdaki tabloda açıklanmıştır. Düzen varsayılan olarak
 donanımınızdan otomatik üretilir; düzenlemek için `python tools\export_layout.py` ile `sections` listesini yazdırıp
 elle değiştirin. Her veri kaynağının kendi düzeni vardır: `sections` (HWiNFO), `sections_lhm`, `sections_builtin`.

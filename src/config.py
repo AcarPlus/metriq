@@ -1,4 +1,4 @@
-"""User configuration (JSON in %LOCALAPPDATA%\\HWiNFO Panel) and monitor enumeration."""
+"""User configuration (JSON in %LOCALAPPDATA%\\metriQ) and monitor enumeration."""
 import copy
 import ctypes
 import glob
@@ -8,11 +8,13 @@ import shutil
 import sys
 from ctypes import wintypes
 
-APP_NAME = "HWiNFO Panel"
-APP_ID = "HWiNFOPanel.App"
+APP_NAME = "metriQ"
+APP_ID = "metriQ.App"
+# Back-compat only: the app was called "HWiNFO Panel" up to v1.1.x (data folders are migrated, see migrate_old_data())
+OLD_APP_NAME = "HWiNFO Panel"
 HERE = os.path.dirname(os.path.abspath(__file__))
 FROZEN = bool(getattr(sys, "frozen", False))            # built with PyInstaller (packaging/build.ps1)
-# folder with the bundled resources (panel.ico, ...): PyInstaller's _internal folder, else the source folder
+# folder with the bundled resources (metriq.ico, ...): PyInstaller's _internal folder, else the source folder
 APP_DIR = getattr(sys, "_MEIPASS", HERE) if FROZEN else HERE
 
 INTERVAL_MIN, INTERVAL_MAX = 0.5, 30.0
@@ -34,7 +36,7 @@ DEFAULTS = {
     "interval": 5.0,                 # CSV logging interval, seconds (0.5 - 30)
     "logging": False,                # CSV logging on/off
     "log_all": False,                # False: only the rows shown, True: every sensor reading
-    "log_dir": "",                   # "" = %LOCALAPPDATA%\HWiNFO Panel\logs
+    "log_dir": "",                   # "" = %LOCALAPPDATA%\metriQ\logs
     "csv_delimiter": "auto",         # "auto" (Windows list separator) or e.g. ";" / ","
     "csv_decimal": "auto",           # "auto" (Windows decimal symbol) or "," / "."
     "sync_hwinfo_interval": True,    # write the logging interval to HWiNFO's SensorInterval (needs install.ps1)
@@ -62,8 +64,13 @@ def _package_family():
     return None
 
 
+def env_dir():
+    """Data folder override (portable use / tests): METRIQ_DIR; HWINFO_PANEL_DIR is the old name, still accepted."""
+    return os.environ.get("METRIQ_DIR") or os.environ.get("HWINFO_PANEL_DIR") or ""
+
+
 def data_dir():
-    d = os.environ.get("HWINFO_PANEL_DIR")
+    d = env_dir()
     if not d:
         base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
         fam = _package_family()
@@ -87,8 +94,8 @@ def shared_interval_file():
 
 def interval_file():
     """File the SetInterval task reads. The installer build uses the shared ProgramData file (works even when the
-    installer ran as another account); otherwise (install.ps1, HWINFO_PANEL_DIR) the per-user data folder."""
-    if not os.environ.get("HWINFO_PANEL_DIR"):
+    installer ran as another account); otherwise (install.ps1, METRIQ_DIR) the per-user data folder."""
+    if not env_dir():
         p = shared_interval_file()
         try:
             if p and os.path.isfile(p):
@@ -116,7 +123,7 @@ def _write(path, obj):
 def _migrate_store_config(path):
     """Frozen app, first run: take over config.json written by the Store-Python source version (its data
     lived in the Python package folder). Only config.json is copied, never logs."""
-    if not FROZEN or os.environ.get("HWINFO_PANEL_DIR") or os.path.exists(path):
+    if not FROZEN or env_dir() or os.path.exists(path):
         return
     base = os.environ.get("LOCALAPPDATA")
     if not base:
@@ -133,8 +140,91 @@ def _migrate_store_config(path):
         pass
 
 
+def _old_data_dirs():
+    """Existing data folders of the former "HWiNFO Panel" app: the plain one and the Store-Python package variants."""
+    base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
+    cands = [os.path.join(base, OLD_APP_NAME)]
+    fam = _package_family()
+    pk = os.path.join(glob.escape(base), "Packages")
+    if fam:
+        cands.append(os.path.join(base, "Packages", fam, "LocalCache", "Local", OLD_APP_NAME))
+    store = glob.glob(os.path.join(pk, "PythonSoftwareFoundation.Python.3.*", "LocalCache", "Local", OLD_APP_NAME))
+    cands += sorted(store, key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0, reverse=True)
+    new = os.path.normcase(os.path.abspath(data_dir()))
+    out = []
+    for c in cands:
+        n = os.path.normcase(os.path.abspath(c))
+        if os.path.isdir(c) and n != new and n not in [os.path.normcase(os.path.abspath(o)) for o in out]:
+            out.append(c)
+    return out
+
+
+def _move_tree(src, dst):
+    """Moves the children of src into dst (merging folders; an existing destination file wins, the source stays)."""
+    os.makedirs(dst, exist_ok=True)
+    for name in os.listdir(src):
+        s, d = os.path.join(src, name), os.path.join(dst, name)
+        try:
+            if os.path.isdir(s) and not os.path.islink(s):
+                if os.path.exists(d):
+                    _move_tree(s, d)
+                    try:
+                        os.rmdir(s)
+                    except OSError:
+                        pass
+                else:
+                    shutil.move(s, d)
+            elif not os.path.exists(d):
+                shutil.move(s, d)
+        except OSError:
+            pass
+
+
+def migrate_old_data():
+    """One-time migration (v1.2.0, rename "HWiNFO Panel" -> metriQ): when the new data folder has no config.json yet and
+    the old folder exists (plain and/or Store-Python variant), its contents (config.json, logs, crash index, ...) are
+    MOVED into the new one, and a log_dir that pointed into the old folder is rewritten. Skipped with METRIQ_DIR set."""
+    if env_dir():
+        return
+    new = data_dir()
+    if os.path.exists(os.path.join(new, "config.json")):
+        return
+    olds = _old_data_dirs()
+    if not olds:
+        return
+    for old in olds:
+        _move_tree(old, new)
+        try:
+            os.rmdir(old)                               # only succeeds when everything moved
+        except OSError:
+            pass
+    cp = os.path.join(new, "config.json")
+    try:
+        with open(cp, encoding="utf-8-sig") as f:
+            cfg = json.load(f)
+        raw = cfg.get("log_dir") if isinstance(cfg, dict) else None
+        if not raw or not isinstance(raw, str):
+            return
+        full = os.path.normcase(os.path.abspath(os.path.expandvars(os.path.expanduser(raw.strip()))))
+        for old in olds:
+            o = os.path.normcase(os.path.abspath(old))
+            if full == o or full.startswith(o + os.sep):
+                rest = os.path.abspath(os.path.expandvars(os.path.expanduser(raw.strip())))[len(o):].lstrip("\\/")
+                newlog = os.path.join(new, rest) if rest else new
+                cfg["log_dir"] = "" if os.path.normcase(newlog) == os.path.normcase(os.path.join(new, "logs")) else newlog
+                _write(cp, cfg)
+                break
+    except (OSError, ValueError):
+        pass
+
+
 def load_config():
     """Returns (cfg, note). Creates the file on first run; a broken file is backed up, never lost."""
+    path = config_path()
+    try:
+        migrate_old_data()
+    except Exception:
+        pass
     path = config_path()
     _migrate_store_config(path)
     cfg = copy.deepcopy(DEFAULTS)

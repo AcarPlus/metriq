@@ -1,12 +1,12 @@
 ﻿<#
 .SYNOPSIS
-    Installs HWiNFO Panel for the current user.
+    Installs metriQ for the current user.
 
 .DESCRIPTION
     1. Finds pythonw (Python 3.10+ with tkinter).
-    2. Creates the Start Menu shortcut "HWiNFO Panel" (icon + taskbar identity "HWiNFOPanel.App").
+    2. Creates the Start Menu shortcut "metriQ" (icon + taskbar identity "metriQ.App").
     3. Optional, needs administrator rights (UAC prompt): copies hidden.vbs and set_interval.ps1 to
-       %ProgramFiles%\HWiNFO Panel and registers three scheduled tasks (\HWiNFO Panel\Start|Stop|SetInterval)
+       %ProgramFiles%\metriQ and registers three scheduled tasks (\metriQ\Start|Stop|SetInterval)
        so that the panel can start/stop HWiNFO and change its polling interval WITHOUT a UAC prompt each time.
        Without them the panel still works (read-only mode, HWiNFO must be started by you).
 
@@ -30,11 +30,15 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent   # repo root
 $src = Join-Path $root 'src'
 $dataDirGiven = [bool]$DataDir
+# data folder override: METRIQ_DIR (HWINFO_PANEL_DIR is the pre-1.2.0 name, still accepted)
+$envDir = if ($env:METRIQ_DIR) { $env:METRIQ_DIR } else { $env:HWINFO_PANEL_DIR }
+# pre-1.2.0 name of the app ("HWiNFO Panel"): its tasks / shortcut / program folder are removed (back-compat)
+$oldName = 'HWiNFO Panel'
 if (-not $DataDir) {
-    $DataDir = if ($env:HWINFO_PANEL_DIR) { $env:HWINFO_PANEL_DIR } else { Join-Path $env:LOCALAPPDATA 'HWiNFO Panel' }
+    $DataDir = if ($envDir) { $envDir } else { Join-Path $env:LOCALAPPDATA 'metriQ' }
 }
-$appId = 'HWiNFOPanel.App'
-$taskDir = Join-Path $env:ProgramFiles 'HWiNFO Panel'
+$appId = 'metriQ.App'
+$taskDir = Join-Path $env:ProgramFiles 'metriQ'
 $log = Join-Path $DataDir 'install_tasks.log'
 
 function Find-HwinfoExe([string]$hint) {
@@ -108,6 +112,12 @@ if ($TasksOnly) {
         Copy-Item -LiteralPath (Join-Path $src 'set_interval.ps1') -Destination (Join-Path $taskDir 'set_interval.ps1') -Force
         Copy-Item -LiteralPath (Join-Path $src 'hidden.vbs') -Destination (Join-Path $taskDir 'hidden.vbs') -Force
 
+        # upgrade from "HWiNFO Panel": remove its tasks and program folder
+        Get-ScheduledTask -TaskPath "\$oldName\" -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
+        try { $svc = New-Object -ComObject Schedule.Service; $svc.Connect(); $svc.GetFolder('\').DeleteFolder($oldName, 0) } catch { }
+        $oldDir = Join-Path $env:ProgramFiles $oldName
+        if (Test-Path -LiteralPath $oldDir) { Remove-Item -LiteralPath $oldDir -Recurse -Force -ErrorAction SilentlyContinue }
+
         $vbs = Join-Path $taskDir 'hidden.vbs'
         $valFile = Join-Path $DataDir 'hwinfo_interval.txt'
         $defs = @(
@@ -118,10 +128,10 @@ if ($TasksOnly) {
         foreach ($d in $defs) {
             # wscript opens no console window; hidden.vbs launches HWiNFO via a hidden PowerShell
             $action = New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR 'System32\wscript.exe') -Argument $d.Args
-            Register-ScheduledTask -TaskPath '\HWiNFO Panel\' -TaskName $d.Name -Action $action `
+            Register-ScheduledTask -TaskPath '\metriQ\' -TaskName $d.Name -Action $action `
                 -Principal $principal -Settings $settings -Force | Out-Null
         }
-        $state = Get-ScheduledTask -TaskPath '\HWiNFO Panel\' | ForEach-Object { "$($_.TaskName)=$($_.State)" }
+        $state = Get-ScheduledTask -TaskPath '\metriQ\' | ForEach-Object { "$($_.TaskName)=$($_.State)" }
         "OK tasks installed for $user ($exe): $($state -join ', ')" | Out-File -Encoding utf8 $log
     } catch {
         "FAILED: $($_.Exception.Message)" | Out-File -Encoding utf8 $log
@@ -141,7 +151,7 @@ Write-Host "Python        : $($py.Exe) $($py.Pre -join ' ')"
 
 # Ask Python where the panel keeps its data: Microsoft Store Python redirects %LOCALAPPDATA% into its package
 # folder, and the scheduled task must point at that real folder.
-if (-not $dataDirGiven -and -not $env:HWINFO_PANEL_DIR) {
+if (-not $dataDirGiven -and -not $envDir) {
     $pyc = Join-Path (Split-Path $py.Exe) ((Split-Path $py.Exe -Leaf) -replace '^pythonw', 'python' -replace '^pyw', 'py')
     if (Test-Path -LiteralPath $pyc) {
         $code = "import sys; sys.path.insert(0, r'$src'); import config; print(config.data_dir())"
@@ -156,17 +166,19 @@ if (-not $dataDirGiven -and -not $env:HWINFO_PANEL_DIR) {
 Write-Host "Data folder   : $DataDir"
 
 # Start Menu shortcut
-$lnk = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\HWiNFO Panel.lnk'
+$lnk = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\metriQ.lnk'
+$oldLnk = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\$oldName.lnk"
+if (Test-Path -LiteralPath $oldLnk) { Remove-Item -LiteralPath $oldLnk -Force }
 $ws = New-Object -ComObject WScript.Shell
 $sc = $ws.CreateShortcut($lnk)
 $sc.TargetPath = $py.Exe
 $sc.Arguments = ((@($py.Pre) + @("`"$(Join-Path $src 'panel.py')`"")) -join ' ').Trim()
 $sc.WorkingDirectory = $root
-$sc.IconLocation = (Join-Path $src 'panel.ico') + ',0'
-$sc.Description = 'HWiNFO Panel'
+$sc.IconLocation = (Join-Path $src 'metriq.ico') + ',0'
+$sc.Description = 'metriQ'
 $sc.Save()
 
-# AppUserModelID on the shortcut: the taskbar then shows panel.ico instead of the Python icon
+# AppUserModelID on the shortcut: the taskbar then shows metriq.ico instead of the Python icon
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -241,4 +253,4 @@ if ($principalNow.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrato
     catch { Write-Warning 'Elevation was cancelled: tasks not installed (panel runs in read-only mode).'; return }
 }
 if (Test-Path $log) { Write-Host "Tasks         : $((Get-Content $log -Raw).Trim())" } else { Write-Warning 'Tasks: no result was written.' }
-Write-Host 'Done. Start "HWiNFO Panel" from the Start Menu.'
+Write-Host 'Done. Start "metriQ" from the Start Menu.'

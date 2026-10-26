@@ -12,6 +12,7 @@ panel_onceki.py
 build/
 dist/
 packaging/Output/
+metriQ-Setup-*.exe
 HWiNFO-Panel-Setup-*.exe
 *.spec.bak
 

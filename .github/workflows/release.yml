@@ -33,13 +33,20 @@ jobs:
           $v = ([regex]::Match((Get-Content src/version.py -Raw), '__version__\s*=\s*"([^"]+)"')).Groups[1].Value
           "version=$v" >> $env:GITHUB_OUTPUT
 
+      # BACK-COMPAT: v1.1.x clients ("HWiNFO Panel") only update from an asset named HWiNFO-Panel-Setup-*.exe, so the
+      # same Setup is also uploaded under the old name. TODO: remove this step (and the two "HWiNFO-Panel-Setup"
+      # lines below) after a few releases, once nobody runs v1.1.x any more.
+      - name: Copy Setup under the pre-1.2.0 name
+        shell: pwsh
+        run: Copy-Item "metriQ-Setup-${{ steps.ver.outputs.version }}.exe" "HWiNFO-Panel-Setup-${{ steps.ver.outputs.version }}.exe"
+
       # Future code signing (removes the SmartScreen "unknown publisher" warning). Sign
-      # dist\HWiNFO Panel\HWiNFO Panel.exe BEFORE the Setup is compiled and the Setup afterwards, e.g. with SignPath:
+      # dist\metriQ\metriQ.exe BEFORE the Setup is compiled and the Setup afterwards, e.g. with SignPath:
       # - uses: signpath/github-action-submit-signing-request@v1
       #   with:
       #     api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
       #     organization-id: '<org id>'
-      #     project-slug: hwinfo-panel
+      #     project-slug: metriq
       #     signing-policy-slug: release-signing
       #     github-artifact-id: '<artifact id of the unsigned build>'
       #     wait-for-completion: true
@@ -47,21 +54,24 @@ jobs:
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: HWiNFO-Panel-${{ steps.ver.outputs.version }}
+          name: metriQ-${{ steps.ver.outputs.version }}
           path: |
+            metriQ-Setup-${{ steps.ver.outputs.version }}.exe
             HWiNFO-Panel-Setup-${{ steps.ver.outputs.version }}.exe
-            dist/HWiNFO-Panel-${{ steps.ver.outputs.version }}-portable.zip
+            dist/metriQ-${{ steps.ver.outputs.version }}-portable.zip
 
       - name: Publish release assets
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            Download **HWiNFO-Panel-Setup-${{ steps.ver.outputs.version }}.exe** and run it (Windows 10 / 11).
-            Portable: unzip **HWiNFO-Panel-${{ steps.ver.outputs.version }}-portable.zip** and run `HWiNFO Panel.exe`.
+            Download **metriQ-Setup-${{ steps.ver.outputs.version }}.exe** and run it (Windows 10 / 11).
+            (`HWiNFO-Panel-Setup-*.exe` is the same file under the old name, kept only so that v1.1.x can update itself.)
+            Portable: unzip **metriQ-${{ steps.ver.outputs.version }}-portable.zip** and run `metriQ.exe`.
 
             [Code signing policy](https://github.com/${{ github.repository }}#code-signing-policy) ·
             [Privacy](https://github.com/${{ github.repository }}#privacy)
           files: |
+            metriQ-Setup-${{ steps.ver.outputs.version }}.exe
             HWiNFO-Panel-Setup-${{ steps.ver.outputs.version }}.exe
-            dist/HWiNFO-Panel-${{ steps.ver.outputs.version }}-portable.zip
+            dist/metriQ-${{ steps.ver.outputs.version }}-portable.zip

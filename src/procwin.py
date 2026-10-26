@@ -111,7 +111,7 @@ class ProcWindow:
         self.win.title(f"{config.APP_NAME} – {t('pw_title')}")
         self.win.configure(bg=self.C["bg"])
         try:
-            self.win.iconbitmap(default=os.path.join(config.APP_DIR, "panel.ico"))
+            self.win.iconbitmap(default=os.path.join(config.APP_DIR, "metriq.ico"))
         except Exception:
             pass
         try:

@@ -20,8 +20,8 @@ from ctypes import wintypes
 
 from i18n import t
 
-FORCE_NO_NVML = bool(os.environ.get("HWINFO_PANEL_NO_NVML"))      # testing: exercise the non-NVIDIA GPU path
-FORCE_NO_PDH = bool(os.environ.get("HWINFO_PANEL_NO_PDH"))        # testing: exercise the psutil fallback
+FORCE_NO_NVML = bool(os.environ.get("METRIQ_NO_NVML"))      # testing: exercise the non-NVIDIA GPU path
+FORCE_NO_PDH = bool(os.environ.get("METRIQ_NO_PDH"))        # testing: exercise the psutil fallback
 MB = 1048576.0
 
 

@@ -1,4 +1,4 @@
-"""HWiNFO Panel: a tkinter sensor dashboard (HWiNFO64, LibreHardwareMonitor or built-in Windows sensors, see README)."""
+"""metriQ: a tkinter sensor dashboard (HWiNFO64, LibreHardwareMonitor or built-in Windows sensors, see README)."""
 import copy
 import csv
 import math
@@ -28,7 +28,7 @@ import updater
 from i18n import t
 
 HERE = config.APP_DIR        # source folder, or the bundled resources when frozen (PyInstaller)
-ICO = os.path.join(HERE, "panel.ico")
+ICO = os.path.join(HERE, "metriq.ico")
 
 
 # ---------------------------------------------------------------- CSV logger

@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller spec: one-folder, windowed build -> dist\HWiNFO Panel\HWiNFO Panel.exe
+# PyInstaller spec: one-folder, windowed build -> dist\metriQ\metriQ.exe
 # Build with packaging\build.ps1 (creates its own venv); SPECPATH is this folder.
 import os
 import re
@@ -18,12 +18,12 @@ _vi = VSVersionInfo(
     kids=[
         StringFileInfo([StringTable("040904B0", [
             StringStruct("CompanyName", "AcarPlus"),
-            StringStruct("FileDescription", "HWiNFO Panel"),
+            StringStruct("FileDescription", "metriQ"),
             StringStruct("FileVersion", VERSION),
-            StringStruct("InternalName", "HWiNFO Panel"),
+            StringStruct("InternalName", "metriQ"),
             StringStruct("LegalCopyright", "MIT License"),
-            StringStruct("OriginalFilename", "HWiNFO Panel.exe"),
-            StringStruct("ProductName", "HWiNFO Panel"),
+            StringStruct("OriginalFilename", "metriQ.exe"),
+            StringStruct("ProductName", "metriQ"),
             StringStruct("ProductVersion", VERSION),
         ])]),
         VarFileInfo([VarStruct("Translation", [0x0409, 1200])]),
@@ -41,7 +41,7 @@ a = Analysis(
     # read at run time from sys._MEIPASS (see config.APP_DIR); hidden.vbs / set_interval.ps1 are what the
     # scheduled tasks run (the Setup copies them to {app}\tasks, install.ps1 users do not need the bundle)
     datas=[
-        (os.path.join(SRC, "panel.ico"), "."),
+        (os.path.join(SRC, "metriq.ico"), "."),
         (os.path.join(SRC, "hidden.vbs"), "."),
         (os.path.join(SRC, "set_interval.ps1"), "."),
     ],
@@ -57,12 +57,12 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="HWiNFO Panel",
-    icon=os.path.join(SRC, "panel.ico"),
+    name="metriQ",
+    icon=os.path.join(SRC, "metriq.ico"),
     version=_work,
     console=False,
     debug=False,
     strip=False,
     upx=False,
 )
-coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="HWiNFO Panel")
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="metriQ")

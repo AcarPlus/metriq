@@ -1,4 +1,4 @@
-"""Settings window (tk.Toplevel, dark theme) for HWiNFO Panel.
+"""Settings window (tk.Toplevel, dark theme) for metriQ.
 
 ``SettingsWindow(api)`` gets a small API object from panel.py:
     root, cfg (live dict, read only here), C (colours), fonts (text, heading, mono),
@@ -122,7 +122,7 @@ class SettingsWindow:
         self.win.title(t("st_title"))
         self.win.configure(bg=self.C["bg"])
         try:
-            self.win.iconbitmap(default=os.path.join(config.APP_DIR, "panel.ico"))
+            self.win.iconbitmap(default=os.path.join(config.APP_DIR, "metriq.ico"))
         except Exception:
             pass
         self.win.transient(self.root)

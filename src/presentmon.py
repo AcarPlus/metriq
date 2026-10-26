@@ -74,7 +74,7 @@ class PresentMon:
             return
         try:
             self.p = subprocess.Popen([self.exe, "--output_stdout", "--stop_existing_session",
-                                       "--session_name", "HWiNFOPanel"],
+                                       "--session_name", "metriQ"],
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
                                       creationflags=NOWIN, text=True, encoding="utf-8", errors="replace", bufsize=1)
         except OSError as ex:

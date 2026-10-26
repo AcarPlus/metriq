@@ -7,9 +7,9 @@ from ctypes import wintypes
 
 import config
 
-TASK_START = r"HWiNFO Panel\Start"
-TASK_STOP = r"HWiNFO Panel\Stop"
-TASK_SETINT = r"HWiNFO Panel\SetInterval"
+TASK_START = r"metriQ\Start"
+TASK_STOP = r"metriQ\Stop"
+TASK_SETINT = r"metriQ\SetInterval"
 NOWIN = 0x08000000  # CREATE_NO_WINDOW
 EXE_NAME = "HWiNFO64.EXE"
 

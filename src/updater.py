@@ -2,7 +2,7 @@
 
 Safety: only https downloads from GitHub hosts (every redirect hop is checked), the file must match the size and
 the SHA-256 digest GitHub publishes for the asset; without a digest nothing is installed.
-Testing: HWINFO_PANEL_FAKE_VERSION=<x.y.z> overrides the current version, HWINFO_PANEL_UPDATE_DRYRUN=1 makes
+Testing: METRIQ_FAKE_VERSION=<x.y.z> overrides the current version, METRIQ_UPDATE_DRYRUN=1 makes
 install() only log the command instead of starting the Setup."""
 import hashlib
 import json
@@ -15,8 +15,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-API_URL = "https://api.github.com/repos/AcarPlus/hwinfo-panel/releases/latest"
-ASSET_RE = re.compile(r"^HWiNFO-Panel-Setup-.*\.exe$")
+API_URL = "https://api.github.com/repos/AcarPlus/metriq/releases/latest"
+# metriQ-Setup-* is the current name; HWiNFO-Panel-Setup-* is the pre-1.2.0 name (back-compat, see release.yml)
+ASSET_RE = re.compile(r"^(?:metriQ-Setup|HWiNFO-Panel-Setup)-.*\.exe$")
 ALLOWED_HOSTS = ("github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com")
 INSTALL_ARGS = "/SILENT /SUPPRESSMSGBOXES /NORESTART /UPDATE"
 TIMEOUT = 6
@@ -28,8 +29,8 @@ class UpdateError(Exception):
 
 
 def current_version():
-    """Installed version (HWINFO_PANEL_FAKE_VERSION overrides it for testing)."""
-    fake = os.environ.get("HWINFO_PANEL_FAKE_VERSION", "").strip()
+    """Installed version (METRIQ_FAKE_VERSION overrides it for testing)."""
+    fake = os.environ.get("METRIQ_FAKE_VERSION", "").strip()
     if fake:
         return fake
     from version import __version__
@@ -67,7 +68,7 @@ def _opener():
 
 
 def _headers(ver, accept):
-    return {"User-Agent": f"HWiNFO-Panel/{ver}", "Accept": accept}
+    return {"User-Agent": f"metriQ/{ver}", "Accept": accept}
 
 
 def check(current):
@@ -95,7 +96,7 @@ def check(current):
             sha = ""
         page = str(rel.get("html_url") or "")
         if not _host_ok(page):
-            page = "https://github.com/AcarPlus/hwinfo-panel/releases/latest"
+            page = "https://github.com/AcarPlus/metriq/releases/latest"
         return {"version": tag.strip().lstrip("vV"), "tag": tag, "setup_url": url, "setup_name": name,
                 "size": int(a.get("size") or 0), "sha256": sha, "page_url": page}
     return None
@@ -108,7 +109,7 @@ def download(info, progress_cb=None):
     url = info["setup_url"]
     if not _host_ok(url) or not ASSET_RE.match(info.get("setup_name", "")):
         raise UpdateError("download address not allowed")
-    folder = tempfile.mkdtemp(prefix="HWiNFO-Panel-update-")
+    folder = tempfile.mkdtemp(prefix="metriQ-update-")
     path = os.path.join(folder, os.path.basename(info["setup_name"]))
     try:
         req = urllib.request.Request(url, headers=_headers(current_version(), "application/octet-stream"))
@@ -142,7 +143,7 @@ def download(info, progress_cb=None):
 def install(path):
     """Starts the Setup silently (Windows asks for administrator rights). True when it was launched."""
     cmd = f'"{path}" {INSTALL_ARGS}'
-    if os.environ.get("HWINFO_PANEL_UPDATE_DRYRUN") == "1":
+    if os.environ.get("METRIQ_UPDATE_DRYRUN") == "1":
         print("updater dry run, would start:", cmd, file=sys.stderr)
         return True
     import ctypes

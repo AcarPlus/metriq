@@ -1,5 +1,5 @@
 # Sets HWiNFO's sensor polling interval (SensorInterval, ms) and restarts HWiNFO.
-# install.ps1 copies this file to "%ProgramFiles%\HWiNFO Panel\" (administrators only); the "SetInterval" task
+# install.ps1 copies this file to "%ProgramFiles%\metriQ\" (administrators only); the "SetInterval" task
 # runs it through hidden.vbs. The value is read from a user-writable file but only accepted as a plain integer
 # and clamped to 250..60000 ms.
 param(
