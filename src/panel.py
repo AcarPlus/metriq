@@ -55,6 +55,37 @@ class Logger:
             self.w.writerow([t("csv_time")] + header)
         self.w.writerow([stamp] + values)
         self.f.flush()
+        try:
+            # straight to disk, not only to the Windows cache: after a freeze / power loss every row written
+            # so far is on disk (used to find out what happened right before a lock-up)
+            os.fsync(self.f.fileno())
+        except OSError:
+            pass
+
+
+def repair_csv_tails(folder, newest=5):
+    """After a freeze or power loss the last CSV can end in NUL bytes or a half row: cut that tail off so the
+    file opens cleanly. Only the newest few files are checked; complete files are left untouched."""
+    try:
+        files = sorted((os.path.join(folder, n) for n in os.listdir(folder) if n.lower().endswith(".csv")),
+                       key=os.path.getmtime, reverse=True)[:newest]
+    except OSError:
+        return
+    for p in files:
+        try:
+            with open(p, "rb") as f:
+                data = f.read()
+            good = data.rstrip(b"\x00")
+            if good and not good.endswith(b"\n"):
+                cut = good.rfind(b"\n")
+                good = good[:cut + 1] if cut >= 0 else b""
+            if good != data:
+                with open(p, "r+b") as f:
+                    f.truncate(len(good))
+                    f.flush()
+                    os.fsync(f.fileno())
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------- design
@@ -196,6 +227,7 @@ def main():
     cv.pack(fill="both", expand=True)
 
     logger = Logger(cfg)
+    repair_csv_tails(config.log_dir(cfg))      # a recording cut short by a freeze opens cleanly again
     stats = {}          # row.key -> [min, max, sum, count]; reset at panel start and when recording starts
     st = {"items": {}, "last": {}, "status": {}, "size": None, "ok": False, "sections": [], "sections_cfg": [],
           "auto": True, "auto_n": -1, "checked": False, "empty": None, "note": note, "settings": None,
