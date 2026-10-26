@@ -20,6 +20,7 @@ import hwctl
 import i18n
 import layout
 import settings_ui
+import themes
 import updater
 from i18n import t
 
@@ -90,15 +91,10 @@ def repair_csv_tails(folder, newest=5):
 
 
 # ---------------------------------------------------------------- design
-C = dict(bg="#0b0f14", card="#121820", stripe="#151c25", border="#1f2833", track="#1e2630",
-         fg="#f0f6fc", name="#c9d1d9", dim="#9198a1", faint="#6e7681",
-         green="#3fb950", yellow="#e3b341", orange="#f0883e", red="#f85149")
-
-
-def mix(c1, c2, tt):
-    a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
-    b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
-    return "#%02x%02x%02x" % tuple(round(x + (y - x) * tt) for x, y in zip(a, b))
+# every colour / style comes from the active theme (themes.py); C is refreshed in place when the theme changes
+C = themes.palette()
+mix = themes.mix
+THEME_KEYS = {"theme", "theme_overrides", "value_color_mode", "value_steps"}
 
 
 def round_rect(cv, x0, y0, x1, y1, r, **kw):
@@ -183,6 +179,12 @@ def pick_font(*names):
     return next((n for n in names if n in fams), "TkDefaultFont")
 
 
+def theme_font(token, *auto):
+    """The font family chosen in the theme (token), or the first installed one of the automatic choices."""
+    want = themes.current()[token]
+    return want if want and want in set(tkfont.families()) else pick_font(*auto)
+
+
 def launch_command():
     """Command line that starts this panel again (used by Windows when the taskbar button is pinned)."""
     if config.FROZEN:
@@ -197,6 +199,9 @@ def launch_command():
 def main():
     cfg, note = config.load_config()
     i18n.set_language(cfg["language"])
+    themes.configure(cfg)
+    C.clear()
+    C.update(themes.palette())
     try:  # own taskbar identity instead of "python"
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(config.APP_ID)
@@ -224,9 +229,14 @@ def main():
     root.attributes("-topmost", bool(cfg["topmost"]))
     root.minsize(400, 480)
 
-    F_TXT = pick_font("Segoe UI Variable Text", "Segoe UI")
-    F_HEAD = pick_font("Segoe UI Variable Display", "Segoe UI Semibold", "Segoe UI")
-    F_NUM = pick_font("Cascadia Mono", "Consolas")
+    F_TXT = F_HEAD = F_NUM = "TkDefaultFont"
+
+    def apply_fonts():
+        nonlocal F_TXT, F_HEAD, F_NUM
+        F_TXT = theme_font("font_text", "Segoe UI Variable Text", "Segoe UI")
+        F_HEAD = theme_font("font_head", "Segoe UI Variable Display", "Segoe UI Semibold", "Segoe UI")
+        F_NUM = theme_font("font_num", "Cascadia Mono", "Consolas")
+    apply_fonts()
     cv = tk.Canvas(root, bg=C["bg"], highlightthickness=0, bd=0)
     cv.pack(fill="both", expand=True)
 
@@ -285,6 +295,16 @@ def main():
     spin.delete(0, "end")
     spin.insert(0, f"{cfg['interval']:.1f}")
 
+    def apply_theme():
+        """Take the theme settings from cfg: palette, fonts, window colours. The caller rebuilds the canvas."""
+        themes.configure(cfg)
+        C.clear()
+        C.update(themes.palette())
+        apply_fonts()
+        root.configure(bg=C["bg"])
+        cv.configure(bg=C["bg"])
+        spin.config(bg=C["track"], fg=C["fg"], insertbackground=C["fg"], buttonbackground=C["track"])
+
     def current_hint():
         """Why there is no data (empty when everything is fine)."""
         if st["ok"]:
@@ -329,8 +349,12 @@ def main():
         st["empty"] = None
         sections = st["sections"]
         HEAD, FOOT, STATUS = layout.HEAD, layout.FOOT, layout.STATUS    # in row heights
-        p = layout.plan(sections, W, H, cfg["columns"], cfg["ui_scale"])
+        sty = themes.current()
+        R, sp = sty.radius, sty.spacing                  # card corner radius, row pitch factor
+        p = layout.plan(sections, W, H, cfg["columns"], cfg["ui_scale"], sp)
         rh, m, g = p.rh, p.m, p.g
+        rp = rh * sp                                      # row pitch (rows keep the font size of rh)
+        inset = max(6.0, R * 0.4)                         # zebra stripes stay inside rounded corners
         fs_name0, fs_num = -max(10, int(rh * 0.50)), -max(10, int(rh * 0.52))
         fs_small, fs_head = -max(9, int(rh * 0.38)), -max(11, int(rh * 0.62))
         # ----- column geometry (fractions of the column width); no bar column in narrow columns
@@ -376,19 +400,19 @@ def main():
             col_min, col_max, col_avg = cx0 + cw * fr["mn"], cx0 + cw * fr["mx"], cx1 - pad
             yy = m
             for sec in col_secs:
-                accent = sec.color
+                accent = themes.accent_for(sec.icon, sec.color)
                 hh, pb = rh * HEAD, rh * FOOT
-                ch = hh + len(sec.rows) * rh + pb
+                ch = hh + len(sec.rows) * rp + pb
                 hy = yy + hh * 0.5
                 bubble = mix(C["card"], accent, 0.16)
                 if GFX:
                     bx0, by0 = int(round(cx0)), int(round(yy))
-                    cv.create_image(bx0, by0, image=gfx.card(int(round(cx1)) - bx0, int(round(yy + ch)) - by0, 16,
+                    cv.create_image(bx0, by0, image=gfx.card(int(round(cx1)) - bx0, int(round(yy + ch)) - by0, R,
                                                              C["card"], C["border"], accent), anchor="nw")
                     cv.create_image(col_name + isz * 1.6, hy, image=gfx.icon(sec.icon, isz, accent, bubble, bubble))
                 else:
-                    round_rect(cv, cx0, yy, cx1, yy + ch, 16, fill=C["card"], outline=C["border"])
-                    cv.create_line(cx0 + 1.5, yy + 16, cx0 + 1.5, yy + ch - 16, fill=accent, width=3)
+                    round_rect(cv, cx0, yy, cx1, yy + ch, R, fill=C["card"], outline=C["border"])
+                    cv.create_line(cx0 + 1.5, yy + R, cx0 + 1.5, yy + ch - R, fill=accent, width=3)
                     cv.create_oval(col_name, hy - isz * 1.6, col_name + isz * 3.2, hy + isz * 1.6, fill=bubble,
                                    outline="")
                     draw_icon(cv, sec.icon, col_name + isz * 1.6, hy, isz, accent, bubble)
@@ -408,8 +432,8 @@ def main():
                 ry = yy + hh
                 for i, row in enumerate(sec.rows):
                     if i % 2:
-                        cv.create_rectangle(cx0 + 6, ry, cx1 - 6, ry + rh, fill=C["stripe"], outline="")
-                    my = ry + rh / 2
+                        cv.create_rectangle(cx0 + inset, ry, cx1 - inset, ry + rp, fill=C["stripe"], outline="")
+                    my = ry + rp / 2
                     cv.create_text(col_name, my, text=fit_text(fnt_name, row.name, name_avail), anchor="w",
                                    font=f_name, fill=C["name"])
                     it = {"accent": accent}
@@ -425,7 +449,7 @@ def main():
                     for k, xx in (("min", col_min), ("max", col_max), ("avg", col_avg)):
                         it[k] = cv.create_text(xx, my, text="–", anchor="e", font=f_num, fill=C["dim"])
                     st["items"][id(row)] = it
-                    ry += rh
+                    ry += rp
                 yy += ch + g
         # ----- status bar (full width, a single row: record pill, mode switch, interval, reset, gear);
         # messages are shown as small toasts just above it (see draw_toasts)
@@ -441,10 +465,10 @@ def main():
         s["gfx"] = GFX
         if GFX:
             bx0, by0 = int(round(sx0)), int(round(sy))
-            cv.create_image(bx0, by0, image=gfx.card(int(round(sx1)) - bx0, int(round(sy + sb_h)) - by0, 16,
+            cv.create_image(bx0, by0, image=gfx.card(int(round(sx1)) - bx0, int(round(sy + sb_h)) - by0, R,
                                                      C["card"], C["border"]), anchor="nw")
         else:
-            round_rect(cv, sx0, sy, sx1, sy + sb_h, 16, fill=C["card"], outline=C["border"])
+            round_rect(cv, sx0, sy, sx1, sy + sb_h, R, fill=C["card"], outline=C["border"])
         my = sy + sb_h / 2
         pw, ph = min(sw_span * 0.25, max(rs * 6.8, 130)), rs * 1.1
         px0 = col_name - 6
@@ -472,7 +496,7 @@ def main():
         if GFX:                                  # whole pixels: the track image and the knob stay aligned
             tx0, sw_w, sw_h = float(round(tx0)), float(round(sw_w)), float(2 * round(sw_h / 2))
             kmy = round(my - sw_h / 2) + sw_h / 2
-            s["track_fn"] = lambda all_: gfx.track(sw_w, sw_h, mix(C["track"], "#58a6ff", 0.55) if all_ else C["track"],
+            s["track_fn"] = lambda all_: gfx.track(sw_w, sw_h, mix(C["track"], C["ui"], 0.55) if all_ else C["track"],
                                                    C["border"])
             s["sw_track"] = cv.create_image(tx0, round(my - sw_h / 2), image=s["track_fn"](cfg.get("log_all", False)),
                                             anchor="nw", tags="modebtn")
@@ -522,7 +546,7 @@ def main():
             cv.tag_bind(tag, "<Enter>", lambda e: cv.config(cursor="hand2"))
             cv.tag_bind(tag, "<Leave>", lambda e: cv.config(cursor=""))
 
-        acc = layout.ICON_COLORS["gauge"]
+        acc = themes.accent("gauge")
 
         def gear_hover(on):
             bgc = mix(C["card"], acc, 0.16) if on else C["card"]
@@ -629,7 +653,7 @@ def main():
         else:
             cv.itemconfig(s["pill"], fill=mix(C["card"], C["green"] if on else C["red"], 0.18))
             cv.itemconfig(s["dot"], fill=C["green"] if on else C["red"])
-            cv.itemconfig(s["sw_track"], fill=mix(C["track"], "#58a6ff", 0.55) if all_ else C["track"])
+            cv.itemconfig(s["sw_track"], fill=mix(C["track"], C["ui"], 0.55) if all_ else C["track"])
         cv.itemconfig(s["txt"], text=t("log_on") if on else t("log_off"))
         cv.itemconfig(s["sw_l"], fill=C["faint"] if all_ else C["fg"])
         cv.itemconfig(s["sw_r"], fill=C["fg"] if all_ else C["faint"])
@@ -863,6 +887,9 @@ def main():
             set_layout_cfg(cfg[lay_key])
             logger.close()
             need_build = True
+        if THEME_KEYS & set(real):
+            apply_theme()
+            need_build = True
         if "topmost" in real:
             root.attributes("-topmost", bool(cfg["topmost"]))
         if "check_updates" in real:
@@ -897,7 +924,8 @@ def main():
         refresh_status()
         return ok
 
-    api = types.SimpleNamespace(root=root, cfg=cfg, C=C, fonts=(F_TXT, F_HEAD, F_NUM), apply=apply_settings, layout=layout_snapshot, readings=read_now,
+    api = types.SimpleNamespace(root=root, cfg=cfg, C=C, fonts=(F_TXT, F_HEAD, F_NUM), fonts_now=lambda: (F_TXT, F_HEAD, F_NUM),
+                                apply=apply_settings, layout=layout_snapshot, readings=read_now,
                                 monitor=panel_monitor, refresh_tasks=refresh_tasks,
                                 detect=hwctl.detect_hwinfo, monitors=config.monitors, source=src)
 
@@ -921,11 +949,11 @@ def main():
         """(text, colour, clickable) of the update notice in the status bar; text '' = nothing to show."""
         info = st["upd"]
         if st["upd_busy"]:
-            return t("upd_downloading", p=st["upd_prog"]), layout.ICON_COLORS["gauge"], False
+            return t("upd_downloading", p=st["upd_prog"]), themes.accent("gauge"), False
         if time.time() - st["upd_err"] < 5:
             return t("upd_failed"), C["red"], False
         if info and cfg.get("check_updates", True) and info["version"] != st["upd_dismissed"]:
-            return t("upd_available", v=info["version"]), layout.ICON_COLORS["gauge"], True
+            return t("upd_available", v=info["version"]), themes.accent("gauge"), True
         return "", None, False
 
     def upd_worker(gen):

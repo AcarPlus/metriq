@@ -25,6 +25,10 @@ DEFAULTS = {
     "window_mode": "maximized",      # "maximized" | "fullscreen" | "window"
     "columns": "auto",               # "auto" | 1 | 2 | 3 (auto: 1 on portrait screens, else 2 or 3 by aspect ratio)
     "ui_scale": 100,                 # row height / font scale in percent (80 - 150), never larger than fits
+    "theme": "dark",                 # built-in theme, see themes.py (dark, oled, nord, dracula, catppuccin, tokyo, ...)
+    "theme_overrides": {},           # any theme token on top of the theme, e.g. {"bg": "#101010", "radius": 8}
+    "value_color_mode": "smooth",    # "smooth" (gradient) | "stepped" (3-5 flat colour bands)
+    "value_steps": [],               # stepped: [] = 4 equal bands, or 2-4 thresholds in % of each row's range
     "topmost": True,
     "check_updates": True,           # look for a newer release on GitHub at start and every 24 h (README: Privacy)
     "interval": 5.0,                 # CSV logging interval, seconds (0.5 - 30)
