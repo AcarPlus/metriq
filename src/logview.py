@@ -21,6 +21,7 @@ from tkinter import filedialog
 import config
 import crashscan
 import gfx
+import helptexts
 import i18n
 import logdata
 import themes
@@ -56,6 +57,14 @@ i18n.register({
         "lv_err": "Could not read the recording: {e}", "lv_more": "+{n} more", "lv_stride": "every {k}th row shown",
         "lv_gap_lbl": "Gap {d}", "lv_end_lbl": "Ended abruptly", "lv_pick_file": "Recording (CSV)",
         "lv_no_data": "No data in this range.", "lv_sort": "Sort by",
+        "hp_lv_nav": "Mouse wheel zooms around the pointer, dragging moves the view, a click pins a marker (click it "
+                     "again to remove it) and a double click shows the whole recording. Shift + wheel, the arrow keys "
+                     "and + / - work too.",
+        "hp_lv_recs": "Your recordings, newest first. A red tag means the recording ended abruptly (crash, freeze or "
+                      "power loss), a yellow one means rows are missing in between. Green means it is still being written.",
+        "hp_lv_series": "Pick what to draw. The buttons above the chart select a ready-made group. Series with the "
+                        "same unit share an axis; a different unit gets its own axis on the right. When there are more "
+                        "rows than pixels, each pixel shows the lowest and highest value as a band.",
     },
     "tr": {
         "lv_title": "Kayıt görüntüleyici", "lv_open": "Kayıtları görüntüle", "lv_open_at": "Görüntüleyicide aç",
@@ -81,6 +90,14 @@ i18n.register({
         "lv_err": "Kayıt okunamadı: {e}", "lv_more": "+{n} tane daha", "lv_stride": "her {k}. satır gösteriliyor",
         "lv_gap_lbl": "Boşluk {d}", "lv_end_lbl": "Ani bitti", "lv_pick_file": "Kayıt (CSV)",
         "lv_no_data": "Bu aralıkta veri yok.", "lv_sort": "Sırala",
+        "hp_lv_nav": "Tekerlek imlecin olduğu yeri yakınlaştırır, sürükleme görünümü kaydırır, tıklama bir işaret "
+                     "bırakır (tekrar tıklayınca kalkar), çift tıklama kaydın tamamını gösterir. Shift + tekerlek, "
+                     "ok tuşları ve + / - da çalışır.",
+        "hp_lv_recs": "Kayıtların, en yenisi üstte. Kırmızı etiket kaydın ani bittiğini (çökme, donma ya da elektrik "
+                      "kesintisi), sarı etiket arada satır eksik olduğunu gösterir. Yeşil: kayıt hâlâ yazılıyor.",
+        "hp_lv_series": "Çizilecekleri seç. Grafiğin üstündeki düğmeler hazır bir grubu seçer. Birimi aynı olan seriler "
+                        "aynı ekseni paylaşır; farklı birim sağda kendi eksenini alır. Satır sayısı piksel sayısından "
+                        "çoksa her piksel en düşük ve en yüksek değeri bir bant olarak gösterir.",
     },
 })
 
@@ -657,6 +674,7 @@ class Viewer:
         tk.Label(head, text=t("lv_recs"), bg=C["bg"], fg=C["fg"], font=(self.F_TXT, 12, "bold")).pack(side="left")
         self.rec_count = tk.Label(head, text="", bg=C["bg"], fg=C["dim"], font=(self.F_TXT, 9))
         self.rec_count.pack(side="left", padx=(8, 0), pady=(3, 0))
+        helptexts.info_icon(head, "lv_recs", bg=C["bg"]).pack(side="right")
         self.v_rsearch = tk.StringVar()
         self.v_rsearch.trace_add("write", lambda *a: self.rebuild_rec_rows())
         self._entry(left, self.v_rsearch, t("lv_search")).pack(fill="x", pady=(8, 8), ipady=4)
@@ -700,10 +718,7 @@ class Viewer:
         info.grid(row=2, column=0, sticky="ew", pady=(8, 4))
         self.info_l = tk.Label(info, text="", bg=C["bg"], fg=C["name"], font=(self.F_TXT, 9), anchor="w")
         self.info_l.pack(side="left")
-        self.info_r = tk.Label(info, text="?", bg=C["track"], fg=C["dim"], font=(self.F_TXT, 9, "bold"), width=2,
-                               cursor="question_arrow")
-        self.info_r.pack(side="right")
-        tooltip.Tooltip(self.info_r, t("lv_hint"), delay_ms=150)
+        helptexts.info_icon(info, "lv_nav", bg=C["bg"]).pack(side="right")
         self.strip = tk.Canvas(mid, height=96, bg=C["card"], highlightthickness=1, highlightbackground=C["border"],
                                bd=0)
         self.strip.grid(row=3, column=0, sticky="ew")
@@ -718,6 +733,7 @@ class Viewer:
         tk.Label(ph, text=t("lv_series"), bg=C["bg"], fg=C["fg"], font=(self.F_TXT, 12, "bold")).pack(side="left")
         self.sel_count = tk.Label(ph, text="", bg=C["bg"], fg=C["dim"], font=(self.F_TXT, 9))
         self.sel_count.pack(side="left", padx=(8, 0), pady=(3, 0))
+        helptexts.info_icon(ph, "lv_series", bg=C["bg"]).pack(side="right")
         self.v_ssearch = tk.StringVar()
         self.v_ssearch.trace_add("write", lambda *a: self.rebuild_pick_rows())
         self._entry(self.right, self.v_ssearch, t("lv_series_search")).pack(fill="x", pady=(8, 8), ipady=4)
@@ -1006,8 +1022,9 @@ class Viewer:
         if not idxs:
             return
         self.last_pick_key = key
-        self.expanded |= {self.rec.by_idx[i].cat for i in idxs}
+        self.expanded = {self.rec.by_idx[i].cat for i in idxs}      # picker: just the groups of this preset
         self.set_selection(idxs)
+        self.plist.set_rows(self.plist.rows, keep=False)
 
     def clear_sel(self):
         self.set_selection([])
@@ -1607,8 +1624,9 @@ class Viewer:
             if len(sg) >= 2:
                 upper = [(x, ymap(e[3])) for x, e in zip(xs, sg)]
                 lower = [(x, ymap(e[1])) for x, e in zip(xs, sg)]
-                if any(abs(a[1] - b[1]) > 0.8 for a, b in zip(upper, lower)):
-                    pw.polygon(upper + lower[::-1], col, 70)
+                for a, b in zip(upper, lower):                    # min..max band: one translucent bar per pixel column
+                    if b[1] - a[1] > 0.8:
+                        pw.rect(a[0] - 0.5, a[1], a[0] + 0.5, b[1], col, 70)
                 pw.polyline(mean, col, 1.7)
             else:
                 pw.dots(mean, 1.6, col)
