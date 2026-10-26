@@ -48,8 +48,8 @@ DURATION = {"quick": {"cpu": 60, "ram": 16, "ssd": 30, "gpu": 60},
             "detailed": {"cpu": 190, "ram": 60, "ssd": 105, "gpu": 185}}
 
 # ---------------------------------------------------------------------------------------------- reference
-# Scores are normalised so that the metriQ developer's PC (AMD Ryzen 7 9700X, 32 GB DDR5, NVMe SSD, GeForce RTX 5070 Ti,
-# Python 3.13, 2026-10-27) gets about 1000 points per test. Units: CPU kernel iterations / s, GB/s, ns, MB/s, GFLOPS.
+# Scores are normalised so that a fixed reference desktop (current-generation 8-core CPU, DDR5, NVMe SSD,
+# upper mid-range GPU) gets about 1000 points per test. Units: CPU kernel iterations / s, GB/s, ns, MB/s, GFLOPS.
 # Scores are only comparable inside metriQ (same version).
 REF = {
     "cpu": {"single_int": 5.52e6, "single_float": 14.95e6, "multi_int": 48.9e6, "multi_float": 125.1e6},
