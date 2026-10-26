@@ -20,6 +20,8 @@ import gfx
 import hwctl
 import i18n
 import layout
+import proclog
+import procwin
 import settings_ui
 import themes
 import updater
@@ -37,6 +39,7 @@ class Logger:
         self.cfg = cfg
         self.f = self.w = self.path = None
         self.last = 0
+        self.ext = None                 # proclog.Extras: per-process columns / side file / size limit
         self.delim, self.dec = config.csv_format(cfg)
 
     def num(self, v, dec):
@@ -48,16 +51,26 @@ class Logger:
             self.f.close()
             crashscan.mark_closed(self.path)      # clean stop (the crash detective looks for recordings without it)
         self.f = self.w = self.path = None
+        if self.ext:
+            self.ext.closed()
 
     def write(self, stamp, header, values):
+        if self.f is not None and self.ext and self.ext.rotate(self.f):
+            self.close()                # log_max_mb reached: continue in a new file
         if self.f is None:
             d = config.log_dir(self.cfg)
             os.makedirs(d, exist_ok=True)
-            self.path = os.path.join(d, stamp.replace(" ", "_").replace(":", "-") + ".csv")
+            base = os.path.join(d, stamp.replace(" ", "_").replace(":", "-"))
+            self.path, n = base + ".csv", 1
+            while os.path.exists(self.path):          # a file of this very second already exists (size limit)
+                n += 1
+                self.path = f"{base}_{n}.csv"
             self.f = open(self.path, "a", newline="", encoding="utf-8-sig")
             crashscan.mark_open(self.path)
             self.w = csv.writer(self.f, delimiter=self.delim)
             self.w.writerow([t("csv_time")] + header)
+            if self.ext:
+                self.ext.opened(self.path, len(header) + 1)
         self.w.writerow([stamp] + values)
         self.f.flush()
         try:
@@ -66,6 +79,8 @@ class Logger:
             os.fsync(self.f.fileno())
         except OSError:
             pass
+        if self.ext:
+            self.ext.written(self.f, stamp)
 
 
 def repair_csv_tails(folder, newest=5):
@@ -244,6 +259,7 @@ def main():
     cv.pack(fill="both", expand=True)
 
     logger = Logger(cfg)
+    logger.ext = proclog.Extras(cfg, logger)
     repair_csv_tails(config.log_dir(cfg))      # a recording cut short by a freeze opens cleanly again
     stats = {}          # row.key -> [min, max, sum, count]; reset at panel start and when recording starts
     st = {"items": {}, "last": {}, "status": {}, "size": None, "ok": False, "sections": [], "sections_cfg": [],
@@ -437,8 +453,9 @@ def main():
                     if i % 2:
                         cv.create_rectangle(cx0 + inset, ry, cx1 - inset, ry + rp, fill=C["stripe"], outline="")
                     my = ry + rp / 2
-                    cv.create_text(col_name, my, text=fit_text(fnt_name, row.name, name_avail), anchor="w",
-                                   font=f_name, fill=C["name"])
+                    nm_id = cv.create_text(col_name, my, text=fit_text(fnt_name, row.name, name_avail), anchor="w",
+                                           font=f_name, fill=C["name"])
+                    procs.tag_row(cv, nm_id, row)          # CPU / RAM / GPU / VRAM / disk rows open the process window
                     it = {"accent": accent}
                     if row.bar and p.with_bar:
                         bh = max(4, rh * 0.22)
@@ -609,6 +626,7 @@ def main():
         utxt, ucol, uclick = upd_state()
         if utxt:
             msgs.append((utxt, ucol, "upd" if uclick else "updbusy"))
+        msgs.extend(logger.ext.toasts(C))
         return msgs
 
     def draw_toasts(msgs):
@@ -905,7 +923,7 @@ def main():
                 if manage_on() and not hwctl.proc_running():
                     hwctl.run_task(hwctl.TASK_START)
                     st["last_restart"] = time.time()
-        if {"log_dir", "csv_delimiter", "csv_decimal", "log_all", "logging"} & set(real):
+        if {"log_dir", "csv_delimiter", "csv_decimal", "log_all", "logging", "proc_top", "proc_detail"} & set(real):
             if "logging" in real and cfg["logging"]:
                 stats.clear()
             logger.close()                 # next row starts a new file with the new folder / format / mode
@@ -931,6 +949,9 @@ def main():
                                 apply=apply_settings, layout=layout_snapshot, readings=read_now,
                                 monitor=panel_monitor, refresh_tasks=refresh_tasks,
                                 detect=hwctl.detect_hwinfo, monitors=config.monitors, source=src)
+
+    procs = procwin.Controller(api)
+    api.procs = procs
 
     def open_settings(e=None):
         w = st["settings"]
@@ -1111,6 +1132,7 @@ def main():
                     x0, x1, y0, y1 = it["bargeo"]
                     cv.coords(it["bar"], x0, y0, x0 + (x1 - x0) * layout.frac(row, v), y1)
                     cv.itemconfig(it["bar"], fill=col)
+        logger.ext.update()                 # process sampling runs only while the recording needs it
         if not frozen and ok and cfg["logging"] and rows and now - logger.last >= cfg["interval"] - 0.05:
             logger.last = now
             try:
@@ -1120,6 +1142,7 @@ def main():
                 else:
                     hdr = [f"{r.name} ({r.unit_eff})" for r in rows]
                     vals = logvals
+                hdr, vals = hdr + logger.ext.header(), vals + logger.ext.values()
                 logger.write(time.strftime("%Y-%m-%d %H:%M:%S"), hdr, vals)
             except Exception:
                 st["log_err"] = time.time()
@@ -1128,6 +1151,8 @@ def main():
 
     def on_close():
         st["closing"] = True
+        procs.close()
+        logger.ext.shutdown()
         logger.close()
         src.close()
         if bool(cfg["manage_hwinfo"]) and st["tasks"] and (hw_active() or st.get("hw_used")):

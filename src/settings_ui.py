@@ -19,6 +19,7 @@ import crashscan_ui
 import hwctl
 import i18n
 import layout
+import procset
 import themes
 import version
 from settings_theme import ThemeTab
@@ -439,6 +440,7 @@ class SettingsWindow:
         self.dec_vals = decs
         self.cb_dec = self.combo(p, [t("st_auto") if d == "auto" else d for d in decs], decs.index(cur), 14)
         self._grid_row(p, 6, t("st_decimal"), self.cb_dec)
+        self.procs = procset.ProcSection(self, p, cfg, 7)         # per-process CSV options (procset.py)
 
     def browse_logdir(self):
         d = filedialog.askdirectory(parent=self.win, initialdir=config.log_dir({"log_dir": self.v_logdir.get()})
@@ -965,6 +967,7 @@ class SettingsWindow:
             "log_dir": self.v_logdir.get().strip(),
             "csv_delimiter": self.delim_vals[max(0, self.cb_delim.current())],
             "csv_decimal": self.dec_vals[max(0, self.cb_dec.current())],
+            **self.procs.values(),
             "backend": self.be_vals[max(0, self.cb_backend.current())],
             "lhm_url": self.v_lhm.get().strip() or "auto",
             "presentmon_path": self.v_pm.get().strip(),
