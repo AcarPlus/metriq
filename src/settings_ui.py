@@ -363,6 +363,9 @@ class SettingsWindow:
         self.e_scale = self.spinbox(p, self.v_scale, config.SCALE_MIN, config.SCALE_MAX, 5, "%.0f", 6)
         self._grid_row(p, 5, t("st_scale"), self.e_scale, t("st_scale_hint"))
 
+        self.v_upd = tk.BooleanVar(value=bool(cfg.get("check_updates", True)))
+        Check(p, t("st_check_updates"), self.v_upd, self.C, (self.F_TXT, 10)).grid(row=6, column=1, sticky="w", pady=6)
+
         def ok_scale():
             v = _to_float(self.v_scale.get())
             return config.SCALE_MIN <= v <= config.SCALE_MAX and v == int(v)
@@ -943,6 +946,7 @@ class SettingsWindow:
             "monitor": self.mon_vals[max(0, self.cb_mon.current())],
             "window_mode": self.wm_vals[max(0, self.cb_wm.current())],
             "topmost": bool(self.v_top.get()),
+            "check_updates": bool(self.v_upd.get()),
             "ui_scale": num(self.v_scale.get(), int, self.v_scale.get()),
             "interval": num(self.v_interval.get(), lambda v: round(v, 1), self.v_interval.get()),
             "logging": bool(self.v_logging.get()),

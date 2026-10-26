@@ -4,11 +4,14 @@ import csv
 import math
 import os
 import sys
+import queue
+import threading
 import time
 import tkinter as tk
 import tkinter.font as tkfont
 import traceback
 import types
+import webbrowser
 
 import backend
 import config
@@ -16,6 +19,7 @@ import hwctl
 import i18n
 import layout
 import settings_ui
+import updater
 from i18n import t
 
 HERE = config.APP_DIR        # source folder, or the bundled resources when frozen (PyInstaller)
@@ -196,7 +200,10 @@ def main():
     st = {"items": {}, "last": {}, "status": {}, "size": None, "ok": False, "sections": [], "sections_cfg": [],
           "auto": True, "auto_n": -1, "checked": False, "empty": None, "note": note, "settings": None,
           "hw_exe": hwctl.detect_hwinfo(cfg["hwinfo_path"]), "tasks": hwctl.tasks_installed(),
-          "mon": config.pick_monitor(cfg["monitor"]), "mode": str(cfg["window_mode"]).lower()}
+          "mon": config.pick_monitor(cfg["monitor"]), "mode": str(cfg["window_mode"]).lower(),
+          "upd": None, "upd_busy": False, "upd_prog": 0, "upd_err": 0, "upd_gen": 0, "upd_after": None,
+          "closing": False}
+    upd_q = queue.Queue()          # worker threads -> Tk (drained by upd_pump via root.after)
 
     def hwinfo_managed():
         """The panel starts / stops HWiNFO itself (option on, install.ps1 tasks present, HWiNFO installed)."""
@@ -429,8 +436,14 @@ def main():
         spin.config(font=(F_NUM, -max(10, int(rs * 0.52))))
         cv.create_window(spin_r, my, window=spin, anchor="e", width=spin_w, height=rs * 1.0)
         s["info"] = cv.create_text(col_name, iy, text="", anchor="w", font=(F_TXT, fs_sw), fill=C["dim"])
+        # update notice (right end of the info line): clickable when a newer release was found
+        s["upd"] = cv.create_text(sx1 - spad, iy, text="", anchor="e", font=(F_TXT, fs_sw, "bold"),
+                                  fill=layout.ICON_COLORS["gauge"], state="hidden", tags="updbtn")
+        s["f_info"] = meas_font(F_TXT, fs_sw)
+        s["f_upd"] = meas_font(F_TXT, fs_sw, "bold")
+        s["info_w"] = (sx1 - spad) - col_name
         for tag, fn in (("logbtn", toggle), ("modebtn", toggle_mode), ("gearbtn", open_settings),
-                        ("resetbtn", reset_stats)):
+                        ("resetbtn", reset_stats), ("updbtn", upd_click)):
             cv.tag_bind(tag, "<Button-1>", fn)
             cv.tag_bind(tag, "<Enter>", lambda e: cv.config(cursor="hand2"))
             cv.tag_bind(tag, "<Leave>", lambda e: cv.config(cursor=""))
@@ -490,6 +503,13 @@ def main():
             info = st["note"] + "   ·   " + info
         if time.time() - st.get("reset_note", 0) < 3:
             info = "✓ " + t("reset_done") + "   ·   " + info
+        utxt, ucol, uclick = upd_state()
+        if utxt:
+            info = fit_text(s["f_info"], info, s["info_w"] - s["f_upd"].measure(utxt) - 24)
+            cv.itemconfig(s["upd"], text=utxt, fill=ucol, state="normal")
+            cv.itemconfig(s["upd"], tags=("updbtn",) if uclick else ())
+        else:
+            cv.itemconfig(s["upd"], state="hidden")
         cv.itemconfig(s["info"], text=info, fill=C["dim"] if st["ok"] else C["red"])
         if st["empty"]:
             cv.itemconfig(st["empty"], text=t("hint_empty") + ("\n\n" + hint if hint else ""))
@@ -711,6 +731,8 @@ def main():
             need_build = True
         if "topmost" in real:
             root.attributes("-topmost", bool(cfg["topmost"]))
+        if "check_updates" in real:
+            upd_reschedule(1000)
         if "hwinfo_path" in real:
             st["hw_exe"] = hwctl.detect_hwinfo(cfg["hwinfo_path"])
         if {"backend", "lhm_url", "presentmon_path"} & set(real):
@@ -759,6 +781,104 @@ def main():
             st["settings"] = settings_ui.SettingsWindow(api)
         except Exception:
             traceback.print_exc()
+
+    # ------------------------------------------------------------ updates
+    def upd_state():
+        """(text, colour, clickable) of the update notice in the status bar; text '' = nothing to show."""
+        info = st["upd"]
+        if st["upd_busy"]:
+            return t("upd_downloading", p=st["upd_prog"]), layout.ICON_COLORS["gauge"], False
+        if time.time() - st["upd_err"] < 5:
+            return t("upd_failed"), C["red"], False
+        if info and cfg.get("check_updates", True):
+            return t("upd_available", v=info["version"]), layout.ICON_COLORS["gauge"], True
+        return "", None, False
+
+    def upd_worker(gen):
+        try:
+            res = updater.check(updater.current_version())
+        except Exception:
+            res = None                                  # offline / rate limit / bad JSON: silent
+        upd_q.put(("found", gen, res))
+
+    def upd_cycle():
+        """Runs 5 s after start and then every 24 h while the option is on."""
+        st["upd_after"] = None
+        if st["closing"] or not cfg.get("check_updates", True):
+            return
+        threading.Thread(target=upd_worker, args=(st["upd_gen"],), daemon=True).start()
+        st["upd_after"] = root.after(24 * 3600 * 1000, upd_cycle)
+
+    def upd_reschedule(first_ms):
+        """(Re)starts or stops the periodic check (option toggled in Settings, or start-up)."""
+        if st["upd_after"] is not None:
+            try:
+                root.after_cancel(st["upd_after"])
+            except Exception:
+                pass
+            st["upd_after"] = None
+        st["upd_gen"] += 1                              # results of a check that is still running are dropped
+        if cfg.get("check_updates", True):
+            st["upd_after"] = root.after(first_ms, upd_cycle)
+        else:
+            st["upd"] = None
+            refresh_status()
+
+    def upd_pump():
+        """Hands worker results to the Tk thread."""
+        if st["closing"]:
+            return
+        try:
+            while True:
+                kind, *a = upd_q.get_nowait()
+                if kind == "found":
+                    gen, res = a
+                    if gen == st["upd_gen"] and cfg.get("check_updates", True):
+                        st["upd"] = res
+                elif kind == "dl_ok":
+                    st["upd_busy"] = False
+                    ok = False
+                    try:
+                        ok = updater.install(a[0])
+                    except Exception:
+                        pass
+                    if ok:
+                        on_close()                      # the Setup replaces the files: leave cleanly
+                        return
+                    st["upd_err"] = time.time()
+                elif kind == "dl_err":
+                    st["upd_busy"] = False
+                    st["upd_err"] = time.time()
+                refresh_status()
+        except queue.Empty:
+            pass
+        except Exception:
+            traceback.print_exc()
+        root.after(300, upd_pump)
+
+    def upd_download(info):
+        def cb(p):
+            st["upd_prog"] = p
+        try:
+            upd_q.put(("dl_ok", updater.download(info, cb)))
+        except Exception:
+            upd_q.put(("dl_err",))
+
+    def upd_click(e=None):
+        info = st["upd"]
+        if not info or st["upd_busy"] or time.time() - st["upd_err"] < 5:
+            return
+        import tkinter.messagebox as mb
+        cur = updater.current_version()
+        if not config.FROZEN:                           # running from source: nothing to install, show the release
+            if mb.askyesno(config.APP_NAME, t("upd_confirm_src", v=info["version"], cur=cur), parent=root):
+                webbrowser.open(info["page_url"])
+            return
+        if not mb.askyesno(config.APP_NAME, t("upd_confirm", v=info["version"], cur=cur), parent=root):
+            return
+        st["upd_busy"], st["upd_prog"] = True, 0
+        refresh_status()
+        threading.Thread(target=upd_download, args=(info,), daemon=True).start()
 
     # ------------------------------------------------------------ data
     def tick():
@@ -836,6 +956,7 @@ def main():
         root.after(500, tick)
 
     def on_close():
+        st["closing"] = True
         logger.close()
         src.close()
         if bool(cfg["manage_hwinfo"]) and st["tasks"] and (hw_active() or st.get("hw_used")):
@@ -852,6 +973,8 @@ def main():
     # when opened from a shortcut Windows puts the window on the clicked screen: move it, then maximise
     root.after(200, lambda: place(final=True))
     root.after(400, tick)
+    root.after(300, upd_pump)
+    upd_reschedule(5000)
     root.mainloop()
 
 

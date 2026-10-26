@@ -51,6 +51,8 @@ Türkçe açıklama için aşağıya bakın: [Türkçe](#türkçe).
   hide rows, names, colour limits, bars, section titles / colours / order, "Add sensor" from the live sensor list).
   Changes apply live. The *Data source* tab also lists which data the active source cannot provide, and why.
 - **Multi-column layout** for wide screens: sections are distributed over 1 to 3 columns (automatic by window shape).
+- **Updates**: the panel checks GitHub for a newer release and, after you confirm, downloads and installs it
+  (checksum verified); can be turned off in Settings.
 - English and Turkish UI (follows the Windows display language by default).
 - Pure Python standard library; no packages to install (`psutil` is an optional fallback, see below).
 
@@ -189,6 +191,7 @@ Set the environment variable `HWINFO_PANEL_DIR` to use another folder (portable 
 | `columns` | `"auto"`, `1`, `2`, `3` | number of columns; `auto` = 1 on a portrait window, otherwise 3 if width / height is 2.0 or more, else 2. Whole sections are distributed in order, a section is never split |
 | `ui_scale` | 80 to 150 | row height / font scale in percent (rows never exceed the available height) |
 | `topmost` | `true` / `false` | keep the window on top |
+| `check_updates` | `true` / `false` | check GitHub for a newer release at start and every 24 h (see [Privacy](#privacy)) |
 | `interval` | 0.5 to 30 | CSV logging interval in seconds |
 | `logging` | `true` / `false` | recording on/off (also toggled in the panel) |
 | `log_all` | `true` / `false` | `false` = only the rows shown, `true` = every sensor reading of the source |
@@ -265,6 +268,12 @@ Everything stays on your PC. The panel reads HWiNFO's local shared memory, Libre
 this PC (`127.0.0.1` by default) or Windows' own counters, and writes only the files above. The only network
 access is the optional HWiNFO download during Setup (via winget, only when you tick "Also install HWiNFO64").
 HWiNFO and LibreHardwareMonitor are separate programs with their own privacy policies.
+
+Update check: at start and then every 24 hours the panel asks GitHub (`api.github.com`) whether a newer release
+exists. Only the public release information is requested; no personal or sensor data is sent. You can turn this off
+in Settings (*Appearance*: "Check for updates automatically", or `"check_updates": false`). A new version is
+downloaded and installed only after you confirm it, and only if its SHA-256 checksum matches the one GitHub
+publishes for the file.
 
 ## Code signing policy
 
@@ -371,6 +380,12 @@ dosyada kalır.
 işareti varsayılan olarak Windows bölge ayarlarından alınır (Türkçe Excel için `;` ve `,`).
 **Gizlilik:** veriler bilgisayarınızdan çıkmaz; tek ağ bağlantısı (LHM kaynağında) bu bilgisayardaki
 LibreHardwareMonitor web sunucusunadır (`127.0.0.1`). Kurulumda "HWiNFO64'ü de kur" seçilirse HWiNFO winget ile indirilir.
+Güncelleme denetimi: panel açılışta ve sonra her 24 saatte bir GitHub'a (`api.github.com`) yeni sürüm olup
+olmadığını sorar; yalnızca herkese açık sürüm bilgisi istenir, kişisel veya sensör verisi gönderilmez. Bunu
+Ayarlar'dan (*Görünüm*: "Güncellemeleri otomatik denetle", ya da `"check_updates": false`) kapatabilirsiniz. Yeni sürüm
+yalnızca siz onayladıktan sonra indirilip kurulur ve dosyanın SHA-256 özeti GitHub'ın yayınladığıyla eşleşmezse kurulmaz.
+
+**Güncellemeler:** panel GitHub'daki yeni sürümü denetler ve onayınızla indirip kurar (özet doğrulanır); Ayarlar'dan kapatılabilir.
 
 **Kod imzalama:** Ücretsiz kod imzalama [SignPath.io](https://about.signpath.io), sertifika
 [SignPath Foundation](https://signpath.org) tarafından sağlanır (başvuru aşamasında; o zamana kadar sürümler

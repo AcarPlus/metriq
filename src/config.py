@@ -26,6 +26,7 @@ DEFAULTS = {
     "columns": "auto",               # "auto" | 1 | 2 | 3 (auto: 1 on portrait screens, else 2 or 3 by aspect ratio)
     "ui_scale": 100,                 # row height / font scale in percent (80 - 150), never larger than fits
     "topmost": True,
+    "check_updates": True,           # look for a newer release on GitHub at start and every 24 h (README: Privacy)
     "interval": 5.0,                 # CSV logging interval, seconds (0.5 - 30)
     "logging": False,                # CSV logging on/off
     "log_all": False,                # False: only the rows shown, True: every sensor reading
