@@ -76,7 +76,7 @@ class Series:
 
 
 def short_section(section):
-    """'CPU [#0]: AMD Ryzen 7 9700X: Enhanced' -> 'CPU: AMD Ryzen 7 9700X'."""
+    """'CPU [#0]: <model>: Enhanced' -> 'CPU: <model>'."""
     if not section:
         return ""
     parts = [re.sub(r"\s*\[#\d+\]", "", p).strip() for p in section.split(": ")]
