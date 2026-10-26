@@ -348,9 +348,9 @@ class ProcWindow:
             pass
         sw, sh = self.win.winfo_screenwidth(), self.win.winfo_screenheight()
         mx, my, mw, mh = (mon["wx"], mon["wy"], mon["ww"], mon["wh"]) if mon else (0, 0, sw, sh)
-        w, h = min(1000, mw - 40), min(720, mh - 60)
+        w, h = min(1080, mw - 40), min(720, mh - 60)
         self.win.geometry(f"{w}x{h}+{mx + (mw - w) // 2}+{my + (mh - h) // 2}")
-        self.win.minsize(min(920, w), min(380, h))
+        self.win.minsize(min(1040, w), min(380, h))
 
     def _theme_sig(self):
         C = self.C
