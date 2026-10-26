@@ -3,6 +3,8 @@
 // ships with Windows. C# 5 compatible (the .NET Framework csc.exe). Build: gpu\build.ps1
 //
 //   GpuBench.exe [--seconds N] [--adapter I] [--list]
+//   GpuBench.exe --stress [--adapter I] [--fault]   runs a self-checking compute load until it is killed; prints
+//     {"stress":{"errors":0,"checks":123456789,"elapsed":12.3}} about once a second (--fault: corrupt on purpose, for tests)
 //
 // stdout is one JSON object per line:
 //   {"progress":0.42,"phase":"fma"}  ...  {"result":{"adapter":"..","vram_mb":16303,"gflops":41234.5,"bandwidth_gbs":812.3}}
@@ -45,6 +47,9 @@ static class GpuBench
     [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int FGetData(IntPtr ctx, IntPtr asyncObj, IntPtr data, uint size, uint flags);
     [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate void FDispatch(IntPtr ctx, uint x, uint y, uint z);
     [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate void FUpdate(IntPtr ctx, IntPtr res, uint sub, IntPtr box, IntPtr src, uint rowPitch, uint depthPitch);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int FMap(IntPtr ctx, IntPtr res, uint sub, uint type, uint flags, IntPtr mapped);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate void FUnmap(IntPtr ctx, IntPtr res, uint sub);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate void FCopyRes(IntPtr ctx, IntPtr dst, IntPtr src);
     [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate void FSetShader(IntPtr ctx, IntPtr cs, IntPtr inst, uint n);
     [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate void FSetUavs(IntPtr ctx, uint start, uint n, IntPtr[] views, IntPtr counts);
     [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate void FSetViews(IntPtr ctx, uint start, uint n, IntPtr[] views);
@@ -84,6 +89,35 @@ void main(uint3 id : SV_DispatchThreadID)
         a = a * m + k; b = b * m + k; c = c * m + k; d = d * m + k;
         a = a * m + k; b = b * m + k; c = c * m + k; d = d * m + k;
         a = a * m + k; b = b * m + k; c = c * m + k; d = d * m + k;
+    }
+    o[id.x] = a + b + c + d;
+}";
+    // Self-checking variant: every chain is computed twice (the second copy with constants the compiler cannot fold),
+    // a mismatch bumps a counter. A healthy GPU gives identical bits, an unstable overclock does not.
+    const string VerifySrc = @"
+cbuffer P : register(b0) { uint iters; uint zbits; uint u2; uint u3; float4 m; float4 k; };
+RWStructuredBuffer<float4> o : register(u0);
+RWStructuredBuffer<uint> err : register(u1);
+[numthreads(256,1,1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+    float z = asfloat(zbits);
+    float4 m2 = m + z, k2 = k + z;
+    float s = id.x * 1e-7f;
+    float4 a = float4(s + 0.1f, s + 0.2f, s + 0.3f, s + 0.4f);
+    float4 b = a + 0.5f, c = a + 1.5f, d = a + 2.5f;
+    float4 a2 = a, b2 = b, c2 = c, d2 = d;
+    for (uint i = 0; i < iters; i++)
+    {
+        a = a * m + k; b = b * m + k; c = c * m + k; d = d * m + k;
+        a2 = a2 * m2 + k2; b2 = b2 * m2 + k2; c2 = c2 * m2 + k2; d2 = d2 * m2 + k2;
+        a = a * m + k; b = b * m + k; c = c * m + k; d = d * m + k;
+        a2 = a2 * m2 + k2; b2 = b2 * m2 + k2; c2 = c2 * m2 + k2; d2 = d2 * m2 + k2;
+    }
+    if (any(a != a2) || any(b != b2) || any(c != c2) || any(d != d2))
+    {
+        uint old;
+        InterlockedAdd(err[0], 1, old);
     }
     o[id.x] = a + b + c + d;
 }";
@@ -236,6 +270,55 @@ void main(uint3 id : SV_DispatchThreadID)
         return work / total;
     }
 
+    // Runs the self-checking kernel until the parent kills the process.
+    static int Stress(IntPtr cb, bool fault)
+    {
+        uint outElems = Groups * 256;
+        IntPtr cs = MakeShader(VerifySrc);
+        IntPtr outBuf = MakeBuffer(outElems * 16, 0x80, 0x40, 16);
+        IntPtr outUav = MakeUav(outBuf, outElems);
+        IntPtr errBuf = MakeBuffer(64, 0x80, 0x40, 4);
+        IntPtr errUav = MakeUav(errBuf, 16);
+        BufDesc sd = new BufDesc(); sd.ByteWidth = 64; sd.Usage = 3; sd.CpuAccess = 0x20000;
+        IntPtr staging;
+        Check(Slot<FCreateBuffer>(dev, 3)(dev, ref sd, IntPtr.Zero, out staging), "CreateBuffer(staging)");
+        FMap fMap = Slot<FMap>(ctx, 14); FUnmap fUnmap = Slot<FUnmap>(ctx, 15); FCopyRes fCopy = Slot<FCopyRes>(ctx, 47);
+        float[] fc = new float[] { 0.9999f, 0.9998f, 0.9997f, 0.9996f, 0.0001f, 0.0002f, 0.0003f, 0.0004f };
+        uint zbits = fault ? (uint)BitConverter.ToInt32(BitConverter.GetBytes(1e-3f), 0) : 0u;
+        fSetShader(ctx, cs, IntPtr.Zero, 0);
+        fSetUavs(ctx, 0, 2, new IntPtr[] { outUav, errUav }, IntPtr.Zero);
+        fSetCbs(ctx, 0, 1, new IntPtr[] { cb });
+        uint iters = 64;
+        for (int round = 0; round < 10; round++)
+        {
+            SetConstants(cb, new uint[] { iters, zbits, 0, 0 }, fc);
+            RunBatch(1);
+            double t = RunBatch(1);
+            if (t > 0.006) break;
+            iters = (uint)Math.Min(1 << 20, Math.Max(iters * 2L, (long)(iters * 0.008 / Math.Max(t, 1e-5))));
+        }
+        SetConstants(cb, new uint[] { iters, zbits, 0, 0 }, fc);
+        double one = RunBatch(1);
+        int batch = Math.Max(1, Math.Min(2000, (int)(0.12 / Math.Max(one, 1e-5))));
+        IntPtr mapped = Marshal.AllocHGlobal(16);
+        double start = clock.Elapsed.TotalSeconds, lastRep = 0; double checks = 0;
+        while (true)
+        {
+            RunBatch(batch);
+            checks += (double)batch * outElems;
+            double now = clock.Elapsed.TotalSeconds;
+            if (now - lastRep >= 1.0)
+            {
+                lastRep = now;
+                fCopy(ctx, staging, errBuf);
+                Check(fMap(ctx, staging, 0, 1, 0, mapped), "Map");
+                uint errs = (uint)Marshal.ReadInt32(Marshal.ReadIntPtr(mapped), 0);
+                fUnmap(ctx, staging, 0);
+                Json("{\"stress\":{\"errors\":" + errs + ",\"checks\":" + Num(checks) + ",\"elapsed\":" + Num(now - start) + "}}");
+            }
+        }
+    }
+
     static int Main(string[] args)
     {
         try { return Run(args); }
@@ -248,12 +331,14 @@ void main(uint3 id : SV_DispatchThreadID)
 
     static int Run(string[] args)
     {
-        double seconds = 60; int want = -1; bool list = false;
+        double seconds = 60; int want = -1; bool list = false, stress = false, fault = false;
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--seconds" && i + 1 < args.Length) seconds = double.Parse(args[++i], CultureInfo.InvariantCulture);
             else if (args[i] == "--adapter" && i + 1 < args.Length) want = int.Parse(args[++i]);
             else if (args[i] == "--list") list = true;
+            else if (args[i] == "--stress") stress = true;
+            else if (args[i] == "--fault") fault = true;
         }
         if (seconds < 2) seconds = 2;
 
@@ -291,6 +376,7 @@ void main(uint3 id : SV_DispatchThreadID)
         Check(Slot<FCreateQuery>(dev, 24)(dev, ref qd, out query), "CreateQuery");
 
         IntPtr cb = MakeBuffer(48, 4, 0, 0);
+        if (stress) return Stress(cb, fault);
 
         // ---- FMA throughput
         totalSecs = seconds; doneSecs = 0;

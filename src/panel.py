@@ -1236,6 +1236,10 @@ def main():
 if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support()          # benchmark worker processes (perf_core.py) when frozen
+    if "--bench-selftest" in sys.argv:        # hidden: short benchmark through the real process path (packaging test)
+        import perf_core
+        i = sys.argv.index("--bench-selftest")
+        sys.exit(perf_core.selftest(sys.argv[i + 1] if len(sys.argv) > i + 1 else None))
     try:
         main()
     except Exception:
