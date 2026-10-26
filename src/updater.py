@@ -16,8 +16,7 @@ import urllib.parse
 import urllib.request
 
 API_URL = "https://api.github.com/repos/AcarPlus/metriq/releases/latest"
-# metriQ-Setup-* is the current name; HWiNFO-Panel-Setup-* is the pre-1.2.0 name (back-compat, see release.yml)
-ASSET_RE = re.compile(r"^(?:metriQ-Setup|HWiNFO-Panel-Setup)-.*\.exe$")
+ASSET_RE = re.compile(r"^metriQ-Setup-.*\.exe$")
 ALLOWED_HOSTS = ("github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com")
 INSTALL_ARGS = "/SILENT /SUPPRESSMSGBOXES /NORESTART /UPDATE"
 TIMEOUT = 6
