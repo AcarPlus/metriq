@@ -7,6 +7,14 @@
     VRAM       PDH "\\GPU Process Memory(*)\\Dedicated Usage" (MB)
     Disk       read + write transfer counters of the process (MB/s)
 
+Not owned by any process: the snapshot also carries the system totals so a list can add up to the panel's values.
+    ram_used   physical memory in use = total - available (GlobalMemoryStatusEx; the very definition of the panel's
+               "Physical Memory Used" row)
+    ram_kernel ram_used - sum of the private working sets = what no program owns: kernel and driver memory,
+               non-paged / paged pool, page tables, modified (dirty) file cache, memory shared between programs
+    vram_used  dedicated memory in use per PDH "\\GPU Adapter Memory(*)\\Dedicated Usage" (summed over adapters)
+    vram_kernel vram_used - sum of the per-process dedicated usage (driver / OS reservations); 0 without counters
+
 No third-party package: the process table comes from ntdll, the GPU numbers from PDH (see sens_builtin.Pdh).
 Sampling happens in one background thread that only exists while somebody has called ``acquire()`` (the process
 window, the CSV logger); ``snapshot()`` returns the newest result and is safe to call from any thread.
@@ -87,9 +95,12 @@ class Group:
 
 
 class Snapshot:
-    def __init__(self, t, groups, gpu_ok):
+    def __init__(self, t, groups, gpu_ok, warm=True):
         self.t, self.groups, self.gpu_ok = t, groups, gpu_ok
+        self.warm = warm                                # False for the very first round (no rates yet)
         self.by_key = {g.key: g for g in groups}
+        self.ram_total = self.ram_used = self.ram_kernel = 0.0                     # MB
+        self.vram_used, self.vram_kernel = None, 0.0                               # MB (None = no counters)
 
     def top(self, metric, n):
         """The n busiest groups for a metric (only those above zero)."""
@@ -132,6 +143,19 @@ class _ProcTable:
                 break
             off += nxt
         return out
+
+
+class _MEMSTAT(ctypes.Structure):
+    _fields_ = [("dwLength", wintypes.DWORD), ("dwMemoryLoad", wintypes.DWORD)] +                [(n, ctypes.c_ulonglong) for n in ("tp", "ap", "tf", "af", "tv", "av", "ae")]
+
+
+def memory_mb():
+    """(total, used) physical memory in MB; used = total - available, like the panel's RAM row."""
+    m = _MEMSTAT()
+    m.dwLength = ctypes.sizeof(m)
+    if not _k32.GlobalMemoryStatusEx(ctypes.byref(m)):
+        return 0.0, 0.0
+    return m.tp / MB, (m.tp - m.ap) / MB
 
 
 def _image_path(pid):
@@ -259,13 +283,14 @@ class ProcMon:
         self._snap = None if not self.active() else self._snap
 
     def _gpu(self):
-        """({pid: GPU %}, {pid: VRAM MB}, ok)"""
+        """({pid: GPU %}, {pid: VRAM MB}, ok, adapter dedicated MB or None)"""
         if self._pdh is None:
             try:
                 from sens_builtin import Pdh
                 p = Pdh()
                 ok = p.add("eng", r"\GPU Engine(*)\Utilization Percentage")
                 ok2 = p.add("mem", r"\GPU Process Memory(*)\Dedicated Usage")
+                p.add("ded", r"\GPU Adapter Memory(*)\Dedicated Usage")
                 self._pdh = p if (ok or ok2) else False
                 if self._pdh is False:
                     p.close()
@@ -274,7 +299,7 @@ class ProcMon:
             if self._pdh:
                 self._pdh.collect()
         if not self._pdh:
-            return {}, {}, False
+            return {}, {}, False, None
         self._pdh.collect()
         per_type = {}
         for inst, v in self._pdh.array("eng").items():
@@ -292,7 +317,13 @@ class ProcMon:
             if m:
                 pid = int(m.group(1))
                 vram[pid] = vram.get(pid, 0.0) + v / MB
-        return gpu, vram, True
+        ded = None
+        try:
+            if "ded" in self._pdh.c:
+                ded = sum(self._pdh.array("ded").values()) / MB
+        except Exception:
+            ded = None
+        return gpu, vram, True, ded
 
     def sample(self):
         """One sampling round (also usable synchronously: call twice, one second apart, for rates)."""
@@ -300,7 +331,7 @@ class ProcMon:
             self._table = _ProcTable()
         now = time.perf_counter()
         rows = self._table.read()
-        gpu, vram, gpu_ok = self._gpu()
+        gpu, vram, gpu_ok, ded = self._gpu()
         wins = windowed_pids()
         dt = (now - self._prev_t) if self._prev_t else 0.0
         prev, cur = self._prev, {}
@@ -348,8 +379,14 @@ class ProcMon:
             g.cat = "apps" if "apps" in cats else ("windows" if cats == {"windows"} else "background")
             g.procs.sort(key=lambda q: -q.cpu)
         self._prev, self._prev_t = cur, now
-        self._snap = Snapshot(time.time(), list(groups.values()), gpu_ok)
-        return self._snap
+        snap = Snapshot(time.time(), list(groups.values()), gpu_ok, warm=dt > 0)
+        snap.ram_total, snap.ram_used = memory_mb()
+        snap.ram_kernel = max(0.0, snap.ram_used - sum(g.ram for g in groups.values()))
+        if ded is not None:
+            snap.vram_used = ded
+            snap.vram_kernel = max(0.0, ded - sum(g.vram for g in groups.values()))
+        self._snap = snap
+        return snap
 
 
 MON = ProcMon()                     # shared by the process window and the CSV logger
