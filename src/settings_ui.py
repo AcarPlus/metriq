@@ -20,6 +20,7 @@ import helptexts
 import hwctl
 import i18n
 import layout
+import logview
 import procset
 import themes
 import version
@@ -434,6 +435,7 @@ class SettingsWindow:
         self.e_logdir.pack(side="left", ipady=3)
         self.button(row, t("st_browse"), self.browse_logdir).pack(side="left", padx=(8, 0))
         self.button(row, t("st_openfolder"), self.open_logdir).pack(side="left", padx=(8, 0))
+        logview.add_button(self, row, lambda: config.log_dir({"log_dir": self.v_logdir.get()}))
         self.label(p, t("st_logdir_hint"), dim=True, size=9).grid(row=4, column=1, sticky="w", pady=(0, 6))
 
         delims = ["auto", ";", ",", "\t"]

@@ -7,6 +7,7 @@ from tkinter import ttk
 import config
 import crashscan
 import helptexts
+import logview
 from i18n import t
 
 
@@ -32,6 +33,7 @@ class DiagTab:
         self.btn.pack(side="left")
         helptexts.info_icon(bar, "scan", bg=C["bg"]).pack(side="left", padx=(8, 0))
         sw.button(bar, t("cr_open_dir"), self.open_dir).pack(side="left", padx=(8, 0))
+        logview.add_button(sw, bar, self.folder)
         self.status = sw.label(bar, "", dim=True, size=9)
         self.status.pack(side="left", padx=(12, 0))
 
@@ -57,9 +59,12 @@ class DiagTab:
         self.txt.bind("<MouseWheel>", lambda e: (self.txt.yview_scroll(-1 if e.delta > 0 else 1, "units"),
                                                  "break")[1])
         self.set_text(t("cr_select"))
-        self.open_btn = sw.button(p, t("cr_open_csv"), self.open_csv)
-        self.open_btn.pack(anchor="w", pady=(10, 0))
+        row = tk.Frame(p, bg=C["bg"])
+        row.pack(anchor="w", pady=(10, 0))
+        self.open_btn = sw.button(row, t("cr_open_csv"), self.open_csv)
+        self.open_btn.pack(side="left")
         self.open_btn.config(state="disabled")
+        logview.add_event_button(sw, row, self.current, self.folder)
 
     # ------------------------------------------------------------ helpers
     def folder(self):

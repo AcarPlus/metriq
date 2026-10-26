@@ -22,6 +22,7 @@ import hwctl
 import i18n
 import layout
 import proclog
+import logview
 import procwin
 import settings_ui
 import themes
@@ -812,6 +813,10 @@ def main():
         if root.focus_get() is not spin:
             open_settings()
 
+    def key_viewer(e):
+        if root.focus_get() is not spin:
+            logview.show(api)
+
     spin.config(command=set_interval)
     spin.bind("<Return>", lambda e: (set_interval(), cv.focus_set()))
     spin.bind("<FocusOut>", set_interval)
@@ -821,6 +826,8 @@ def main():
     root.bind("<KeyPress-R>", key_reset)
     root.bind("<KeyPress-s>", key_settings)
     root.bind("<KeyPress-S>", key_settings)
+    root.bind("<KeyPress-v>", key_viewer)
+    root.bind("<KeyPress-V>", key_viewer)
     cv.bind("<Button-1>", lambda e: cv.focus_set(), add="+")
     root.bind("<F11>", lambda e: root.attributes("-fullscreen", not root.attributes("-fullscreen")))
     root.bind("<Escape>", lambda e: root.attributes("-fullscreen", False))
