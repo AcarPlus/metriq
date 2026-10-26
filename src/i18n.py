@@ -20,7 +20,7 @@ _STR = {
         "fps": "FPS", "fps_1": "FPS 1% Low", "fps_01": "FPS 0.1% Low", "drive": "Drive",
         # status bar
         "log_on": "RECORDING ON", "log_off": "RECORDING OFF", "sw_required": "Required", "sw_all": "All data",
-        "interval_lbl": "interval (s)", "conn_ok": "HWiNFO connected", "conn_wait": "waiting for HWiNFO…",
+        "interval_lbl": "interval (s)", "reset_done": "MIN / MAX / AVG reset", "conn_ok": "HWiNFO connected", "conn_wait": "waiting for HWiNFO…",
         "frozen": "data paused, {src} reconnecting…",
         "applying": "setting HWiNFO polling interval to {ms} ms · values held…",
         "mode_all": "all data ({n} columns)", "mode_req": "required data ({n} columns)",
@@ -93,7 +93,7 @@ _STR = {
         "download": "Download", "upload": "Upload", "disk_read": "Disk Okuma", "disk_write": "Disk Yazma",
         "fps": "FPS", "fps_1": "FPS 1% Low", "fps_01": "FPS 0.1% Low", "drive": "Disk",
         "log_on": "KAYIT AÇIK", "log_off": "KAYIT KAPALI", "sw_required": "Gerekli", "sw_all": "Tüm veriler",
-        "interval_lbl": "aralık (sn)", "conn_ok": "HWiNFO bağlı", "conn_wait": "HWiNFO bekleniyor…",
+        "interval_lbl": "aralık (sn)", "reset_done": "MİN / MAKS / ORT sıfırlandı", "conn_ok": "HWiNFO bağlı", "conn_wait": "HWiNFO bekleniyor…",
         "frozen": "veri akışı duraklatıldı, {src} yeniden bağlanıyor…",
         "applying": "HWiNFO tarama aralığı {ms} ms yapılıyor · değerler bekletiliyor…",
         "mode_all": "tüm veriler ({n} sütun)", "mode_req": "gerekli veriler ({n} sütun)",

@@ -14,3 +14,6 @@ dist/
 packaging/Output/
 HWiNFO-Panel-Setup-*.exe
 *.spec.bak
+
+# fan discovery tool build output (NuGet packages, compiled probe)
+fan/build/

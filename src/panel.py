@@ -90,6 +90,14 @@ def draw_icon(cv, kind, cx, cy, s, col, bg, tags=()):
         cv.create_oval(cx - s * 0.30, cy - s * 0.30, cx + s * 0.30, cy + s * 0.30, fill=bg, outline="",
                        tags=tuple(tags) + ("gear_hole",))
         return
+    if kind == "reset":
+        cv.create_arc(cx - s * 0.78, cy - s * 0.78, cx + s * 0.78, cy + s * 0.78, start=70, extent=290,
+                      style="arc", outline=col, width=max(2, s * 0.22), tags=tuple(tags) + ("reset_fill",))
+        a = math.radians(70)
+        tx, ty = cx + s * 0.78 * math.cos(a), cy - s * 0.78 * math.sin(a)
+        cv.create_polygon(tx - s * 0.42, ty - s * 0.30, tx + s * 0.18, ty - s * 0.02, tx - s * 0.30, ty + s * 0.42,
+                          fill=col, outline="", tags=tuple(tags) + ("reset_fill",))
+        return
     if kind == "gauge":
         cv.create_arc(cx - s, cy - s, cx + s, cy + s, start=-30, extent=240, style="arc", outline=col, width=lw)
         ang = math.radians(50)
@@ -409,14 +417,20 @@ def main():
         s["gear_bg"] = cv.create_oval(gx - hit, my - hit, gx + hit, my + hit, fill=C["card"], outline="",
                                       tags="gearbtn")
         draw_icon(cv, "gear", gx, my, gs, C["dim"], C["card"], tags=("gearbtn",))
+        # reset MIN / MAX / AVG button, left of the gear
+        rx = gx - hit * 2 - 4
+        s["reset_bg"] = cv.create_oval(rx - hit, my - hit, rx + hit, my + hit, fill=C["card"], outline="",
+                                       tags="resetbtn")
+        draw_icon(cv, "reset", rx, my, gs, C["dim"], C["card"], tags=("resetbtn",))
         spin_w = max(44.0, min(sw_span * 0.1, rs * 3.2))
-        spin_r = gx - hit - 6
+        spin_r = rx - hit - 6
         cv.create_text(spin_r - spin_w - 8, my, text=t("interval_lbl"), anchor="e", font=(F_TXT, fs_sw),
                        fill=C["dim"])
         spin.config(font=(F_NUM, -max(10, int(rs * 0.52))))
         cv.create_window(spin_r, my, window=spin, anchor="e", width=spin_w, height=rs * 1.0)
         s["info"] = cv.create_text(col_name, iy, text="", anchor="w", font=(F_TXT, fs_sw), fill=C["dim"])
-        for tag, fn in (("logbtn", toggle), ("modebtn", toggle_mode), ("gearbtn", open_settings)):
+        for tag, fn in (("logbtn", toggle), ("modebtn", toggle_mode), ("gearbtn", open_settings),
+                        ("resetbtn", reset_stats)):
             cv.tag_bind(tag, "<Button-1>", fn)
             cv.tag_bind(tag, "<Enter>", lambda e: cv.config(cursor="hand2"))
             cv.tag_bind(tag, "<Leave>", lambda e: cv.config(cursor=""))
@@ -427,6 +441,12 @@ def main():
             cv.itemconfig("gear_fill", fill=acc if on else C["dim"])
             cv.itemconfig("gear_hole", fill=bgc)
             cv.itemconfig(s["gear_bg"], fill=bgc)
+        def reset_hover(on):
+            acc = layout.ICON_COLORS["gauge"]
+            cv.itemconfig("reset_fill", fill=acc if on else C["dim"], outline=acc if on else C["dim"])
+            cv.itemconfig(s["reset_bg"], fill=mix(C["card"], acc, 0.16) if on else C["card"])
+        cv.tag_bind("resetbtn", "<Enter>", lambda e: (cv.config(cursor="hand2"), reset_hover(True)))
+        cv.tag_bind("resetbtn", "<Leave>", lambda e: (cv.config(cursor=""), reset_hover(False)))
         cv.tag_bind("gearbtn", "<Enter>", lambda e: (cv.config(cursor="hand2"), gear_hover(True)))
         cv.tag_bind("gearbtn", "<Leave>", lambda e: (cv.config(cursor=""), gear_hover(False)))
         refresh_status()
@@ -468,6 +488,8 @@ def main():
         info = f"{time.strftime('%H:%M:%S')}   ·   {conn}   ·   {mode_txt}   ·   {f}"
         if st.get("note"):
             info = st["note"] + "   ·   " + info
+        if time.time() - st.get("reset_note", 0) < 3:
+            info = "✓ " + t("reset_done") + "   ·   " + info
         cv.itemconfig(s["info"], text=info, fill=C["dim"] if st["ok"] else C["red"])
         if st["empty"]:
             cv.itemconfig(st["empty"], text=t("hint_empty") + ("\n\n" + hint if hint else ""))
@@ -535,6 +557,16 @@ def main():
         if root.focus_get() is not spin:
             toggle()
 
+    def reset_stats(e=None):
+        """MIN / MAX / AVG start over (the next tick fills them again); recording is not affected."""
+        stats.clear()
+        st["reset_note"] = time.time()
+        refresh_status()
+
+    def key_reset(e):
+        if root.focus_get() is not spin:
+            reset_stats()
+
     def key_settings(e):
         if root.focus_get() is not spin:
             open_settings()
@@ -544,6 +576,8 @@ def main():
     spin.bind("<FocusOut>", set_interval)
     root.bind("<KeyPress-l>", key_toggle)
     root.bind("<KeyPress-L>", key_toggle)
+    root.bind("<KeyPress-r>", key_reset)
+    root.bind("<KeyPress-R>", key_reset)
     root.bind("<KeyPress-s>", key_settings)
     root.bind("<KeyPress-S>", key_settings)
     cv.bind("<Button-1>", lambda e: cv.focus_set(), add="+")
