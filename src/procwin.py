@@ -43,7 +43,7 @@ STILL = 3.0                                      # s the order stays put after t
 STILL_TOGGLE = 5.0                               # s the order stays put after a log toggle
 # a program is listed when ANY of its numbers reaches its limit (0 = that limit is off)
 DEFAULT_MIN = {"cpu": 0.5, "ram": 100.0, "gpu": 0.5, "vram": 100.0, "disk": 0.1}
-_STATE = {"min": dict(DEFAULT_MIN)}              # limits kept while the panel runs
+_STATE = {"min": dict(DEFAULT_MIN), "show_all": False}              # limits kept while the panel runs
 
 # which panel rows open the window: sample reading labels of each metric (the row's regex is tested against them)
 _ROW_LABELS = (
@@ -447,6 +447,13 @@ class ProcWindow:
             fr.pack(side="left")
             tk.Label(grp, text=UNIT[m], bg=C["bg"], fg=C["faint"], font=self.f_small).pack(side="left", padx=(5, 0))
             v.trace_add("write", lambda *a, m=m: self._min_changed(m))
+        # "show everything": ignore the limits above
+        self.v_showall = tk.BooleanVar(value=_STATE["show_all"])
+        cb = tk.Checkbutton(fl, text=t("pw_show_all"), variable=self.v_showall, command=self._showall_toggled,
+                            bg=C["bg"], fg=C["fg"], activebackground=C["bg"], activeforeground=C["fg"],
+                            selectcolor=C["card"], font=self.f_small, bd=0, highlightthickness=0, cursor="hand2")
+        cb.pack(side="left", padx=(6, 0))
+        Tooltip(cb, t("pw_show_all_tip"))
         # --- list
         body = tk.Frame(self.outer, bg=C["bg"])
         body.pack(fill="both", expand=True)
@@ -513,6 +520,10 @@ class ProcWindow:
             _STATE["min"][m] = max(0.0, float(self.v_min[m].get().replace(",", ".")))
         except ValueError:
             return
+        self.refresh(force=True, resort=True)
+
+    def _showall_toggled(self):
+        _STATE["show_all"] = bool(self.v_showall.get())
         self.refresh(force=True, resort=True)
 
     def _all_toggled(self):
@@ -769,7 +780,7 @@ class ProcWindow:
         self.last_t = snap.t
         self.snap = snap
         self.resort = False
-        mins = {m: v for m, v in _STATE["min"].items() if v > 0}
+        mins = {} if _STATE["show_all"] else {m: v for m, v in _STATE["min"].items() if v > 0}
         q = self.v_search.get().strip().lower()
         by_key = snap.by_key
         for g in snap.groups:
@@ -1228,4 +1239,12 @@ i18n.register({
         "ps_popup": "(i) balonundaki program sayısı",
         "ps_popup_hint": "balon başına 1–10 program",
     },
+})
+
+
+i18n.register({
+    "tr": {"pw_show_all": "Hepsini göster",
+           "pw_show_all_tip": "Sınırları yok sayar ve çalışan tüm programları listeler."},
+    "en": {"pw_show_all": "Show everything",
+           "pw_show_all_tip": "Ignores the limits and lists every running program."},
 })
