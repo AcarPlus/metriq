@@ -17,6 +17,7 @@ import backend
 import config
 import crashscan
 import gfx
+import helptexts
 import hwctl
 import i18n
 import layout
@@ -25,6 +26,7 @@ import procwin
 import settings_ui
 import themes
 import updater
+from tooltip import Tooltip
 from i18n import t
 
 HERE = config.APP_DIR        # source folder, or the bundled resources when frozen (PyInstaller)
@@ -122,6 +124,7 @@ def round_rect(cv, x0, y0, x1, y1, r, **kw):
 
 
 GFX = gfx.AVAILABLE      # Pillow present: anti-aliased images instead of canvas primitives
+TOAST_RESET_S, TOAST_INFO_S, TOAST_ERR_S, FADE_S = 1.5, 2.0, 4.0, 0.35     # toast lifetimes (seconds), fade-out length
 
 
 def draw_icon(cv, kind, cx, cy, s, col, bg, tags=()):
@@ -267,7 +270,7 @@ def main():
           "hw_exe": hwctl.detect_hwinfo(cfg["hwinfo_path"]), "tasks": hwctl.tasks_installed(),
           "mon": config.pick_monitor(cfg["monitor"]), "mode": str(cfg["window_mode"]).lower(),
           "upd": None, "upd_busy": False, "upd_prog": 0, "upd_err": 0, "upd_gen": 0, "upd_after": None,
-          "closing": False, "t0": time.time(), "upd_dismissed": None}
+          "closing": False, "t0": time.time(), "upd_dismissed": None, "tips": {}}
     upd_q = queue.Queue()          # worker threads -> Tk (drained by upd_pump via root.after)
 
     def hwinfo_managed():
@@ -313,6 +316,7 @@ def main():
                       justify="center", relief="flat", highlightthickness=0, bd=0)
     spin.delete(0, "end")
     spin.insert(0, f"{cfg['interval']:.1f}")
+    Tooltip(spin, lambda: helptexts.text("interval_lbl"))
 
     def apply_theme():
         """Take the theme settings from cfg: palette, fonts, window colours. The caller rebuilds the canvas."""
@@ -444,9 +448,10 @@ def main():
                     f_title = meas_font(F_HEAD, -hs, "bold")
                 cv.create_text(title_x, hy, text=fit_text(f_title, sec.title, title_avail), anchor="w",
                                font=(F_HEAD, -hs, "bold"), fill=C["fg"])
-                for lbl, xx in ((t("col_now"), col_now + 6 + unit_w), (t("col_min"), col_min),
-                                (t("col_max"), col_max), (t("col_avg"), col_avg)):
-                    cv.create_text(xx, hy, text=lbl, anchor="e", font=f_col, fill=mix(C["dim"], accent, 0.45))
+                for hk, lbl, xx in (("now", t("col_now"), col_now + 6 + unit_w), ("min", t("col_min"), col_min),
+                                    ("max", t("col_max"), col_max), ("avg", t("col_avg"), col_avg)):
+                    cv.create_text(xx, hy, text=lbl, anchor="e", font=f_col, fill=mix(C["dim"], accent, 0.45),
+                                   tags=("hdr_" + hk,))
                 cv.create_line(cx0 + pad * 0.6, yy + hh - 1, cx1 - pad * 0.6, yy + hh - 1, fill=C["border"])
                 ry = yy + hh
                 for i, row in enumerate(sec.rows):
@@ -507,7 +512,7 @@ def main():
         # recording mode switch: required rows <-> all sensors
         fs_sw = -max(9, int(rs * 0.38))
         f_sw = (F_TXT, fs_sw, "bold")
-        sw_w, sw_h = rs * 1.7, rs * 0.8
+        sw_w, sw_h = max(rs * 1.7, 22.0), max(rs * 0.8, 10.0)      # never smaller than a track that still holds a knob
         lx = px0 + pw + min(sw_span * 0.05, rs * 1.2)
         s["sw_l"] = cv.create_text(lx, my, text=t("sw_required"), anchor="w", font=f_sw, fill=C["fg"],
                                    tags="modebtn")
@@ -523,7 +528,7 @@ def main():
         else:
             s["sw_track"] = round_rect(cv, tx0, my - sw_h / 2, tx0 + sw_w, my + sw_h / 2, sw_h / 2,
                                        fill=C["track"], outline=C["border"], tags="modebtn")
-        kr = sw_h / 2 - 3
+        kr = max(2.0, sw_h / 2 - 3)
         s["sw_geo"] = (tx0 + 3 + kr, tx0 + sw_w - 3 - kr, kmy, kr)
         kx = s["sw_geo"][1] if cfg.get("log_all") else s["sw_geo"][0]
         if GFX:
@@ -553,7 +558,7 @@ def main():
         spin_w = max(44.0, min(sw_span * 0.1, rs * 3.2))
         spin_r = rx - hit - 6
         cv.create_text(spin_r - spin_w - 8, my, text=t("interval_lbl"), anchor="e", font=(F_TXT, fs_sw),
-                       fill=C["dim"])
+                       fill=C["dim"], tags="intlbl")
         spin.config(font=(F_NUM, -max(10, int(rs * 0.52))))
         cv.create_window(spin_r, my, window=spin, anchor="e", width=spin_w, height=rs * 1.0)
         # toasts sit centred just above the bar
@@ -589,7 +594,23 @@ def main():
         cv.tag_bind("gearbtn", "<Enter>", lambda e: (cv.config(cursor="hand2"), gear_hover(True)))
         cv.tag_bind("gearbtn", "<Leave>", lambda e: (cv.config(cursor=""), gear_hover(False)))
         s["hover"] = (gear_hover, reset_hover)
+        # hover help (after the binds above, which replace earlier <Enter> / <Leave> handlers of the same tags)
+        for tag, key in (("hdr_now", "hdr_now"), ("hdr_min", "hdr_min"), ("hdr_max", "hdr_max"),
+                         ("hdr_avg", "hdr_avg"), ("logbtn", "logbtn"), ("modebtn", "modebtn"),
+                         ("resetbtn", "resetbtn"), ("gearbtn", "gearbtn"), ("intlbl", "interval_lbl")):
+            help_tip(tag, key)
         refresh_status()
+
+    def help_tip(tag, key):
+        """Hover balloon on every canvas item tagged `tag`; safe to call again after each rebuild."""
+        old = st["tips"].pop(tag, None)
+        if old:
+            old.hide()
+        cv.tag_unbind(tag, "<Motion>")
+        if tag.startswith("hdr_") or tag == "intlbl":          # no other handlers on these tags
+            cv.tag_unbind(tag, "<Enter>")
+            cv.tag_unbind(tag, "<Leave>")
+        st["tips"][tag] = Tooltip.for_canvas(cv, tag, lambda: helptexts.text(key))
 
     def set_text(iid, txt, color=None):
         key = (txt, color)
@@ -605,12 +626,22 @@ def main():
         """Messages for the toast stack above the status bar: [(text, colour, kind)], kind "upd" = update notice."""
         now = time.time()
         msgs = []
-        if now - st.get("reset_note", 0) < 3:
-            msgs.append(("✓ " + t("reset_done"), C["green"], None))
-        if now - st.get("err_note", 0) < 6:
-            msgs.append((t("st_write_err"), C["red"], None))
-        if now - st.get("log_err", 0) < 6:
-            msgs.append((t("log_err"), C["red"], None))
+        soon = st["soon"] = []          # seconds until the next change (fade step / expiry): refresh_status re-arms
+
+        def timed(text, col, t0, dur):
+            """A notice shown for dur seconds from t0; its last FADE_S seconds fade towards the card colour."""
+            left = dur - (now - t0)
+            if left <= 0:
+                return
+            if left >= FADE_S:
+                soon.append(left - FADE_S + 0.01)
+            else:
+                soon.append(0.05)
+                col = mix(C["card"], col, max(0.0, left / FADE_S))
+            msgs.append((text, col, None))
+        timed("✓ " + t("reset_done"), C["green"], st.get("reset_note", 0), TOAST_RESET_S)
+        timed(t("st_write_err"), C["red"], st.get("err_note", 0), TOAST_ERR_S)
+        timed(t("log_err"), C["red"], st.get("log_err", 0), TOAST_ERR_S)
         ap = st.get("applying")
         hint = current_hint()
         if ap and now - ap[0] < 12:
@@ -621,12 +652,15 @@ def main():
         elif not st["ok"] and not st["empty"]:          # (with no rows at all the hint is shown mid-window)
             msgs.append((hint or wait_text(), C["red"], None))
         note = st.get("note")
-        if note and note != "created" and now - st["t0"] < 12:
-            msgs.append((note, C["yellow"], None))
+        if note and note != "created":
+            timed(note, C["yellow"], st["t0"], TOAST_ERR_S)
         utxt, ucol, uclick = upd_state()
         if utxt:
             msgs.append((utxt, ucol, "upd" if uclick else "updbusy"))
-        msgs.extend(logger.ext.toasts(C))
+        ext = logger.ext.toasts(C)
+        if ext:
+            soon.append(0.1)
+        msgs.extend(ext)
         return msgs
 
     def draw_toasts(msgs):
@@ -679,6 +713,14 @@ def main():
         cv.itemconfig(s["sw_l"], fill=C["faint"] if all_ else C["fg"])
         cv.itemconfig(s["sw_r"], fill=C["fg"] if all_ else C["faint"])
         draw_toasts(status_msgs())
+        if st.get("soon_after"):
+            try:
+                root.after_cancel(st["soon_after"])
+            except tk.TclError:
+                pass
+            st["soon_after"] = None
+        if st.get("soon") and not st["closing"]:
+            st["soon_after"] = root.after(max(30, int(min(st["soon"]) * 1000)), refresh_status)
         if st["empty"]:
             hint = current_hint()
             cv.itemconfig(st["empty"], text=t("hint_empty") + ("\n\n" + hint if hint else ""))

@@ -16,6 +16,7 @@ from tkinter import colorchooser, filedialog, messagebox, ttk
 import backend
 import config
 import crashscan_ui
+import helptexts
 import hwctl
 import i18n
 import layout
@@ -30,7 +31,7 @@ from i18n import t
 class Check(tk.Frame):
     """Dark check box (the native one cannot be recoloured)."""
 
-    def __init__(self, parent, text, var, C, font, bg=None, command=None):
+    def __init__(self, parent, text, var, C, font, bg=None, command=None, help=None):
         bg = bg or C["bg"]
         super().__init__(parent, bg=bg)
         self.var, self.command, self.C, self.bg = var, command, C, bg
@@ -43,6 +44,8 @@ class Check(tk.Frame):
                                 justify="left")
             self.lbl.pack(side="left", padx=(6, 0))
             self.lbl.bind("<Button-1>", self.toggle)
+        if help:
+            helptexts.info_icon(self, help, bg=bg).pack(side="left", padx=(8, 0))
         self.box.bind("<Button-1>", lambda e: (self.box.focus_set(), self.toggle()))
         self.box.bind("<space>", self.toggle)
         self.box.bind("<FocusIn>", lambda e: self.draw())
@@ -321,8 +324,17 @@ class SettingsWindow:
         sf.inner.configure(padx=16, pady=14)
         return sf
 
-    def _grid_row(self, parent, r, label, widget, hint=None):
-        self.label(parent, label).grid(row=r, column=0, sticky="w", padx=(0, 16), pady=6)
+    def label_help(self, parent, text, help=None, bg=None, size=10, bold=False):
+        """The label of a settings row, followed by its (i) help marker when `help` names a help text."""
+        if not help:
+            return self.label(parent, text, bg=bg, size=size, bold=bold)
+        fr = tk.Frame(parent, bg=bg or self.C["bg"])
+        self.label(fr, text, bg=bg, size=size, bold=bold).pack(side="left")
+        helptexts.info_icon(fr, help, bg=bg or self.C["bg"]).pack(side="left", padx=(6, 0))
+        return fr
+
+    def _grid_row(self, parent, r, label, widget, hint=None, help=None):
+        self.label_help(parent, label, help).grid(row=r, column=0, sticky="w", padx=(0, 16), pady=6)
         widget.grid(row=r, column=1, sticky="w", pady=6)
         if hint:
             self.label(parent, hint, dim=True, size=9).grid(row=r, column=2, sticky="w", padx=(10, 0))
@@ -342,7 +354,7 @@ class SettingsWindow:
         self.col_vals = ["auto", 1, 2, 3]
         cur = config.norm_columns(cfg.get("columns"))
         self.cb_cols = self.combo(p, [t("st_auto"), "1", "2", "3"], self.col_vals.index(cur), 12)
-        self._grid_row(p, 1, t("st_columns"), self.cb_cols)
+        self._grid_row(p, 1, t("st_columns"), self.cb_cols, help="columns")
 
         mons = self.api.monitors() or []
         self.mon_vals = ["auto"] + [m["index"] for m in mons]
@@ -360,23 +372,23 @@ class SettingsWindow:
             except (TypeError, ValueError):
                 idx = 0
         self.cb_mon = self.combo(p, names, idx, 36)
-        self._grid_row(p, 2, t("st_monitor"), self.cb_mon)
+        self._grid_row(p, 2, t("st_monitor"), self.cb_mon, help="monitor")
 
         self.wm_vals = ["maximized", "fullscreen", "window"]
         cur = str(cfg.get("window_mode", "maximized")).lower()
         self.cb_wm = self.combo(p, [t("st_wm_maximized"), t("st_wm_fullscreen"), t("st_wm_window")],
                                 self.wm_vals.index(cur) if cur in self.wm_vals else 0, 24)
-        self._grid_row(p, 3, t("st_window_mode"), self.cb_wm)
+        self._grid_row(p, 3, t("st_window_mode"), self.cb_wm, help="window_mode")
 
         self.v_top = tk.BooleanVar(value=bool(cfg.get("topmost", True)))
-        Check(p, t("st_topmost"), self.v_top, self.C, (self.F_TXT, 10)).grid(row=4, column=1, sticky="w", pady=6)
+        Check(p, t("st_topmost"), self.v_top, self.C, (self.F_TXT, 10), help="topmost").grid(row=4, column=1, sticky="w", pady=6)
 
         self.v_scale = tk.StringVar(value=str(config.clamp_scale(cfg.get("ui_scale"))))
         self.e_scale = self.spinbox(p, self.v_scale, config.SCALE_MIN, config.SCALE_MAX, 5, "%.0f", 6)
-        self._grid_row(p, 5, t("st_scale"), self.e_scale, t("st_scale_hint"))
+        self._grid_row(p, 5, t("st_scale"), self.e_scale, t("st_scale_hint"), help="scale")
 
         self.v_upd = tk.BooleanVar(value=bool(cfg.get("check_updates", True)))
-        Check(p, t("st_check_updates"), self.v_upd, self.C, (self.F_TXT, 10)).grid(row=6, column=1, sticky="w", pady=6)
+        Check(p, t("st_check_updates"), self.v_upd, self.C, (self.F_TXT, 10), help="updates").grid(row=6, column=1, sticky="w", pady=6)
 
         def ok_scale():
             v = _to_float(self.v_scale.get())
@@ -388,7 +400,7 @@ class SettingsWindow:
     def _tab_log(self, p, cfg):
         self.v_interval = tk.StringVar(value=f"{config.clamp_interval(cfg.get('interval')):.1f}")
         self.e_interval = self.spinbox(p, self.v_interval, config.INTERVAL_MIN, config.INTERVAL_MAX, 0.5, "%.1f", 7)
-        self._grid_row(p, 0, t("st_interval"), self.e_interval, t("st_interval_hint"))
+        self._grid_row(p, 0, t("st_interval"), self.e_interval, t("st_interval_hint"), help="interval")
 
         def ok_interval():
             return config.INTERVAL_MIN <= _to_float(self.v_interval.get()) <= config.INTERVAL_MAX
@@ -396,10 +408,10 @@ class SettingsWindow:
         self.v_interval.trace_add("write", lambda *a: rc())
 
         self.v_logging = tk.BooleanVar(value=bool(cfg.get("logging")))
-        Check(p, t("st_logging"), self.v_logging, self.C, (self.F_TXT, 10)).grid(row=1, column=1, sticky="w", pady=6)
+        Check(p, t("st_logging"), self.v_logging, self.C, (self.F_TXT, 10), help="logging").grid(row=1, column=1, sticky="w", pady=6)
 
         self.v_logall = tk.BooleanVar(value=bool(cfg.get("log_all")))
-        self.label(p, t("st_data")).grid(row=2, column=0, sticky="w", padx=(0, 16), pady=6)
+        self.label_help(p, t("st_data"), "logall").grid(row=2, column=0, sticky="w", padx=(0, 16), pady=6)
         fr = tk.Frame(p, bg=self.C["bg"])
         fr.grid(row=2, column=1, sticky="w", pady=6)
         self.v_logall_req = tk.BooleanVar(value=not self.v_logall.get())
@@ -415,7 +427,7 @@ class SettingsWindow:
               ).pack(side="left", padx=(18, 0))
 
         self.v_logdir = tk.StringVar(value=str(cfg.get("log_dir") or ""))
-        self.label(p, t("st_logdir")).grid(row=3, column=0, sticky="w", padx=(0, 16), pady=6)
+        self.label_help(p, t("st_logdir"), "logdir").grid(row=3, column=0, sticky="w", padx=(0, 16), pady=6)
         row = tk.Frame(p, bg=self.C["bg"])
         row.grid(row=3, column=1, columnspan=2, sticky="w", pady=6)
         self.e_logdir = self.entry(row, self.v_logdir, 46)
@@ -431,7 +443,7 @@ class SettingsWindow:
         self.delim_vals = delims
         self.cb_delim = self.combo(p, [t("st_tab") if d == "\t" else (t("st_auto") if d == "auto" else d)
                                        for d in delims], delims.index(cur), 14)
-        self._grid_row(p, 5, t("st_delim"), self.cb_delim)
+        self._grid_row(p, 5, t("st_delim"), self.cb_delim, help="delim")
 
         decs = ["auto", ",", "."]
         cur = str(cfg.get("csv_decimal", "auto"))
@@ -439,7 +451,7 @@ class SettingsWindow:
             decs.append(cur)
         self.dec_vals = decs
         self.cb_dec = self.combo(p, [t("st_auto") if d == "auto" else d for d in decs], decs.index(cur), 14)
-        self._grid_row(p, 6, t("st_decimal"), self.cb_dec)
+        self._grid_row(p, 6, t("st_decimal"), self.cb_dec, help="decimal")
         self.procs = procset.ProcSection(self, p, cfg, 7)         # per-process CSV options (procset.py)
 
     def browse_logdir(self):
@@ -462,7 +474,7 @@ class SettingsWindow:
         self.be_vals = list(backend.BACKENDS)
         cur = config.norm_backend(cfg.get("backend"))
         self.cb_backend = self.combo(p, [t("st_be_" + v) for v in self.be_vals], self.be_vals.index(cur), 46)
-        self._grid_row(p, 0, t("st_backend"), self.cb_backend)
+        self._grid_row(p, 0, t("st_backend"), self.cb_backend, help="backend")
         self.lbl_src = tk.Label(p, text="", bg=C["bg"], fg=C["fg"], font=(self.F_TXT, 10), anchor="w",
                                 justify="left", wraplength=600)
         self.lbl_src.grid(row=1, column=1, columnspan=2, sticky="w", pady=(2, 2))
@@ -476,7 +488,7 @@ class SettingsWindow:
 
         self.v_lhm = tk.StringVar(value=str(cfg.get("lhm_url") or "auto"))
         self.e_lhm = self.entry(p, self.v_lhm, 52)
-        self.label(p, t("st_lhm_url")).grid(row=5, column=0, sticky="w", padx=(0, 16), pady=(6, 0))
+        self.label_help(p, t("st_lhm_url"), "lhm").grid(row=5, column=0, sticky="w", padx=(0, 16), pady=(6, 0))
         self.e_lhm.grid(row=5, column=1, columnspan=2, sticky="w", pady=(6, 0), ipady=3)
         self.label(p, t("st_lhm_hint"), dim=True, size=9, wrap=600).grid(row=6, column=1, columnspan=2,
                                                                           sticky="w", pady=(0, 6))
@@ -488,7 +500,7 @@ class SettingsWindow:
         self.v_lhm.trace_add("write", lambda *a: rc())
 
         self.v_pm = tk.StringVar(value=str(cfg.get("presentmon_path") or ""))
-        self.label(p, t("st_pm_path")).grid(row=7, column=0, sticky="w", padx=(0, 16), pady=(6, 0))
+        self.label_help(p, t("st_pm_path"), "pm").grid(row=7, column=0, sticky="w", padx=(0, 16), pady=(6, 0))
         row = tk.Frame(p, bg=C["bg"])
         row.grid(row=7, column=1, columnspan=2, sticky="w", pady=(6, 0))
         self.e_pm = self.entry(row, self.v_pm, 52)
@@ -508,7 +520,7 @@ class SettingsWindow:
         self.label(p, t("st_hw_only"), dim=True, size=9, wrap=600).grid(row=10, column=1, columnspan=2, sticky="w")
 
         self.v_hwpath = tk.StringVar(value=str(cfg.get("hwinfo_path") or "auto"))
-        self.label(p, t("st_hwpath")).grid(row=11, column=0, sticky="w", padx=(0, 16), pady=6)
+        self.label_help(p, t("st_hwpath"), "hwpath").grid(row=11, column=0, sticky="w", padx=(0, 16), pady=6)
         row = tk.Frame(p, bg=C["bg"])
         row.grid(row=11, column=1, columnspan=2, sticky="w", pady=6)
         self.e_hwpath = self.entry(row, self.v_hwpath, 52)
@@ -532,9 +544,9 @@ class SettingsWindow:
 
         self.v_manage = tk.BooleanVar(value=bool(cfg.get("manage_hwinfo")))
         self.v_sync = tk.BooleanVar(value=bool(cfg.get("sync_hwinfo_interval")))
-        Check(p, t("st_manage"), self.v_manage, C, (self.F_TXT, 10)).grid(row=13, column=1, columnspan=2,
+        Check(p, t("st_manage"), self.v_manage, C, (self.F_TXT, 10), help="manage").grid(row=13, column=1, columnspan=2,
                                                                          sticky="w", pady=6)
-        Check(p, t("st_sync"), self.v_sync, C, (self.F_TXT, 10)).grid(row=14, column=1, columnspan=2,
+        Check(p, t("st_sync"), self.v_sync, C, (self.F_TXT, 10), help="sync").grid(row=14, column=1, columnspan=2,
                                                                      sticky="w", pady=6)
 
         tasks = self.api.refresh_tasks()
@@ -608,6 +620,7 @@ class SettingsWindow:
         self.button(tool, t("st_lay_reset"), self.reset_auto).pack(side="left")
         self.button(tool, t("st_lay_add"), self.add_sensor_dialog).pack(side="left", padx=8)
         self.button(tool, t("st_lay_open"), self.open_config).pack(side="left")
+        helptexts.info_icon(tool, "layout", bg=C["bg"]).pack(side="left", padx=(12, 0))
         self.lbl_lay = tk.Label(tab, text="", bg=C["bg"], fg=C["dim"], font=(self.F_TXT, 9), anchor="w",
                                 justify="left")
         self.lbl_lay.pack(fill="x", padx=16)
@@ -691,10 +704,14 @@ class SettingsWindow:
             self.sec_ui.append((sec, tv, colv))
             body = tk.Frame(card, bg=C["card"])
             body.pack(fill="x", padx=10, pady=(0, 10))
-            for ci, txt in enumerate((t("st_lay_show"), t("st_lay_name"), t("st_lay_green"), t("st_lay_red"),
-                                      t("st_lay_bar"))):
-                tk.Label(body, text=txt, bg=C["card"], fg=C["faint"], font=(self.F_TXT, 8), anchor="w"
-                         ).grid(row=0, column=ci, sticky="w", padx=(4, 6))
+            for ci, (txt, hk) in enumerate(((t("st_lay_show"), "lay_show"), (t("st_lay_name"), None),
+                                            (t("st_lay_green"), "lay_limits"), (t("st_lay_red"), "lay_limits"),
+                                            (t("st_lay_bar"), "lay_bar"))):
+                hf = tk.Frame(body, bg=C["card"])
+                hf.grid(row=0, column=ci, sticky="w", padx=(4, 6))
+                tk.Label(hf, text=txt, bg=C["card"], fg=C["faint"], font=(self.F_TXT, 8), anchor="w").pack(side="left")
+                if hk:
+                    helptexts.info_icon(hf, hk, bg=C["card"], size=11).pack(side="left", padx=(3, 0))
             body.grid_columnconfigure(1, weight=1)
             for ri, row in enumerate(sec["rows"]):
                 gr = ri + 1
@@ -986,8 +1003,24 @@ class SettingsWindow:
         return bad
 
     def say(self, text, error=False):
+        """Short notice under the tabs: ~2 s for "applied", ~4 s for errors, then a quick fade-out."""
+        col = self.C["red"] if error else self.C["green"]
         try:
-            self.msg.config(text=text, fg=self.C["red"] if error else self.C["green"])
+            if getattr(self, "_say_job", None):
+                self.msg.after_cancel(self._say_job)
+            self.msg.config(text=text, fg=col)
+            self._say_job = self.msg.after(4000 if error else 2000, lambda: self._say_fade(col, 0))
+        except tk.TclError:
+            pass
+
+    def _say_fade(self, col, n):
+        try:
+            if n >= 5:
+                self.msg.config(text="")
+                self._say_job = None
+                return
+            self.msg.config(fg=themes.mix(col, self.C["bg"], (n + 1) / 5))
+            self._say_job = self.msg.after(40, lambda: self._say_fade(col, n + 1))
         except tk.TclError:
             pass
 

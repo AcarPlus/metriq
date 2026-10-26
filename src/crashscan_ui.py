@@ -6,6 +6,7 @@ from tkinter import ttk
 
 import config
 import crashscan
+import helptexts
 from i18n import t
 
 
@@ -29,6 +30,7 @@ class DiagTab:
         bar.pack(fill="x")
         self.btn = sw.button(bar, t("cr_scan"), self.start, primary=True)
         self.btn.pack(side="left")
+        helptexts.info_icon(bar, "scan", bg=C["bg"]).pack(side="left", padx=(8, 0))
         sw.button(bar, t("cr_open_dir"), self.open_dir).pack(side="left", padx=(8, 0))
         self.status = sw.label(bar, "", dim=True, size=9)
         self.status.pack(side="left", padx=(12, 0))

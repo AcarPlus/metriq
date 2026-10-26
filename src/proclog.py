@@ -12,6 +12,7 @@ import time
 import config
 import i18n
 import procmon
+import themes
 from i18n import t
 
 # ------------------------------------------------------------------ config
@@ -213,7 +214,7 @@ class Extras:
         top = self.top()
         nbase = max(0, ncols - 1 - 2 * sum(top.values()))
         self.note(t("pl_started") + " " + estimate_text(self.cfg.get("interval", 5), nbase, top, self.detail(),
-                                                         filter_cfg(self.cfg), self.mon), 9, "dim")
+                                                         filter_cfg(self.cfg), self.mon), 5, "dim")
 
     def closed(self):
         self.close_side()
@@ -238,7 +239,7 @@ class Extras:
             return
         if not self.warned and max(size, self.sbytes) >= GB:
             self.warned = True
-            self.note(t("pl_big"), 12, "yellow")
+            self.note(t("pl_big"), 6, "yellow")
 
     # ---- side file
     @staticmethod
@@ -291,7 +292,12 @@ class Extras:
     def toasts(self, C):
         now = time.time()
         self.notes = [n for n in self.notes if n[0] > now]
-        out = [(text, C.get(col, C["dim"]), None) for _, text, col in self.notes]
+        out = []
+        for until, text, col in self.notes:                # the last 0.35 s fade towards the card colour
+            c = C.get(col, C["dim"])
+            if until - now < 0.35:
+                c = themes.mix(C["card"], c, max(0.0, (until - now) / 0.35))
+            out.append((text, c, None))
         if now - self.err < 6:
             out.append((t("pl_side_err"), C["red"], None))
         return out

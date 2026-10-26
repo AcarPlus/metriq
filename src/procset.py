@@ -5,6 +5,7 @@
 """
 import tkinter as tk
 
+import helptexts
 import layout
 import proclog
 from i18n import t
@@ -28,7 +29,7 @@ class ProcSection:
         C = st.C
         top = proclog.top_cfg(cfg)
         # --- top programs: one spinbox per metric
-        st.label(p, t("ps_top")).grid(row=row, column=0, sticky="w", padx=(0, 16), pady=6)
+        st.label_help(p, t("ps_top"), "top").grid(row=row, column=0, sticky="w", padx=(0, 16), pady=6)
         fr = tk.Frame(p, bg=C["bg"])
         fr.grid(row=row, column=1, columnspan=2, sticky="w", pady=6)
         self.v_top, self.e_top = {}, {}
@@ -49,10 +50,10 @@ class ProcSection:
             v.trace_add("write", lambda *a, rc=rc: rc())
         # --- side file
         self.v_detail = tk.BooleanVar(value=bool(cfg.get("proc_detail")))
-        Check(p, t("ps_detail"), self.v_detail, C, (st.F_TXT, 10), command=self.refresh).grid(
+        Check(p, t("ps_detail"), self.v_detail, C, (st.F_TXT, 10), command=self.refresh, help="detail").grid(
             row=row + 2, column=1, columnspan=2, sticky="w", pady=6)
         # --- which programs
-        st.label(p, t("ps_filter")).grid(row=row + 3, column=0, sticky="w", padx=(0, 16), pady=6)
+        st.label_help(p, t("ps_filter"), "filter").grid(row=row + 3, column=0, sticky="w", padx=(0, 16), pady=6)
         fr2 = tk.Frame(p, bg=C["bg"])
         fr2.grid(row=row + 3, column=1, columnspan=2, sticky="w", pady=6)
         self.lbl_filter = tk.Label(fr2, text="", bg=C["bg"], fg=C["fg"], font=(st.F_TXT, 10), anchor="w",
@@ -62,14 +63,14 @@ class ProcSection:
         # --- limits
         self.v_max = tk.StringVar(value=f"{proclog.num_cfg(cfg, 'log_max_mb', 10 ** 7):g}")
         self.e_max = st.spinbox(p, self.v_max, 0, 100000, 50, "%.0f", 7)
-        st._grid_row(p, row + 4, t("ps_maxmb"), self.e_max, t("ps_maxmb_hint"))
+        st._grid_row(p, row + 4, t("ps_maxmb"), self.e_max, t("ps_maxmb_hint"), help="maxmb")
         self.v_keep = tk.StringVar(value=f"{proclog.num_cfg(cfg, 'log_keep_days', 36500):g}")
         self.e_keep = st.spinbox(p, self.v_keep, 0, 36500, 1, "%.0f", 7)
-        st._grid_row(p, row + 5, t("ps_keep"), self.e_keep, t("ps_keep_hint"))
+        st._grid_row(p, row + 5, t("ps_keep"), self.e_keep, t("ps_keep_hint"), help="keep")
         st.add_check(st.checks, 1, [self.e_max], lambda: self.v_max.get().strip().replace(".", "", 1).isdigit())
         st.add_check(st.checks, 1, [self.e_keep], lambda: self.v_keep.get().strip().isdigit())
         # --- estimate
-        st.label(p, t("ps_est")).grid(row=row + 6, column=0, sticky="w", padx=(0, 16), pady=6)
+        st.label_help(p, t("ps_est"), "est").grid(row=row + 6, column=0, sticky="w", padx=(0, 16), pady=6)
         self.lbl_est = tk.Label(p, text="", bg=C["bg"], fg=C["yellow"], font=(st.F_TXT, 10, "bold"), anchor="w")
         self.lbl_est.grid(row=row + 6, column=1, columnspan=2, sticky="w", pady=6)
         for v in (st.v_interval, st.v_logall):
