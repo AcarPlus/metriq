@@ -21,6 +21,7 @@ if gfx.AVAILABLE:
 
 SCALE = 1.0
 _IM = {}
+_IM_PX = [0]                  # pixels held by _IM (the cache is dropped at a budget, not at a count: big cards are 1 MB each)
 _FONTS = {}
 
 
@@ -39,9 +40,11 @@ def px(v):
 def _cached(key, w, h, paint):
     im = _IM.get(key)
     if im is None:
-        if len(_IM) > 1500:
+        if len(_IM) > 1500 or _IM_PX[0] > 6_000_000:
             _IM.clear()                                    # widgets keep their own references to what they show
+            _IM_PX[0] = 0
         im = _IM[key] = gfx._render(w, h, paint)
+        _IM_PX[0] += w * h
     return im
 
 
@@ -51,6 +54,29 @@ def font_obj(w, font):
     if f is None:
         f = _FONTS[key] = tkfont.Font(root=w, font=font)
     return f
+
+
+_ICON = [False]
+
+
+def set_window_icon(win):
+    """Default icon of all windows, once (every iconbitmap call loads a new icon handle that is never freed)."""
+    if _ICON[0]:
+        return
+    _ICON[0] = True
+    try:
+        import os
+        import config
+        win.iconbitmap(default=os.path.join(config.APP_DIR, "metriq.ico"))
+    except Exception:
+        pass
+
+
+def forget_fonts(toplevel):
+    """Drop the Font objects cached for a destroyed toplevel (the cache is keyed by its name, which is never reused)."""
+    name = str(toplevel)
+    for k in [k for k in _FONTS if k[0] == name]:
+        _FONTS.pop(k, None)
 
 
 def _bg_of(w):
@@ -220,6 +246,7 @@ class Field(_Cv):
         self.pad_l = self.pad_r = px(10)
         self.right = 0
         self._fw = 0
+        self._fdone = False
         self.bind("<Configure>", self._cfg)
         self.bind("<Enter>", lambda e: self._set("hover", True))
         self.bind("<Leave>", lambda e: self._set("hover", False))
@@ -271,7 +298,9 @@ class Field(_Cv):
         self.draw()
 
     def _cfg(self, e):
-        self._fw = e.width
+        if e.width == self._fw and self._fdone:
+            return
+        self._fw, self._fdone = e.width, True
         if self.inner is not None:
             self.itemconfigure("inner", width=max(8, e.width - self.x_in - self.pad_r - self.right))
         self.draw()
@@ -1032,6 +1061,7 @@ class Card(_Cv):
         self.body.grid_columnconfigure(0, weight=1)
         self._n = 0
         self._cw = self._ch = 0
+        self._job = None
         self.inner.bind("<Configure>", self._inner_cfg)
         self.bind("<Configure>", self._cfg)
 
@@ -1050,9 +1080,28 @@ class Card(_Cv):
         tk.Canvas.configure(self, height=h, width=w)
 
     def _cfg(self, e):
+        if (e.width, e.height) == (self._cw, self._ch):
+            return
         self._cw, self._ch = e.width, e.height
         self.itemconfigure("inner", width=max(10, e.width - self.pl - self.pr))
-        self.draw()
+        if self._job is None:                              # one repaint per idle round, however many Configure events
+            self._job = self.after_idle(self._paint_job)
+
+    def _paint_job(self):
+        self._job = None
+        try:
+            self.draw()
+        except tk.TclError:
+            pass
+
+    def destroy(self):
+        if self._job is not None:
+            try:
+                self.after_cancel(self._job)
+            except tk.TclError:
+                pass
+            self._job = None
+        super().destroy()
 
     def draw(self):
         self.delete("bg")

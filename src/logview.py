@@ -26,6 +26,7 @@ import i18n
 import logdata
 import themes
 import tooltip
+import uikit
 from i18n import t
 
 try:
@@ -553,10 +554,7 @@ class Viewer:
         self.win = tk.Toplevel(api.root)
         self.win.title(t("lv_title"))
         self.win.configure(bg=self.C["bg"])
-        try:
-            self.win.iconbitmap(default=os.path.join(config.APP_DIR, "metriq.ico"))
-        except Exception:
-            pass
+        uikit.set_window_icon(self.win)
         try:
             self.win.attributes("-topmost", bool(api.root.attributes("-topmost")))     # stay above a topmost panel
         except tk.TclError:
