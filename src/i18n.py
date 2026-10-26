@@ -190,6 +190,12 @@ def language():
     return _lang
 
 
+def register(strings):
+    """Feature modules add their own texts here instead of editing _STR: register({"tr": {...}, "en": {...}})."""
+    for lang, d in strings.items():
+        _STR.setdefault(lang, {}).update(d)
+
+
 def t(key, **kw):
     s = _STR.get(_lang, _STR["en"]).get(key) or _STR["en"].get(key) or key
     return s.format(**kw) if kw else s
