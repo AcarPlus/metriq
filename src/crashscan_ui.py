@@ -8,14 +8,13 @@ import config
 import crashscan
 import helptexts
 import logview
+import uikit
 from i18n import t
 
 
 def add_tab(sw):
-    """Append the diagnostics tab to the SettingsWindow `sw` (after the layout tab)."""
-    C = sw.C
-    tab = tk.Frame(sw.nb, bg=C["bg"], padx=16, pady=14)
-    sw.nb.add(tab, text=t("cr_tab"))
+    """Fill the diagnostics page (the last one) of the SettingsWindow `sw`."""
+    tab = sw.add_page(5)
     DiagTab(sw, tab)
     return tab
 
@@ -25,42 +24,47 @@ class DiagTab:
         self.sw, self.C, self.p = sw, sw.C, p
         self.events, self.winlog, self.result, self.busy = [], True, None, False
         C, F = self.C, sw.F_TXT
-        sw.label(p, t("cr_title"), bold=True, size=12).pack(anchor="w")
-        sw.label(p, t("cr_intro"), dim=True, size=9, wrap=640).pack(anchor="w", pady=(2, 8))
-        bar = tk.Frame(p, bg=C["bg"])
-        bar.pack(fill="x")
+        card = sw.card(p, t("cr_title"))
+        bg = card.fillc
+        intro = sw.label(card.body, t("cr_intro"), dim=True, size=9, bg=bg)
+        uikit.autowrap(intro)
+        sw.full(card, intro, pady=(0, 8), divider=False)
+        bar = tk.Frame(card.body, bg=bg)
+        sw.full(card, bar, pady=(0, 8), divider=False)
         self.btn = sw.button(bar, t("cr_scan"), self.start, primary=True)
         self.btn.pack(side="left")
-        helptexts.info_icon(bar, "scan", bg=C["bg"]).pack(side="left", padx=(8, 0))
+        helptexts.info_icon(bar, "scan", bg=bg).pack(side="left", padx=(8, 0))
         sw.button(bar, t("cr_open_dir"), self.open_dir).pack(side="left", padx=(8, 0))
         logview.add_button(sw, bar, self.folder)
-        self.status = sw.label(bar, "", dim=True, size=9)
+        self.status = sw.label(bar, "", dim=True, size=9, bg=bg)
         self.status.pack(side="left", padx=(12, 0))
 
-        box = tk.Frame(p, bg=C["bg"])
-        box.pack(fill="x", pady=(10, 0))
-        self.tree = ttk.Treeview(box, columns=("date", "type", "sum"), show="headings", height=6,
+        box = uikit.Card(card.body, C, fill=C["bg"], pad=(6, 6, 6, 6), radius=8, bg=bg)
+        sw.full(card, box, pady=(0, 8), divider=False)
+        self.tree = ttk.Treeview(box.body, columns=("date", "type", "sum"), show="headings", height=6,
                                  style="HP.Treeview", selectmode="browse")
         for col, key, w in (("date", "cr_col_date", 150), ("type", "cr_col_type", 120), ("sum", "cr_col_sum", 360)):
             self.tree.heading(col, text=t(key))
             self.tree.column(col, width=w, anchor="w", stretch=(col == "sum"))
-        sb = ttk.Scrollbar(box, orient="vertical", command=self.tree.yview, style="HP.Vertical.TScrollbar")
+        sb = uikit.Scrollbar(box.body, C, self.tree.yview, bg=C["bg"])
         self.tree.configure(yscrollcommand=sb.set)
         self.tree.pack(side="left", fill="x", expand=True)
-        sb.pack(side="left", fill="y")
+        sb.pack(side="left", fill="y", padx=(4, 0))
         self.tree.bind("<<TreeviewSelect>>", lambda e: self.show())
         self.tree.bind("<MouseWheel>", lambda e: (self.tree.yview_scroll(-1 if e.delta > 0 else 1, "units"),
                                                   "break")[1])
 
-        self.txt = tk.Text(p, height=14, wrap="word", bg=C["card"], fg=C["fg"], relief="flat", bd=0,
-                           highlightthickness=1, highlightbackground=C["border"], font=(sw.F_NUM, 9),
-                           padx=10, pady=8, insertbackground=C["fg"], selectbackground="#1f3a5f")
-        self.txt.pack(fill="both", expand=True, pady=(10, 0))
+        box2 = uikit.Card(card.body, C, fill=C["bg"], pad=(12, 12, 10, 10), radius=8, bg=bg)
+        sw.full(card, box2, pady=(0, 8), divider=False)
+        self.txt = tk.Text(box2.body, height=12, wrap="word", bg=C["bg"], fg=C["fg"], relief="flat", bd=0,
+                           highlightthickness=0, font=(sw.F_NUM, 9), padx=2, pady=2, insertbackground=C["fg"],
+                           selectbackground=C["select"], selectforeground=C["fg"])
+        self.txt.pack(fill="x", expand=True)
         self.txt.bind("<MouseWheel>", lambda e: (self.txt.yview_scroll(-1 if e.delta > 0 else 1, "units"),
                                                  "break")[1])
         self.set_text(t("cr_select"))
-        row = tk.Frame(p, bg=C["bg"])
-        row.pack(anchor="w", pady=(10, 0))
+        row = tk.Frame(card.body, bg=bg)
+        sw.full(card, row, pady=(0, 2), divider=False, sticky="w")
         self.open_btn = sw.button(row, t("cr_open_csv"), self.open_csv)
         self.open_btn.pack(side="left")
         self.open_btn.config(state="disabled")

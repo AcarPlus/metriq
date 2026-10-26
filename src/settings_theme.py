@@ -1,6 +1,6 @@
 """Settings tab "Theme": theme picker with preview cards, colour / shape / font customisation, value colouring.
 
-ThemeTab(settings_window, cfg) adds the tab to the notebook. Nothing is applied to the panel until Apply / Save
+ThemeTab(settings_window, cfg) fills the Theme page of the settings window (cards on a scrolling page). Nothing is applied to the panel until Apply / Save
 (like every other setting); the preview strip at the top of the tab shows the unsaved choice at once.
 read() -> {"theme", "theme_overrides", "value_color_mode", "value_steps"} for SettingsWindow.read_ui()."""
 import tkinter as tk
@@ -11,6 +11,7 @@ import gfx
 import helptexts
 import i18n
 import themes
+import uikit
 from i18n import t
 
 try:
@@ -129,17 +130,17 @@ class ThemeTab:
         self.swatch, self.cards, self.fcombo = {}, {}, {}
 
         C = self.C
-        self.tab = tk.Frame(ui.nb, bg=C["bg"])
-        ui.nb.add(self.tab, text=t("st_tab_theme"))
-        self.idx = ui.nb.index("end") - 1
+        self.tab = ui.add_page(4)
+        self.idx = 4
         self.pv = tk.Canvas(self.tab, height=PREVIEW_H, bg=C["bg"], highlightthickness=0, bd=0)
-        self.pv.pack(fill="x", padx=16, pady=(12, 4))
+        self.pv.pack(fill="x", padx=(0, 6), pady=(0, 8))
         self.pv.bind("<Configure>", lambda e: self.draw_preview())
-        sf = su.ScrollFrame(self.tab, C["bg"])
-        sf.reserve, sf.cap = PREVIEW_H + 20, 470
-        sf.pack(fill="both", expand=True, padx=(16, 4), pady=(4, 6))
-        sf.inner.configure(padx=0, pady=4)
+        sf = su.ScrollFrame(self.tab, C["bg"], C)
+        sf.reserve, sf.cap = PREVIEW_H + 18, 560
+        sf.pack(fill="both", expand=True)
+        sf.inner.configure(padx=0, pady=2)
         ui.scrolls.append(sf)
+        ui.pages[4]["sf"] = sf
         self.sf = sf
         p = sf.inner
         self._build_themes(p)
@@ -165,22 +166,24 @@ class ThemeTab:
         self.sync()
 
     # ------------------------------------------------------------ sections
-    def _heading(self, p, text, hint=None, top=14):
-        f = tk.Frame(p, bg=self.C["bg"])
-        f.pack(fill="x", pady=(top, 6))
-        self.ui.label(f, text, bold=True).pack(side="left")
+    def _card(self, p, text, hint=None):
+        card = self.ui.card(p, text)
         if hint:
-            self.ui.label(f, hint, dim=True, size=9).pack(side="left", padx=(12, 0))
-        return f
+            h = self.ui.label(card.body, hint, dim=True, size=9, bg=card.fillc)
+            uikit.autowrap(h)
+            self.ui.full(card, h, pady=(0, 8), divider=False)
+        return card
 
     def _build_themes(self, p):
-        self._heading(p, t("th_pick"), t("th_pick_hint"), top=2)
-        grid = tk.Frame(p, bg=self.C["bg"])
-        grid.pack(anchor="w")
+        card = self._card(p, t("th_pick"), t("th_pick_hint"))
+        bg = card.fillc
+        grid = tk.Frame(card.body, bg=bg)
+        self.ui.full(card, grid, pady=(0, 4), divider=False, sticky="w")
+        self._cardimgs = {}
         for i, name in enumerate(themes.THEMES):
-            cv = tk.Canvas(grid, width=CARD_W + 4, height=CARD_H + 26, bg=self.C["bg"], highlightthickness=0, bd=0,
+            cv = tk.Canvas(grid, width=CARD_W + 4, height=CARD_H + 26, bg=bg, highlightthickness=0, bd=0,
                            cursor="hand2")
-            cv.grid(row=i // 5, column=i % 5, padx=(0, 6), pady=(0, 6))
+            cv.grid(row=i // 5, column=i % 5, padx=(0, 8), pady=(0, 8))
             cv.bind("<Button-1>", lambda e, n=name: self.pick_theme(n))
             cv.bind("<Enter>", lambda e, n=name: self.draw_card(n, hover=True))
             cv.bind("<Leave>", lambda e, n=name: self.draw_card(n))
@@ -189,85 +192,73 @@ class ThemeTab:
 
     def _build_colors(self, p):
         C, ui = self.C, self.ui
-        f = self._heading(p, t("th_colors"), t("th_colors_hint"))
-        ui.button(f, t("th_reset"), self.reset_overrides).pack(side="right")
-        grid = tk.Frame(p, bg=C["bg"])
-        grid.pack(anchor="w")
+        card = self._card(p, t("th_colors"), t("th_colors_hint"))
+        bg = card.fillc
+        ui.button(card.hdr, t("th_reset"), self.reset_overrides, bg=bg).pack(side="right")
+        grid = tk.Frame(card.body, bg=bg)
+        ui.full(card, grid, pady=(0, 4), divider=False, sticky="w")
         items = [(t(lbl), tok) for lbl, tok in self.TOKEN_ROWS]
         items += [(t("th_" + tok), tok) for tok in themes.ACCENTS]
         items += [(t("th_grad", n=i + 1), tok) for i, tok in enumerate(themes.GRADIENT)]
-        per_col = 7
+        per_col = 8
         for i, (label, tok) in enumerate(items):
             col, row = divmod(i, per_col)
-            ui.label(grid, label, size=9).grid(row=row, column=col * 2, sticky="w", padx=(0 if col == 0 else 22, 8),
-                                               pady=3)
-            fr = tk.Frame(grid, bg=C["faint"], padx=2, pady=2)       # frame = visible edge (ui colour when customised)
-            b = tk.Button(fr, text="", width=5, relief="flat", bd=0, cursor="hand2", highlightthickness=0, takefocus=0)
-            b.pack(ipady=1)
-            b.config(command=lambda tk_=tok: self.pick_color(tk_))
-            for w in (b, fr):
-                w.bind("<Button-3>", lambda e, tk_=tok: self.reset_token(tk_))
-            fr.grid(row=row, column=col * 2 + 1, sticky="w", pady=3)
+            ui.label(grid, label, size=9, bg=bg).grid(row=row, column=col * 2, sticky="w",
+                                                      padx=(0 if col == 0 else 26, 10), pady=4)
+            b = uikit.Swatch(grid, C, "#000000", lambda tk_=tok: self.pick_color(tk_), bg=bg)
+            b.bind("<Button-3>", lambda e, tk_=tok: self.reset_token(tk_))
+            b.grid(row=row, column=col * 2 + 1, sticky="w", pady=4)
             self.swatch[tok] = b
-        gh = tk.Frame(p, bg=C["bg"])
-        gh.pack(anchor="w", pady=(2, 0))
-        ui.label(gh, t("th_grad_hint"), dim=True, size=9).pack(side="left")
-        helptexts.info_icon(gh, "th_grad", bg=C["bg"], size=12).pack(side="left", padx=(6, 0))
+        gh = tk.Frame(card.body, bg=bg)
+        ui.full(card, gh, pady=(4, 2), divider=False, sticky="w")
+        ui.label(gh, t("th_grad_hint"), dim=True, size=9, bg=bg).pack(side="left")
+        helptexts.info_icon(gh, "th_grad", bg=bg, size=12).pack(side="left", padx=(6, 0))
 
     def _build_shape(self, p):
         C, ui = self.C, self.ui
-        self._heading(p, t("th_shape"))
-        grid = tk.Frame(p, bg=C["bg"])
-        grid.pack(anchor="w")
+        card = self._card(p, t("th_shape"))
+        bg = card.fillc
         self.vl = {}
-        for r, (key, lbl, lo, hi, res) in enumerate((("radius", "th_radius", 0, 28, 1),
-                                                     ("row_spacing", "th_spacing", 0.8, 1.5, 0.05))):
-            ui.label_help(grid, t(lbl), "th_" + key).grid(row=r, column=0, sticky="w", padx=(0, 16), pady=5)
-            sc = tk.Scale(grid, from_=lo, to=hi, resolution=res, orient="horizontal", length=230, showvalue=False,
-                          bg=C["bg"], fg=C["fg"], troughcolor=C["track"], highlightthickness=0, bd=0,
-                          sliderrelief="flat", sliderlength=16, width=12, activebackground=C["ui"], takefocus=0,
-                          command=lambda v, k=key: self.on_slider(k, v))
-            sc.grid(row=r, column=1, sticky="w", pady=5)
-            self.vl[key] = ui.label(grid, "", dim=True, size=9)
-            self.vl[key].grid(row=r, column=2, sticky="w", padx=(10, 0))
+        for key, lbl, lo, hi, res in (("radius", "th_radius", 0, 28, 1), ("row_spacing", "th_spacing", 0.8, 1.5, 0.05)):
+            fr = tk.Frame(card.body, bg=bg)
+            sc = uikit.Slider(fr, C, lo, hi, res, 220, lambda v, k=key: self.on_slider(k, v), bg=bg)
+            sc.pack(side="left")
+            self.vl[key] = ui.label(fr, "", dim=True, size=9, bg=bg)
+            self.vl[key].config(width=8, anchor="e")
+            self.vl[key].pack(side="left", padx=(8, 0))
             setattr(self, "sc_" + key, sc)
+            ui.row(card, t(lbl), fr, help="th_" + key)
         auto = t("th_font_auto")
         fams = [auto] + families()
-        for r, (tok, lbl) in enumerate((("font_text", "th_font_text"), ("font_num", "th_font_num"),
-                                        ("font_head", "th_font_head")), start=2):
-            ui.label_help(grid, t(lbl), "th_fonts").grid(row=r, column=0, sticky="w", padx=(0, 16), pady=5)
-            cb = ui.combo(grid, fams, 0, 30)
-            cb.grid(row=r, column=1, columnspan=2, sticky="w", pady=5)
+        for tok, lbl in (("font_text", "th_font_text"), ("font_num", "th_font_num"), ("font_head", "th_font_head")):
+            cb = ui.combo(card.body, fams, 0, 28)
             cb.bind("<<ComboboxSelected>>", lambda e, k=tok, c=cb: self.on_font(k, c))
             self.fcombo[tok] = cb
+            ui.row(card, t(lbl), cb, help="th_fonts")
 
     def _build_values(self, p):
         C, ui, su = self.C, self.ui, self.su
-        self._heading(p, t("th_values"))
-        grid = tk.Frame(p, bg=C["bg"])
-        grid.pack(anchor="w")
-        ui.label_help(grid, t("th_mode"), "th_mode").grid(row=0, column=0, sticky="w", padx=(0, 16), pady=5)
+        card = self._card(p, t("th_values"))
+        bg = card.fillc
         self.mode_vals = list(themes.MODES)
-        self.cb_mode = ui.combo(grid, [t("th_mode_smooth"), t("th_mode_stepped")], self.mode_vals.index(self.mode), 26)
-        self.cb_mode.grid(row=0, column=1, sticky="w", pady=5)
+        self.cb_mode = ui.combo(card.body, [t("th_mode_smooth"), t("th_mode_stepped")],
+                                self.mode_vals.index(self.mode), 22)
         self.cb_mode.bind("<<ComboboxSelected>>", self.on_mode)
+        ui.row(card, t("th_mode"), self.cb_mode, help="th_mode")
         self.v_auto = tk.BooleanVar(value=not self.steps)
-        su.Check(grid, t("th_auto"), self.v_auto, C, (ui.F_TXT, 10), command=self.on_auto, help="th_auto").grid(
-            row=1, column=1, sticky="w", pady=5)
-        ui.label_help(grid, t("th_thresholds"), "th_steps").grid(row=2, column=0, sticky="w", padx=(0, 16), pady=5)
-        row = tk.Frame(grid, bg=C["bg"])
-        row.grid(row=2, column=1, sticky="w", pady=5)
+        ui.row(card, t("th_auto"), ui.switch(card.body, self.v_auto, self.on_auto), help="th_auto")
+        row = tk.Frame(card.body, bg=bg)
         self.step_vars, self.step_entries = [], []
         init = self.steps or DEFAULT_STEPS
         for i in range(4):
             v = tk.StringVar(value=su._fmt_num(init[i]) if i < len(init) else "")
-            e = ui.entry(row, v, 5)
-            e.pack(side="left", ipady=2, padx=(0 if i == 0 else 6, 0))
+            e = ui.entry(row, v, 4, bg=bg)
+            e.pack(side="left", padx=(0 if i == 0 else 6, 0))
             v.trace_add("write", lambda *a: self.on_steps())
             self.step_vars.append(v)
             self.step_entries.append(e)
-        ui.label(row, "%", dim=True).pack(side="left", padx=(6, 0))
-        ui.label(p, t("th_steps_hint"), dim=True, size=9).pack(anchor="w", pady=(0, 10))
+        ui.label(row, "%", dim=True, bg=bg).pack(side="left", padx=(6, 0))
+        ui.row(card, t("th_thresholds"), row, t("th_steps_hint"), help="th_steps")
         self.rc = ui.add_check(ui.checks, self.idx, self.step_entries, lambda: self.parse_steps() is not None)
 
     # ------------------------------------------------------------ actions
@@ -345,10 +336,7 @@ class ThemeTab:
         self._lock = True
         try:
             for tok, b in self.swatch.items():
-                c = sty[tok]
-                own = tok in self.ov
-                b.config(bg=c, activebackground=c)
-                b.master.config(bg=self.C["ui"] if own else self.C["faint"])
+                b.set(sty[tok], tok in self.ov)
             self.sc_radius.set(sty.radius)
             self.sc_row_spacing.set(sty.spacing)
             self.vl["radius"].config(text=f"{sty.radius} px")
@@ -371,19 +359,31 @@ class ThemeTab:
         cv.delete("all")
         th = themes.Style(name)
         P = th.palette()
+        C = self.C
         sel = name == self.name
         w, h = CARD_W, CARD_H
+        W, H = w + 4, h + 26
         ox = 2
-        cv.create_rectangle(0, 0, w + 3, h + 25, outline=self.C["ui"] if sel else (self.C["faint"] if hover
-                                                                                        else self.C["border"]),
-                            width=2 if sel else 1)
-        cv.create_rectangle(ox + 1, 3, ox + w, h + 2, fill=P["bg"], outline="")
+        imgs = self._cardimgs[name] = []
+
+        def pic(im, x, y):
+            if im is None:
+                return False
+            imgs.append(im)
+            cv.create_image(x, y, image=im, anchor="nw")
+            return True
+        oc = C["ui"] if sel else (C["dim"] if hover else C["border"])
+        ok = pic(uikit.rr(W, H, 11, themes.mix(C["card"], C["bg"], 0.5), oc, 2 if sel else 1), 0, 0)
         r = min(10, max(2, th.radius * 0.55))
-        pts = [ox + 8 + r, 9, ox + w - 7 - r, 9, ox + w - 7, 9, ox + w - 7, 9 + r, ox + w - 7, h - 5 - r, ox + w - 7,
-               h - 5, ox + w - 7 - r, h - 5, ox + 8 + r, h - 5, ox + 8, h - 5, ox + 8, h - 5 - r, ox + 8, 9 + r,
-               ox + 8, 9]
-        cv.create_polygon(pts, smooth=True, fill=P["card"], outline=P["border"])
-        cv.create_line(ox + 9.5, 9 + r, ox + 9.5, h - 5 - r, fill=P["gauge"], width=2)
+        if ok:
+            pic(uikit.rr(W - 6, h - 1, 8, P["bg"]), 3, 3)
+            pic(uikit.rr(w - 13, h - 14, r, P["card"], P["border"]), ox + 8, 9)
+            pic(uikit.rr(3, max(4, h - 14 - 2 * r), 1.5, P["gauge"]), ox + 9, 9 + r)
+        else:
+            cv.create_rectangle(0, 0, w + 3, h + 25, outline=oc, width=2 if sel else 1)
+            cv.create_rectangle(ox + 1, 3, ox + w, h + 2, fill=P["bg"], outline="")
+            cv.create_rectangle(ox + 8, 9, ox + w - 7, h - 5, fill=P["card"], outline=P["border"])
+            cv.create_line(ox + 9.5, 9 + r, ox + 9.5, h - 5 - r, fill=P["gauge"], width=2)
         cv.create_oval(ox + 16, 14, ox + 24, 22, fill=themes.mix(P["card"], P["gauge"], 0.35), outline="")
         cv.create_rectangle(ox + 28, 16, ox + 28 + 34, 20, fill=P["text"], outline="")
         for i, (nw, fr) in enumerate(((30, 0.15), (38, 0.55), (26, 0.9))):
@@ -395,7 +395,7 @@ class ThemeTab:
             cv.create_rectangle(bx0, y + 1, bx1, y + 6, fill=P["track"], outline="")
             cv.create_rectangle(bx0, y + 1, bx0 + (bx1 - bx0) * max(0.18, fr), y + 6, fill=th.lut[round(fr * 255)],
                                 outline="")
-        cv.create_text(w / 2 + ox, h + 14, text=themes.theme_label(name), fill=self.C["fg"] if sel else self.C["dim"],
+        cv.create_text(W / 2, h + 14, text=themes.theme_label(name), fill=C["fg"] if sel else C["dim"],
                        font=(self.ui.F_TXT, -11, "bold" if sel else "normal"))
 
     # ------------------------------------------------------------ live preview

@@ -1,16 +1,18 @@
-"""Settings window (tk.Toplevel, dark theme) for metriQ.
+"""Settings window (tk.Toplevel, themed like the panel) for metriQ.
 
 ``SettingsWindow(api)`` gets a small API object from panel.py:
     root, cfg (live dict, read only here), C (colours), fonts (text, heading, mono),
     apply(changes, lay_mode, lay_cfg) -> bool, layout() -> (is_auto, sections_cfg), readings() -> [reading],
     monitor() -> dict | None, monitors() -> [dict], refresh_tasks() -> bool, detect(path_setting) -> path,
     source (backend.Manager: the active data source)
+
+Look: a sidebar (one entry per page, accent coloured) and rounded cards on the right (uikit.py has the widgets).
+Pages are added with add_page()/_page(); settings_theme.py and crashscan_ui.py add their own.
 """
 import copy
 import os
 import re
 import tkinter as tk
-import tkinter.font as tkfont
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
 import backend
@@ -23,87 +25,31 @@ import layout
 import logview
 import procset
 import themes
+import uikit
 import version
 from settings_theme import ThemeTab
 from i18n import t
+from uikit import Check, ScrollFrame, Switch          # (Check / ScrollFrame are also used by the other tabs)
 
+i18n.register({
+    "tr": {
+        "st_card_window": "Pencere", "st_card_display": "Görünüm", "st_card_updates": "Güncellemeler",
+        "st_card_rec": "Kayıt", "st_card_files": "Dosyalar", "st_card_source": "Veri kaynağı",
+        "st_card_extra": "Ek kaynaklar", "st_card_hwinfo": "HWiNFO",
+    },
+    "en": {
+        "st_card_window": "Window", "st_card_display": "Display", "st_card_updates": "Updates",
+        "st_card_rec": "Recording", "st_card_files": "Files", "st_card_source": "Data source",
+        "st_card_extra": "Extra sources", "st_card_hwinfo": "HWiNFO",
+    },
+})
 
-# ====================================================================== small themed widgets
-class Check(tk.Frame):
-    """Dark check box (the native one cannot be recoloured)."""
+# (title key, icon of the sidebar / cards, accent token, panel icon used in the card headers)
+PAGES = (("st_tab_look", "look", "accent_clock", "gauge"), ("st_tab_log", "log", "accent_temp", "temp"),
+         ("st_tab_hw", "hw", "accent_power", "bolt"), ("st_tab_layout", "layout", "accent_net", "net"),
+         ("st_tab_theme", "theme", "accent_fan", "fan"), ("cr_tab", "diag", "accent_fps", "fps"))
 
-    def __init__(self, parent, text, var, C, font, bg=None, command=None, help=None):
-        bg = bg or C["bg"]
-        super().__init__(parent, bg=bg)
-        self.var, self.command, self.C, self.bg = var, command, C, bg
-        self.box = tk.Canvas(self, width=18, height=18, bg=bg, highlightthickness=0, bd=0, takefocus=1,
-                             cursor="hand2")
-        self.box.pack(side="left")
-        self.lbl = None
-        if text:
-            self.lbl = tk.Label(self, text=text, bg=bg, fg=C["fg"], font=font, cursor="hand2", anchor="w",
-                                justify="left")
-            self.lbl.pack(side="left", padx=(6, 0))
-            self.lbl.bind("<Button-1>", self.toggle)
-        if help:
-            helptexts.info_icon(self, help, bg=bg).pack(side="left", padx=(8, 0))
-        self.box.bind("<Button-1>", lambda e: (self.box.focus_set(), self.toggle()))
-        self.box.bind("<space>", self.toggle)
-        self.box.bind("<FocusIn>", lambda e: self.draw())
-        self.box.bind("<FocusOut>", lambda e: self.draw())
-        var.trace_add("write", lambda *a: self.draw())
-        self.draw()
-
-    def draw(self):
-        try:
-            c, on = self.box, bool(self.var.get())
-            c.delete("all")
-            focus = self.focus_displayof() is c
-            edge = self.C["ui"] if (on or focus) else self.C["faint"]
-            c.create_rectangle(2, 2, 16, 16, outline=edge, width=1, fill=self.C["ui"] if on else self.C["track"])
-            if on:
-                c.create_line(5, 9.5, 8, 12.5, 13, 5.5, fill=self.C["on_ui"], width=2, capstyle="round",
-                              joinstyle="round")
-        except tk.TclError:
-            pass
-
-    def toggle(self, e=None):
-        self.var.set(not self.var.get())
-        if self.command:
-            self.command()
-
-
-class ScrollFrame(tk.Frame):
-    """Vertically scrolling container; put widgets into .inner."""
-
-    def __init__(self, parent, bg):
-        super().__init__(parent, bg=bg)
-        self.cap, self.reserve = None, 0      # max natural height counted for the window size; fixed space above
-        self.cv = tk.Canvas(self, bg=bg, highlightthickness=0, bd=0)
-        self.sb = ttk.Scrollbar(self, orient="vertical", command=self.cv.yview, style="HP.Vertical.TScrollbar")
-        self.cv.configure(yscrollcommand=self.sb.set)
-        self.inner = tk.Frame(self.cv, bg=bg)
-        self.wid = self.cv.create_window(0, 0, window=self.inner, anchor="nw")
-        self.inner.bind("<Configure>", lambda e: self.cv.configure(scrollregion=self.cv.bbox("all")))
-        self.cv.bind("<Configure>", lambda e: self.cv.itemconfigure(self.wid, width=e.width))
-        self.sb.pack(side="right", fill="y")
-        self.cv.pack(side="left", fill="both", expand=True)
-
-    def req_height(self):
-        self.inner.update_idletasks()
-        return self.inner.winfo_reqheight()
-
-    def req_width(self):
-        self.inner.update_idletasks()
-        return self.inner.winfo_reqwidth()
-
-    def scroll(self, delta):
-        lo, hi = self.cv.yview()
-        if lo <= 0.0 and hi >= 1.0:
-            return
-        self.cv.yview_scroll(int(-delta / 120 * 3) or (-1 if delta > 0 else 1), "units")
-
-
+_bg = uikit._bg_of
 themes_keys = {"theme", "theme_overrides", "value_color_mode", "value_steps"}
 
 
@@ -131,14 +77,15 @@ class SettingsWindow:
             pass
         self.win.transient(self.root)
         self.win.withdraw()
+        uikit.set_scale(self.win)
         self._style()
         self.tab_index = 0
         self.initial = {}
+        self.pages = []
         self.build_ui(first=True)
         self.win.protocol("WM_DELETE_WINDOW", self.cancel)
         self.win.bind("<Escape>", lambda e: self.cancel())
         self.win.bind("<MouseWheel>", self._wheel)
-        self.win.bind_class("TCombobox", "<MouseWheel>", lambda e: (self._wheel(e), "break")[1])
 
     def winfo_exists(self):
         try:
@@ -157,6 +104,7 @@ class SettingsWindow:
 
     # ------------------------------------------------------------ theme
     def _style(self):
+        """ttk is only left for the lists (Treeview) of the add-sensor dialog and the crash detective."""
         C = self.C
         s = ttk.Style(self.win)
         try:
@@ -164,33 +112,15 @@ class SettingsWindow:
         except tk.TclError:
             pass
         f = (self.F_TXT, 10)
-        s.configure("HP.TNotebook", background=C["bg"], borderwidth=0, tabmargins=(0, 0, 0, 0), bordercolor=C["border"],
-                    lightcolor=C["bg"], darkcolor=C["bg"])
-        s.configure("HP.TNotebook.Tab", background=C["card"], foreground=C["dim"], padding=(18, 7),
-                    borderwidth=0, bordercolor=C["border"], lightcolor=C["card"], darkcolor=C["card"], font=(self.F_TXT, 10, "bold"))
-        s.map("HP.TNotebook.Tab", background=[("selected", C["track"]), ("active", C["stripe"])],
-              foreground=[("selected", C["fg"]), ("active", C["fg"])])
-        s.configure("HP.TCombobox", fieldbackground=C["track"], background=C["track"], foreground=C["fg"],
-                    arrowcolor=C["dim"], bordercolor=C["border"], lightcolor=C["track"], darkcolor=C["track"],
-                    selectbackground=C["track"], selectforeground=C["fg"], padding=3)
-        s.map("HP.TCombobox", fieldbackground=[("readonly", C["track"])], foreground=[("readonly", C["fg"])],
-              selectbackground=[("readonly", C["track"])], selectforeground=[("readonly", C["fg"])],
-              bordercolor=[("focus", C["ui"])], arrowcolor=[("active", C["fg"])])
-        s.configure("HP.Vertical.TScrollbar", background=C["track"], troughcolor=C["bg"], bordercolor=C["bg"],
-                    arrowcolor=C["dim"], lightcolor=C["track"], darkcolor=C["track"], gripcount=0)
-        s.map("HP.Vertical.TScrollbar", background=[("active", C["border"])])
-        s.configure("HP.Treeview", background=C["card"], fieldbackground=C["card"], foreground=C["fg"],
-                    rowheight=24, borderwidth=0, font=f, bordercolor=C["border"], lightcolor=C["border"],
-                    darkcolor=C["border"])
+        s.configure("HP.Treeview", background=C["bg"], fieldbackground=C["bg"], foreground=C["fg"],
+                    rowheight=28, borderwidth=0, font=f, bordercolor=C["bg"], lightcolor=C["bg"],
+                    darkcolor=C["bg"], relief="flat")
+        s.layout("HP.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
         s.map("HP.Treeview", background=[("selected", C["select"])], foreground=[("selected", C["fg"])])
-        s.configure("HP.Treeview.Heading", background=C["track"], foreground=C["name"], relief="flat",
-                    font=(self.F_TXT, 10, "bold"))
-        s.map("HP.Treeview.Heading", background=[("active", C["border"])])
-        self.win.option_add("*TCombobox*Listbox.background", C["track"])
-        self.win.option_add("*TCombobox*Listbox.foreground", C["fg"])
-        self.win.option_add("*TCombobox*Listbox.selectBackground", C["select"])
-        self.win.option_add("*TCombobox*Listbox.selectForeground", C["fg"])
-        self.win.option_add("*TCombobox*Listbox.font", f)
+        s.configure("HP.Treeview.Heading", background=C["card"], foreground=C["dim"], relief="flat",
+                    font=(self.F_TXT, 9, "bold"), padding=(6, 6), borderwidth=0, bordercolor=C["card"],
+                    lightcolor=C["card"], darkcolor=C["card"])
+        s.map("HP.Treeview.Heading", background=[("active", C["track"])], foreground=[("active", C["fg"])])
 
     def _dark_title(self):
         try:
@@ -203,58 +133,37 @@ class SettingsWindow:
 
     # ------------------------------------------------------------ widget factories
     def label(self, parent, text, dim=False, bold=False, bg=None, wrap=0, size=10):
-        return tk.Label(parent, text=text, bg=bg or self.C["bg"], fg=self.C["dim"] if dim else self.C["fg"],
+        return tk.Label(parent, text=text, bg=bg or _bg(parent), fg=self.C["dim"] if dim else self.C["fg"],
                         font=(self.F_TXT, size, "bold" if bold else "normal"), anchor="w", justify="left",
                         wraplength=wrap)
 
-    def entry(self, parent, var, width=12, bg=None):
-        C = self.C
-        return tk.Entry(parent, textvariable=var, width=width, bg=C["track"], fg=C["fg"], insertbackground=C["fg"],
-                        relief="flat", highlightthickness=1, highlightbackground=C["border"],
-                        highlightcolor=C["ui"], font=(self.F_TXT, 10), disabledbackground=C["track"],
-                        selectbackground=C["select"], selectforeground=C["fg"])
+    def entry(self, parent, var, width=12, bg=None, height=None, justify="left"):
+        return uikit.entry(parent, self.C, var, width, (self.F_TXT, 10), justify=justify, bg=bg, height=height)
 
     def spinbox(self, parent, var, lo, hi, inc, fmt, width=7):
-        C = self.C
-        return tk.Spinbox(parent, textvariable=var, from_=lo, to=hi, increment=inc, format=fmt, width=width,
-                          bg=C["track"], fg=C["fg"], insertbackground=C["fg"], buttonbackground=C["track"],
-                          relief="flat", highlightthickness=1, highlightbackground=C["border"],
-                          highlightcolor=C["ui"], font=(self.F_TXT, 10), justify="left",
-                          selectbackground=C["select"], selectforeground=C["fg"])
+        return uikit.spin(parent, self.C, var, lo, hi, inc, fmt, width, (self.F_TXT, 10))
 
     def button(self, parent, text, cmd, primary=False, bg=None, width=None, font_size=10):
-        C = self.C
-        base = C["ui"] if primary else C["track"]
-        hover = C["ui_hover"] if primary else C["border"]
-        b = tk.Button(parent, text=text, command=cmd, bg=base, fg=C["on_ui"] if primary else C["fg"],
-                      activebackground=hover, activeforeground=C["on_ui"] if primary else C["fg"], relief="flat", bd=0,
-                      padx=14, pady=5, cursor="hand2", font=(self.F_TXT, font_size, "bold" if primary else "normal"),
-                      highlightthickness=0, takefocus=1)
-        if width:
-            b.config(width=width)
-        b.bind("<Enter>", lambda e: b.config(bg=hover))
-        b.bind("<Leave>", lambda e: b.config(bg=base))
-        return b
+        return uikit.Button(parent, self.C, text, cmd, (self.F_TXT, font_size, "bold" if primary else "normal"),
+                            primary=primary, bg=bg)
 
     def small_btn(self, parent, text, cmd, bg=None):
-        C = self.C
-        base = bg or C["card"]
-        b = tk.Button(parent, text=text, command=cmd, bg=base, fg=C["dim"], activebackground=C["border"],
-                      activeforeground=C["fg"], relief="flat", bd=0, padx=6, pady=1, cursor="hand2",
-                      font=(self.F_TXT, 9), highlightthickness=0, takefocus=0)
-        b.bind("<Enter>", lambda e: b.config(fg=C["fg"], bg=C["border"]))
-        b.bind("<Leave>", lambda e: b.config(fg=C["dim"], bg=base))
-        return b
+        icon = {"▲": "up", "▼": "down", "✕": "x"}.get(text)
+        if icon:
+            return uikit.Button(parent, self.C, "", cmd, (self.F_TXT, 9), small=True, icon=icon, bg=bg)
+        return uikit.Button(parent, self.C, text, cmd, (self.F_TXT, 9), small=True, bg=bg)
 
     def combo(self, parent, values, index, width=24):
-        cb = ttk.Combobox(parent, values=values, state="readonly", width=width, style="HP.TCombobox",
-                          font=(self.F_TXT, 10))
-        cb.current(max(0, min(index, len(values) - 1)))
-        return cb
+        return uikit.Combo(parent, self.C, values, index, width, (self.F_TXT, 10))
+
+    def switch(self, parent, var, command=None, small=False):
+        return uikit.Switch(parent, self.C, var, command, w=34 if small else 40, h=18 if small else 22)
 
     def mark(self, w, ok):
-        C = self.C
-        w.config(highlightbackground=C["border"] if ok else C["red"], highlightcolor=C["ui"] if ok else C["red"])
+        try:
+            w.set_error(not ok)
+        except AttributeError:
+            pass
 
     def add_check(self, store, tab, widgets, fn):
         """Register a validator. Returns recheck() which re-marks only these widgets."""
@@ -272,6 +181,49 @@ class SettingsWindow:
         store.append((tab, recheck))
         return recheck
 
+    # ------------------------------------------------------------ cards and rows
+    def card(self, parent, title=None, kind=None, acc=None, pady=(0, 12)):
+        c = uikit.Card(parent, self.C, title, acc or self.page_acc, font_head=(self.F_HEAD, 11, "bold"),
+                       bg=_bg(parent), icon_kind=kind or self.page_kind)
+        c.pack(fill="x", pady=pady)
+        return c
+
+    def label_help(self, parent, text, help=None, bg=None, size=10, bold=False):
+        """The label of a settings row, followed by its (i) help marker when `help` names a help text."""
+        if not help:
+            return self.label(parent, text, bg=bg, size=size, bold=bold)
+        fr = tk.Frame(parent, bg=bg or _bg(parent))
+        self.label(fr, text, bg=bg, size=size, bold=bold).pack(side="left")
+        helptexts.info_icon(fr, help, bg=bg or _bg(parent)).pack(side="left", padx=(6, 0))
+        return fr
+
+    def row(self, card, label, widget=None, hint=None, help=None, stack=False):
+        """One settings row of a card: label (+ help icon, + hint below) on the left, the control on the right
+        (`stack`: the control goes below the label and takes the full width)."""
+        bg = card.fillc
+        r = card.slot()
+        left = tk.Frame(card.body, bg=bg)
+        self.label_help(left, label, help, bg=bg).pack(anchor="w")
+        if hint:
+            h = self.label(left, hint, dim=True, size=9, bg=bg)
+            uikit.autowrap(h)
+            h.pack(anchor="w", fill="x", pady=(2, 0))
+        if widget is None:
+            left.grid(row=r, column=0, columnspan=2, sticky="ew", pady=8)
+        elif stack:
+            left.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(10, 4))
+            widget.grid(row=r + 1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        else:
+            left.grid(row=r, column=0, sticky="ew", pady=8)
+            widget.grid(row=r, column=1, sticky="e", padx=(18, 0), pady=8)
+        return left
+
+    def full(self, card, widget, pady=(8, 8), divider=False, sticky="ew"):
+        """A widget over the full width of the card (status text, lists, ...)."""
+        r = card.slot(divider)
+        widget.grid(row=r, column=0, columnspan=2, sticky=sticky, pady=pady)
+        return widget
+
     # ------------------------------------------------------------ build
     def build_ui(self, first=False):
         C = self.C
@@ -282,63 +234,83 @@ class SettingsWindow:
         self.checks = []
         self.lay_checks = []
         self.scrolls = []
-        self.tab_frames = []
+        self.pages = []
 
         outer = tk.Frame(self.win, bg=C["bg"])
-        outer.pack(fill="both", expand=True, padx=14, pady=(12, 12))
-        self.nb = ttk.Notebook(outer, style="HP.TNotebook")
-        self.nb.pack(fill="both", expand=True)
+        outer.pack(fill="both", expand=True)
+        bar = tk.Frame(outer, bg=C["bg"])
+        bar.pack(side="bottom", fill="x", padx=18, pady=12)
+        tk.Frame(outer, bg=C["border"], height=1).pack(side="bottom", fill="x")
+        main = tk.Frame(outer, bg=C["bg"])
+        main.pack(side="top", fill="both", expand=True)
+        items = [(t(k), icon, C[tok]) for k, icon, tok, _ in PAGES]
+        self.nav = uikit.Nav(main, C, items, self.select, (self.F_TXT, 10), (self.F_HEAD, 12, "bold"), t("st_title"),
+                             bg=C["bg"])
+        self.nav.pack(side="left", fill="y")
+        tk.Frame(main, bg=C["border"], width=1).pack(side="left", fill="y")
+        content = tk.Frame(main, bg=C["bg"])
+        content.pack(side="left", fill="both", expand=True)
+        self.title_lbl = tk.Label(content, text="", bg=C["bg"], fg=C["fg"], font=(self.F_HEAD, 16, "bold"), anchor="w")
+        self.title_lbl.pack(fill="x", padx=(26, 20), pady=(18, 8))
+        self.host = tk.Frame(content, bg=C["bg"])
+        self.host.pack(fill="both", expand=True, padx=(26, 8), pady=(0, 6))
 
-        look = self._new_tab(t("st_tab_look"))
-        log = self._new_tab(t("st_tab_log"))
-        hw = self._new_tab(t("st_tab_hw"))
-        self._tab_look(look.inner, cfg)
-        self._tab_log(log.inner, cfg)
-        self._tab_hw(hw.inner, cfg)
+        self._tab_look(self._page(0).inner, cfg)
+        self._tab_log(self._page(1).inner, cfg)
+        self._tab_hw(self._page(2).inner, cfg)
+        self._page(3, scroll=False)
         self._tab_layout()
+        self._page(4, scroll=False)
         self._tab_theme(cfg)
+        self._page(5)
         crashscan_ui.add_tab(self)
 
-        self.msg = tk.Label(outer, text="", bg=C["bg"], fg=C["red"], font=(self.F_TXT, 10), anchor="w",
-                            justify="left")
-        self.msg.pack(fill="x", pady=(8, 0))
-        bar = tk.Frame(outer, bg=C["bg"])
-        bar.pack(fill="x", pady=(6, 0))
-        self.button(bar, t("st_apply"), self.apply).pack(side="right")
-        self.button(bar, t("st_cancel"), self.cancel).pack(side="right", padx=8)
-        self.button(bar, t("st_save"), self.save, primary=True).pack(side="right")
         tk.Label(bar, text=f"{config.APP_NAME} v{version.__version__}", bg=C["bg"], fg=C["faint"],
-                 font=(self.F_TXT, 8)).pack(side="left")
+                 font=(self.F_TXT, 9)).pack(side="left")
+        self.msg = tk.Label(bar, text="", bg=C["bg"], fg=C["red"], font=(self.F_TXT, 10), anchor="w", justify="left")
+        self.msg.pack(side="left", padx=(18, 0))
+        self.button(bar, t("st_save"), self.save, primary=True).pack(side="right")
+        self.button(bar, t("st_apply"), self.apply).pack(side="right", padx=(0, 8))
+        self.button(bar, t("st_cancel"), self.cancel).pack(side="right", padx=(0, 8))
 
         self.initial = self.read_ui()
-        self.nb.bind("<<NotebookTabChanged>>", lambda e: setattr(self, "tab_index", self.nb.index("current")))
+        self.select(min(self.tab_index, len(self.pages) - 1))
         self._fit(first)
-        try:
-            self.nb.select(min(self.tab_index, self.nb.index("end") - 1))
-        except tk.TclError:
-            pass
 
-    def _new_tab(self, title):
-        sf = ScrollFrame(self.nb, self.C["bg"])
-        self.nb.add(sf, text=title)
-        self.scrolls.append(sf)
-        sf.inner.configure(padx=16, pady=14)
-        return sf
-
-    def label_help(self, parent, text, help=None, bg=None, size=10, bold=False):
-        """The label of a settings row, followed by its (i) help marker when `help` names a help text."""
-        if not help:
-            return self.label(parent, text, bg=bg, size=size, bold=bold)
-        fr = tk.Frame(parent, bg=bg or self.C["bg"])
-        self.label(fr, text, bg=bg, size=size, bold=bold).pack(side="left")
-        helptexts.info_icon(fr, help, bg=bg or self.C["bg"]).pack(side="left", padx=(6, 0))
+    # ---------------- pages
+    def _page(self, i, scroll=True):
+        """Start page i of PAGES; returns its ScrollFrame (scroll=True) or the plain frame the caller fills."""
+        key, icon, tok, kind = PAGES[i]
+        C = self.C
+        self.page_acc, self.page_kind = C[tok], kind
+        fr = ScrollFrame(self.host, C["bg"], C) if scroll else tk.Frame(self.host, bg=C["bg"])
+        if scroll:
+            fr.inner.configure(padx=0, pady=2)
+            self.scrolls.append(fr)
+        self.pages.append({"frame": fr, "title": t(key), "sf": fr if scroll else None})
         return fr
 
-    def _grid_row(self, parent, r, label, widget, hint=None, help=None):
-        self.label_help(parent, label, help).grid(row=r, column=0, sticky="w", padx=(0, 16), pady=6)
-        widget.grid(row=r, column=1, sticky="w", pady=6)
-        if hint:
-            self.label(parent, hint, dim=True, size=9).grid(row=r, column=2, sticky="w", padx=(10, 0))
+    def add_page(self, i):
+        """The frame prepared for page i by build_ui (layout, theme and diagnostics tabs fill it themselves)."""
+        self.page_acc, self.page_kind = self.C[PAGES[i][2]], PAGES[i][3]
+        fr = self.pages[i]["frame"]
+        return getattr(fr, "inner", fr)
+
+    def page_count(self):
+        return len(self.pages)
+
+    def n_pages(self):
+        return len(self.pages)
+
+    def select(self, i):
+        i = max(0, min(int(i), len(self.pages) - 1))
+        for pg in self.pages:
+            pg["frame"].pack_forget()
+        pg = self.pages[i]
+        pg["frame"].pack(fill="both", expand=True)
+        self.tab_index = i
+        self.nav.set_active(i)
+        self.title_lbl.config(text=pg["title"])
 
     # ---------------- theme (see settings_theme.py)
     def _tab_theme(self, cfg):
@@ -346,17 +318,8 @@ class SettingsWindow:
 
     # ---------------- appearance
     def _tab_look(self, p, cfg):
-        langs = [("auto", t("st_auto")), ("tr", "Türkçe"), ("en", "English")]
-        self.lang_vals = [v for v, _ in langs]
-        cur = str(cfg.get("language", "auto")).lower()
-        self.cb_lang = self.combo(p, [n for _, n in langs], self.lang_vals.index(cur) if cur in self.lang_vals else 0)
-        self._grid_row(p, 0, t("st_language"), self.cb_lang)
-
-        self.col_vals = ["auto", 1, 2, 3]
-        cur = config.norm_columns(cfg.get("columns"))
-        self.cb_cols = self.combo(p, [t("st_auto"), "1", "2", "3"], self.col_vals.index(cur), 12)
-        self._grid_row(p, 1, t("st_columns"), self.cb_cols, help="columns")
-
+        C = self.C
+        card = self.card(p, t("st_card_window"), "fps")
         mons = self.api.monitors() or []
         self.mon_vals = ["auto"] + [m["index"] for m in mons]
         names = [t("st_auto")]
@@ -372,24 +335,38 @@ class SettingsWindow:
                 idx = self.mon_vals.index(int(cur)) if int(cur) in self.mon_vals else 0
             except (TypeError, ValueError):
                 idx = 0
-        self.cb_mon = self.combo(p, names, idx, 36)
-        self._grid_row(p, 2, t("st_monitor"), self.cb_mon, help="monitor")
+        self.cb_mon = self.combo(card.body, names, idx, 34)
+        self.row(card, t("st_monitor"), self.cb_mon, help="monitor")
 
         self.wm_vals = ["maximized", "fullscreen", "window"]
         cur = str(cfg.get("window_mode", "maximized")).lower()
-        self.cb_wm = self.combo(p, [t("st_wm_maximized"), t("st_wm_fullscreen"), t("st_wm_window")],
-                                self.wm_vals.index(cur) if cur in self.wm_vals else 0, 24)
-        self._grid_row(p, 3, t("st_window_mode"), self.cb_wm, help="window_mode")
+        self.cb_wm = self.combo(card.body, [t("st_wm_maximized"), t("st_wm_fullscreen"), t("st_wm_window")],
+                                self.wm_vals.index(cur) if cur in self.wm_vals else 0, 20)
+        self.row(card, t("st_window_mode"), self.cb_wm, help="window_mode")
 
         self.v_top = tk.BooleanVar(value=bool(cfg.get("topmost", True)))
-        Check(p, t("st_topmost"), self.v_top, self.C, (self.F_TXT, 10), help="topmost").grid(row=4, column=1, sticky="w", pady=6)
+        self.row(card, t("st_topmost"), self.switch(card.body, self.v_top), help="topmost")
+
+        card = self.card(p, t("st_card_display"), "gauge")
+        langs = [("auto", t("st_auto")), ("tr", "Türkçe"), ("en", "English")]
+        self.lang_vals = [v for v, _ in langs]
+        cur = str(cfg.get("language", "auto")).lower()
+        self.cb_lang = self.combo(card.body, [n for _, n in langs],
+                                  self.lang_vals.index(cur) if cur in self.lang_vals else 0, 20)
+        self.row(card, t("st_language"), self.cb_lang)
+
+        self.col_vals = ["auto", 1, 2, 3]
+        cur = config.norm_columns(cfg.get("columns"))
+        self.cb_cols = self.combo(card.body, [t("st_auto"), "1", "2", "3"], self.col_vals.index(cur), 20)
+        self.row(card, t("st_columns"), self.cb_cols, help="columns")
 
         self.v_scale = tk.StringVar(value=str(config.clamp_scale(cfg.get("ui_scale"))))
-        self.e_scale = self.spinbox(p, self.v_scale, config.SCALE_MIN, config.SCALE_MAX, 5, "%.0f", 6)
-        self._grid_row(p, 5, t("st_scale"), self.e_scale, t("st_scale_hint"), help="scale")
+        self.e_scale = self.spinbox(card.body, self.v_scale, config.SCALE_MIN, config.SCALE_MAX, 5, "%.0f", 6)
+        self.row(card, t("st_scale"), self.e_scale, t("st_scale_hint"), help="scale")
 
+        card = self.card(p, t("st_card_updates"), "net")
         self.v_upd = tk.BooleanVar(value=bool(cfg.get("check_updates", True)))
-        Check(p, t("st_check_updates"), self.v_upd, self.C, (self.F_TXT, 10), help="updates").grid(row=6, column=1, sticky="w", pady=6)
+        self.row(card, t("st_check_updates"), self.switch(card.body, self.v_upd), help="updates")
 
         def ok_scale():
             v = _to_float(self.v_scale.get())
@@ -399,62 +376,54 @@ class SettingsWindow:
 
     # ---------------- logging
     def _tab_log(self, p, cfg):
+        C = self.C
+        card = self.card(p, t("st_card_rec"))
+        self.v_logging = tk.BooleanVar(value=bool(cfg.get("logging")))
+        self.row(card, t("st_logging"), self.switch(card.body, self.v_logging), help="logging")
+
         self.v_interval = tk.StringVar(value=f"{config.clamp_interval(cfg.get('interval')):.1f}")
-        self.e_interval = self.spinbox(p, self.v_interval, config.INTERVAL_MIN, config.INTERVAL_MAX, 0.5, "%.1f", 7)
-        self._grid_row(p, 0, t("st_interval"), self.e_interval, t("st_interval_hint"), help="interval")
+        self.e_interval = self.spinbox(card.body, self.v_interval, config.INTERVAL_MIN, config.INTERVAL_MAX, 0.5,
+                                       "%.1f", 7)
+        self.row(card, t("st_interval"), self.e_interval, t("st_interval_hint"), help="interval")
 
         def ok_interval():
             return config.INTERVAL_MIN <= _to_float(self.v_interval.get()) <= config.INTERVAL_MAX
         rc = self.add_check(self.checks, 1, [self.e_interval], ok_interval)
         self.v_interval.trace_add("write", lambda *a: rc())
 
-        self.v_logging = tk.BooleanVar(value=bool(cfg.get("logging")))
-        Check(p, t("st_logging"), self.v_logging, self.C, (self.F_TXT, 10), help="logging").grid(row=1, column=1, sticky="w", pady=6)
-
         self.v_logall = tk.BooleanVar(value=bool(cfg.get("log_all")))
-        self.label_help(p, t("st_data"), "logall").grid(row=2, column=0, sticky="w", padx=(0, 16), pady=6)
-        fr = tk.Frame(p, bg=self.C["bg"])
-        fr.grid(row=2, column=1, sticky="w", pady=6)
-        self.v_logall_req = tk.BooleanVar(value=not self.v_logall.get())
-        self.v_logall_all = tk.BooleanVar(value=self.v_logall.get())
+        seg = uikit.Segmented(card.body, C, [t("sw_required"), t("sw_all")], 1 if self.v_logall.get() else 0,
+                              lambda i: self.v_logall.set(bool(i)), (self.F_TXT, 10))
+        self.v_logall.trace_add("write", lambda *a: seg.set(1 if self.v_logall.get() else 0))
+        self.row(card, t("st_data"), seg, help="logall")
 
-        def pick(all_):
-            self.v_logall.set(all_)
-            self.v_logall_req.set(not all_)
-            self.v_logall_all.set(all_)
-        Check(fr, t("sw_required"), self.v_logall_req, self.C, (self.F_TXT, 10), command=lambda: pick(False)
-              ).pack(side="left")
-        Check(fr, t("sw_all"), self.v_logall_all, self.C, (self.F_TXT, 10), command=lambda: pick(True)
-              ).pack(side="left", padx=(18, 0))
-
+        card = self.card(p, t("st_card_files"))
         self.v_logdir = tk.StringVar(value=str(cfg.get("log_dir") or ""))
-        self.label_help(p, t("st_logdir"), "logdir").grid(row=3, column=0, sticky="w", padx=(0, 16), pady=6)
-        row = tk.Frame(p, bg=self.C["bg"])
-        row.grid(row=3, column=1, columnspan=2, sticky="w", pady=6)
-        self.e_logdir = self.entry(row, self.v_logdir, 46)
-        self.e_logdir.pack(side="left", ipady=3)
+        row = tk.Frame(card.body, bg=card.fillc)
+        self.e_logdir = self.entry(row, self.v_logdir, 20)
+        self.e_logdir.pack(side="left", fill="x", expand=True)
         self.button(row, t("st_browse"), self.browse_logdir).pack(side="left", padx=(8, 0))
         self.button(row, t("st_openfolder"), self.open_logdir).pack(side="left", padx=(8, 0))
         logview.add_button(self, row, lambda: config.log_dir({"log_dir": self.v_logdir.get()}))
-        self.label(p, t("st_logdir_hint"), dim=True, size=9).grid(row=4, column=1, sticky="w", pady=(0, 6))
+        self.row(card, t("st_logdir"), row, t("st_logdir_hint"), help="logdir", stack=True)
 
         delims = ["auto", ";", ",", "\t"]
         cur = str(cfg.get("csv_delimiter", "auto"))
         if cur not in delims:
             delims.append(cur)
         self.delim_vals = delims
-        self.cb_delim = self.combo(p, [t("st_tab") if d == "\t" else (t("st_auto") if d == "auto" else d)
-                                       for d in delims], delims.index(cur), 14)
-        self._grid_row(p, 5, t("st_delim"), self.cb_delim, help="delim")
+        self.cb_delim = self.combo(card.body, [t("st_tab") if d == "\t" else (t("st_auto") if d == "auto" else d)
+                                               for d in delims], delims.index(cur), 14)
+        self.row(card, t("st_delim"), self.cb_delim, help="delim")
 
         decs = ["auto", ",", "."]
         cur = str(cfg.get("csv_decimal", "auto"))
         if cur not in decs:
             decs.append(cur)
         self.dec_vals = decs
-        self.cb_dec = self.combo(p, [t("st_auto") if d == "auto" else d for d in decs], decs.index(cur), 14)
-        self._grid_row(p, 6, t("st_decimal"), self.cb_dec, help="decimal")
-        self.procs = procset.ProcSection(self, p, cfg, 7)         # per-process CSV options (procset.py)
+        self.cb_dec = self.combo(card.body, [t("st_auto") if d == "auto" else d for d in decs], decs.index(cur), 14)
+        self.row(card, t("st_decimal"), self.cb_dec, help="decimal")
+        self.procs = procset.ProcSection(self, p, cfg)         # per-process CSV options (procset.py)
 
     def browse_logdir(self):
         d = filedialog.askdirectory(parent=self.win, initialdir=config.log_dir({"log_dir": self.v_logdir.get()})
@@ -473,27 +442,30 @@ class SettingsWindow:
     # ---------------- data source (+ HWiNFO options)
     def _tab_hw(self, p, cfg):
         C = self.C
+        card = self.card(p, t("st_card_source"))
+        bg = card.fillc
         self.be_vals = list(backend.BACKENDS)
         cur = config.norm_backend(cfg.get("backend"))
-        self.cb_backend = self.combo(p, [t("st_be_" + v) for v in self.be_vals], self.be_vals.index(cur), 46)
-        self._grid_row(p, 0, t("st_backend"), self.cb_backend, help="backend")
-        self.lbl_src = tk.Label(p, text="", bg=C["bg"], fg=C["fg"], font=(self.F_TXT, 10), anchor="w",
-                                justify="left", wraplength=600)
-        self.lbl_src.grid(row=1, column=1, columnspan=2, sticky="w", pady=(2, 2))
-        self.lbl_avail = self.label(p, "", dim=True, size=9, wrap=600)
-        self.lbl_avail.grid(row=2, column=1, columnspan=2, sticky="w")
-        self.lbl_notes = tk.Label(p, text="", bg=C["bg"], fg=C["yellow"], font=(self.F_TXT, 9), anchor="w",
-                                  justify="left", wraplength=600)
-        self.lbl_notes.grid(row=3, column=1, columnspan=2, sticky="w", pady=(4, 0))
-        self.small_btn(p, t("st_refresh"), self.update_sources, bg=C["bg"]).grid(row=4, column=1, sticky="w",
-                                                                                   pady=(4, 8))
+        self.cb_backend = self.combo(card.body, [t("st_be_" + v) for v in self.be_vals], self.be_vals.index(cur), 46)
+        self.row(card, t("st_backend"), self.cb_backend, help="backend", stack=True)
+        self.lbl_src = tk.Label(card.body, text="", bg=bg, fg=C["fg"], font=(self.F_TXT, 10, "bold"), anchor="w",
+                                justify="left")
+        uikit.autowrap(self.lbl_src)
+        self.full(card, self.lbl_src, pady=(10, 2), divider=False)
+        self.lbl_avail = self.label(card.body, "", dim=True, size=9, bg=bg)
+        uikit.autowrap(self.lbl_avail)
+        self.full(card, self.lbl_avail, pady=(0, 2), divider=False)
+        self.lbl_notes = tk.Label(card.body, text="", bg=bg, fg=C["yellow"], font=(self.F_TXT, 9), anchor="w",
+                                  justify="left")
+        uikit.autowrap(self.lbl_notes)
+        self.full(card, self.lbl_notes, pady=(4, 2), divider=False)
+        self.full(card, self.small_btn(card.body, t("st_refresh"), self.update_sources, bg=bg), pady=(8, 2),
+                  divider=False, sticky="w")
 
+        card = self.card(p, t("st_card_extra"))
         self.v_lhm = tk.StringVar(value=str(cfg.get("lhm_url") or "auto"))
-        self.e_lhm = self.entry(p, self.v_lhm, 52)
-        self.label_help(p, t("st_lhm_url"), "lhm").grid(row=5, column=0, sticky="w", padx=(0, 16), pady=(6, 0))
-        self.e_lhm.grid(row=5, column=1, columnspan=2, sticky="w", pady=(6, 0), ipady=3)
-        self.label(p, t("st_lhm_hint"), dim=True, size=9, wrap=600).grid(row=6, column=1, columnspan=2,
-                                                                          sticky="w", pady=(0, 6))
+        self.e_lhm = self.entry(card.body, self.v_lhm, 20)
+        self.row(card, t("st_lhm_url"), self.e_lhm, t("st_lhm_hint"), help="lhm", stack=True)
 
         def ok_lhm():
             v = self.v_lhm.get().strip().lower()
@@ -502,14 +474,11 @@ class SettingsWindow:
         self.v_lhm.trace_add("write", lambda *a: rc())
 
         self.v_pm = tk.StringVar(value=str(cfg.get("presentmon_path") or ""))
-        self.label_help(p, t("st_pm_path"), "pm").grid(row=7, column=0, sticky="w", padx=(0, 16), pady=(6, 0))
-        row = tk.Frame(p, bg=C["bg"])
-        row.grid(row=7, column=1, columnspan=2, sticky="w", pady=(6, 0))
-        self.e_pm = self.entry(row, self.v_pm, 52)
-        self.e_pm.pack(side="left", ipady=3)
+        row = tk.Frame(card.body, bg=bg)
+        self.e_pm = self.entry(row, self.v_pm, 20)
+        self.e_pm.pack(side="left", fill="x", expand=True)
         self.button(row, t("st_browse"), self.browse_pm).pack(side="left", padx=(8, 0))
-        self.label(p, t("st_pm_hint"), dim=True, size=9, wrap=600).grid(row=8, column=1, columnspan=2,
-                                                                         sticky="w", pady=(0, 6))
+        self.row(card, t("st_pm_path"), row, t("st_pm_hint"), help="pm", stack=True)
 
         def ok_pm():
             v = self.v_pm.get().strip()
@@ -517,19 +486,19 @@ class SettingsWindow:
         rc2 = self.add_check(self.checks, 2, [self.e_pm], ok_pm)
         self.v_pm.trace_add("write", lambda *a: rc2())
 
-        tk.Frame(p, bg=C["border"], height=1).grid(row=9, column=0, columnspan=3, sticky="ew", pady=(14, 10))
-        self.label(p, "HWiNFO", bold=True).grid(row=10, column=0, sticky="w")
-        self.label(p, t("st_hw_only"), dim=True, size=9, wrap=600).grid(row=10, column=1, columnspan=2, sticky="w")
-
+        card = self.card(p, t("st_card_hwinfo"))
+        hint = self.label(card.body, t("st_hw_only"), dim=True, size=9, bg=bg)
+        uikit.autowrap(hint)
+        self.full(card, hint, pady=(0, 2), divider=False)
         self.v_hwpath = tk.StringVar(value=str(cfg.get("hwinfo_path") or "auto"))
-        self.label_help(p, t("st_hwpath"), "hwpath").grid(row=11, column=0, sticky="w", padx=(0, 16), pady=6)
-        row = tk.Frame(p, bg=C["bg"])
-        row.grid(row=11, column=1, columnspan=2, sticky="w", pady=6)
-        self.e_hwpath = self.entry(row, self.v_hwpath, 52)
-        self.e_hwpath.pack(side="left", ipady=3)
+        row = tk.Frame(card.body, bg=bg)
+        self.e_hwpath = self.entry(row, self.v_hwpath, 20)
+        self.e_hwpath.pack(side="left", fill="x", expand=True)
         self.button(row, t("st_browse"), self.browse_hw).pack(side="left", padx=(8, 0))
-        self.lbl_detected = self.label(p, "", dim=True, size=9, wrap=560)
-        self.lbl_detected.grid(row=12, column=1, columnspan=2, sticky="w", pady=(0, 10))
+        self.lbl_detected = self.label(card.body, "", dim=True, size=9, bg=bg)
+        uikit.autowrap(self.lbl_detected)
+        self.row(card, t("st_hwpath"), row, help="hwpath", stack=True)
+        self.full(card, self.lbl_detected, pady=(0, 6), divider=False)
         self._detect_job = None
 
         def ok_path():
@@ -546,16 +515,15 @@ class SettingsWindow:
 
         self.v_manage = tk.BooleanVar(value=bool(cfg.get("manage_hwinfo")))
         self.v_sync = tk.BooleanVar(value=bool(cfg.get("sync_hwinfo_interval")))
-        Check(p, t("st_manage"), self.v_manage, C, (self.F_TXT, 10), help="manage").grid(row=13, column=1, columnspan=2,
-                                                                         sticky="w", pady=6)
-        Check(p, t("st_sync"), self.v_sync, C, (self.F_TXT, 10), help="sync").grid(row=14, column=1, columnspan=2,
-                                                                     sticky="w", pady=6)
+        self.row(card, t("st_manage"), self.switch(card.body, self.v_manage), help="manage")
+        self.row(card, t("st_sync"), self.switch(card.body, self.v_sync), help="sync")
 
         tasks = self.api.refresh_tasks()
-        self.lbl_tasks = tk.Label(p, text=t("st_tasks_ok") if tasks else t("st_tasks_no"), bg=C["bg"],
-                                  fg=C["green"] if tasks else C["yellow"], font=(self.F_TXT, 10),
-                                  anchor="w", justify="left", wraplength=560)
-        self.lbl_tasks.grid(row=15, column=1, columnspan=2, sticky="w", pady=(14, 6))
+        self.lbl_tasks = tk.Label(card.body, text=t("st_tasks_ok") if tasks else t("st_tasks_no"), bg=bg,
+                                  fg=C["green"] if tasks else C["yellow"], font=(self.F_TXT, 10), anchor="w",
+                                  justify="left")
+        uikit.autowrap(self.lbl_tasks)
+        self.full(card, self.lbl_tasks, pady=(8, 2))
         self.update_detected()
         self.update_sources()
 
@@ -614,21 +582,21 @@ class SettingsWindow:
         self.lay = lay
         self.lay_mode = "keep"            # 'keep' | 'explicit' | 'auto'
         self.lay_is_auto = is_auto
-        tab = tk.Frame(self.nb, bg=C["bg"])
-        self.nb.add(tab, text=t("st_tab_layout"))
+        tab = self.add_page(3)
         self.layout_tab = tab
         tool = tk.Frame(tab, bg=C["bg"])
-        tool.pack(fill="x", padx=16, pady=(14, 6))
+        tool.pack(fill="x", pady=(0, 6))
         self.button(tool, t("st_lay_reset"), self.reset_auto).pack(side="left")
         self.button(tool, t("st_lay_add"), self.add_sensor_dialog).pack(side="left", padx=8)
         self.button(tool, t("st_lay_open"), self.open_config).pack(side="left")
         helptexts.info_icon(tool, "layout", bg=C["bg"]).pack(side="left", padx=(12, 0))
         self.lbl_lay = tk.Label(tab, text="", bg=C["bg"], fg=C["dim"], font=(self.F_TXT, 9), anchor="w",
                                 justify="left")
-        self.lbl_lay.pack(fill="x", padx=16)
-        self.lay_sf = ScrollFrame(tab, C["bg"])
-        self.lay_sf.pack(fill="both", expand=True, padx=(16, 4), pady=(6, 10))
-        self.lay_sf.inner.configure(padx=0, pady=0)
+        self.lbl_lay.pack(fill="x")
+        self.lay_sf = ScrollFrame(tab, C["bg"], C)
+        self.lay_sf.pack(fill="both", expand=True, pady=(6, 4))
+        self.lay_sf.inner.configure(padx=0, pady=2)
+        self.pages[3]["sf"] = self.lay_sf
         self.scrolls.append(self.lay_sf)
         self.layout_tool = tool
         self.render_layout()
@@ -684,62 +652,60 @@ class SettingsWindow:
             w.destroy()
         self.lay_checks.clear()
         self.row_ui, self.sec_ui = [], []
-        font = (self.F_TXT, 10)
+        px = uikit.px
         for si, sec in enumerate(self.lay):
-            card = tk.Frame(sf.inner, bg=C["card"], highlightthickness=1, highlightbackground=C["border"])
-            card.pack(fill="x", padx=(0, 6), pady=(0, 10))
-            hdr = tk.Frame(card, bg=C["card"])
-            hdr.pack(fill="x", padx=10, pady=(10, 4))
-            tv = tk.StringVar(value=str(sec.get("title", "")))
-            self.label(hdr, t("st_lay_title"), dim=True, bg=C["card"], size=9).pack(side="left", padx=(0, 6))
-            te = self.entry(hdr, tv, 26)
-            te.pack(side="left", ipady=2)
-            tv.trace_add("write", lambda *a: self._dirty())
             colv = themes.accent_for(sec.get("icon"), sec.get("color"))
-            sw = tk.Button(hdr, text="  ", bg=colv, activebackground=colv, relief="flat", bd=0, width=3, cursor="hand2",
-                           highlightthickness=1, highlightbackground=C["border"])
-            sw.config(command=lambda s=sec, b=sw: self.pick_color(s, b))
-            self.label(hdr, t("st_lay_color"), dim=True, bg=C["card"], size=9).pack(side="left", padx=(14, 6))
-            sw.pack(side="left", ipady=1)
-            self.small_btn(hdr, "▼", lambda i=si: self.move_section(i, 1)).pack(side="right")
-            self.small_btn(hdr, "▲", lambda i=si: self.move_section(i, -1)).pack(side="right", padx=(0, 4))
+            card = uikit.Card(sf.inner, C, None, colv, bg=C["bg"], pad=(px(22), px(14), px(12), px(12)))
+            card.pack(fill="x", padx=(0, 6), pady=(0, 12))
+            cbg = card.fillc
+            hdr = tk.Frame(card.body, bg=cbg)
+            hdr.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+            tv = tk.StringVar(value=str(sec.get("title", "")))
+            self.label(hdr, t("st_lay_title"), dim=True, bg=cbg, size=9).pack(side="left", padx=(0, 8))
+            te = self.entry(hdr, tv, 26)
+            te.pack(side="left")
+            tv.trace_add("write", lambda *a: self._dirty())
+            self.label(hdr, t("st_lay_color"), dim=True, bg=cbg, size=9).pack(side="left", padx=(16, 8))
+            sw = uikit.Swatch(hdr, C, colv, bg=cbg)
+            sw.cmd = lambda s=sec, b=sw: self.pick_color(s, b)
+            sw.pack(side="left")
+            self.small_btn(hdr, "▼", lambda i=si: self.move_section(i, 1), bg=cbg).pack(side="right")
+            self.small_btn(hdr, "▲", lambda i=si: self.move_section(i, -1), bg=cbg).pack(side="right", padx=(0, 4))
             self.sec_ui.append((sec, tv, colv))
-            body = tk.Frame(card, bg=C["card"])
-            body.pack(fill="x", padx=10, pady=(0, 10))
+            body = tk.Frame(card.body, bg=cbg)
+            body.grid(row=1, column=0, sticky="ew")
             for ci, (txt, hk) in enumerate(((t("st_lay_show"), "lay_show"), (t("st_lay_name"), None),
                                             (t("st_lay_green"), "lay_limits"), (t("st_lay_red"), "lay_limits"),
                                             (t("st_lay_bar"), "lay_bar"))):
-                hf = tk.Frame(body, bg=C["card"])
-                hf.grid(row=0, column=ci, sticky="w", padx=(4, 6))
-                tk.Label(hf, text=txt, bg=C["card"], fg=C["faint"], font=(self.F_TXT, 8), anchor="w").pack(side="left")
+                hf = tk.Frame(body, bg=cbg)
+                hf.grid(row=0, column=ci, sticky="w", padx=(4, 8), pady=(2, 2))
+                tk.Label(hf, text=txt, bg=cbg, fg=C["faint"], font=(self.F_TXT, 8), anchor="w").pack(side="left")
                 if hk:
-                    helptexts.info_icon(hf, hk, bg=C["card"], size=11).pack(side="left", padx=(3, 0))
+                    helptexts.info_icon(hf, hk, bg=cbg, size=11).pack(side="left", padx=(3, 0))
             body.grid_columnconfigure(1, weight=1)
             for ri, row in enumerate(sec["rows"]):
                 gr = ri + 1
                 vv = tk.BooleanVar(value=row.get("visible", True) is not False)
-                Check(body, "", vv, C, font, bg=C["card"], command=self._dirty).grid(row=gr, column=0, padx=(8, 6),
-                                                                                    pady=2, sticky="w")
+                self.switch(body, vv, self._dirty, small=True).grid(row=gr, column=0, padx=(4, 8), pady=3, sticky="w")
                 nv = tk.StringVar(value=str(row.get("name") or row.get("label") or ""))
-                ne = self.entry(body, nv, 30)
-                ne.grid(row=gr, column=1, ipady=2, padx=(0, 6), pady=2, sticky="we")
+                ne = self.entry(body, nv, 24, height=px(30))
+                ne.grid(row=gr, column=1, padx=(0, 8), pady=3, sticky="we")
                 lim = row.get("limits")
                 has_lim = isinstance(lim, (list, tuple)) and len(lim) == 2
                 gv = tk.StringVar(value=_fmt_num(lim[0]) if has_lim else "")
                 rv = tk.StringVar(value=_fmt_num(lim[1]) if has_lim else "")
-                ge = self.entry(body, gv, 8)
-                ge.grid(row=gr, column=2, ipady=2, padx=(0, 6), pady=2)
-                re_ = self.entry(body, rv, 8)
-                re_.grid(row=gr, column=3, ipady=2, padx=(0, 6), pady=2)
+                ge = self.entry(body, gv, 6, height=px(30))
+                ge.grid(row=gr, column=2, padx=(0, 8), pady=3)
+                re_ = self.entry(body, rv, 6, height=px(30))
+                re_.grid(row=gr, column=3, padx=(0, 8), pady=3)
                 bar = row.get("bar")
                 bv = tk.BooleanVar(value=(has_lim and lim[0] != lim[1]) if bar is None else bool(bar))
-                Check(body, "", bv, C, font, bg=C["card"], command=self._dirty).grid(row=gr, column=4, padx=(8, 6),
-                                                                                    pady=2, sticky="w")
-                bf = tk.Frame(body, bg=C["card"])
-                bf.grid(row=gr, column=5, padx=(4, 0), pady=2, sticky="e")
-                self.small_btn(bf, "▲", lambda i=si, j=ri: self.move_row(i, j, -1)).pack(side="left", padx=(0, 2))
-                self.small_btn(bf, "▼", lambda i=si, j=ri: self.move_row(i, j, 1)).pack(side="left", padx=(0, 2))
-                self.small_btn(bf, "✕", lambda i=si, j=ri: self.delete_row(i, j)).pack(side="left")
+                self.switch(body, bv, self._dirty, small=True).grid(row=gr, column=4, padx=(4, 8), pady=3, sticky="w")
+                bf = tk.Frame(body, bg=cbg)
+                bf.grid(row=gr, column=5, padx=(4, 0), pady=3, sticky="e")
+                self.small_btn(bf, "▲", lambda i=si, j=ri: self.move_row(i, j, -1), bg=cbg).pack(side="left", padx=(0, 2))
+                self.small_btn(bf, "▼", lambda i=si, j=ri: self.move_row(i, j, 1), bg=cbg).pack(side="left", padx=(0, 2))
+                self.small_btn(bf, "✕", lambda i=si, j=ri: self.delete_row(i, j), bg=cbg).pack(side="left")
                 nv.trace_add("write", lambda *a: self._dirty())
                 self.row_ui.append((row, nv, gv, rv, bv, vv))
 
@@ -760,9 +726,10 @@ class SettingsWindow:
         cur = themes.accent_for(sec.get("icon"), sec.get("color"))
         res = colorchooser.askcolor(color=cur, parent=self.win, title=t("st_lay_color"))
         if res and res[1]:
+            self.sync_layout()
             sec["color"] = res[1].lower()
-            btn.config(bg=sec["color"], activebackground=sec["color"])
             self._dirty()
+            self.render_layout()
 
     def move_section(self, i, d):
         j = i + d
@@ -826,7 +793,7 @@ class SettingsWindow:
         self.label(top, t("st_search")).pack(side="left", padx=(0, 8))
         qv = tk.StringVar()
         qe = self.entry(top, qv, 40)
-        qe.pack(side="left", fill="x", expand=True, ipady=3)
+        qe.pack(side="left", fill="x", expand=True)
         tf = tk.Frame(body, bg=C["bg"])
         tf.pack(fill="both", expand=True, pady=(10, 8))
         cols = ("sensor", "label", "unit", "value")
@@ -835,16 +802,16 @@ class SettingsWindow:
                            ("unit", t("st_col_unit"), 60), ("value", t("st_col_value"), 90)):
             tree.heading(c, text=txt, anchor="w")
             tree.column(c, width=wd, anchor="e" if c == "value" else "w", stretch=c in ("sensor", "label"))
-        sb = ttk.Scrollbar(tf, orient="vertical", command=tree.yview, style="HP.Vertical.TScrollbar")
+        sb = uikit.Scrollbar(tf, C, tree.yview, bg=C["bg"])
         tree.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
+        sb.pack(side="right", fill="y", padx=(4, 0))
         tree.pack(side="left", fill="both", expand=True)
         info = tk.Label(body, text="", bg=C["bg"], fg=C["dim"], font=(self.F_TXT, 9), anchor="w")
         info.pack(fill="x")
         bot = tk.Frame(body, bg=C["bg"])
         bot.pack(fill="x", pady=(8, 0))
         self.label(bot, t("st_add_to")).pack(side="left", padx=(0, 8))
-        sec_cb = ttk.Combobox(bot, state="readonly", width=34, style="HP.TCombobox", font=(self.F_TXT, 10))
+        sec_cb = self.combo(bot, [], 0, 34)
         sec_cb.pack(side="left")
 
         def fill_sections():
@@ -913,23 +880,26 @@ class SettingsWindow:
             wx, wy, ww, wh = mon["wx"], mon["wy"], mon["ww"], mon["wh"]
         else:
             wx, wy, ww, wh = 0, 0, win.winfo_screenwidth(), win.winfo_screenheight()
-        chrome = 190
+        px = uikit.px
+        chrome = px(170)                                   # page title + bottom bar + paddings
         avail_h = int(wh * 0.92) - chrome
         simple = [min(sf.req_height(), sf.cap or 10 ** 6) + sf.reserve for sf in self.scrolls if sf is not self.lay_sf]
-        lay_h = self.lay_sf.req_height() + self.layout_tool.winfo_reqheight() + 70
-        want = max(simple + [min(lay_h, 560)]) + 10
-        content_h = max(300, min(want, avail_h))
-        width = max([sf.req_width() for sf in self.scrolls] + [700]) + 56
-        width = min(width, int(ww * 0.95))
+        tool_h = self.layout_tool.winfo_reqheight() + self.lbl_lay.winfo_reqheight() + 14
+        lay_h = self.lay_sf.req_height() + tool_h
+        want = max(simple + [min(lay_h, px(640))]) + 10
+        content_h = max(px(360), min(want, avail_h, px(700)))
+        side_w = self.nav.winfo_reqwidth()
+        sc_w = max([sf.req_width() for sf in self.scrolls] + [px(680)])
+        sc_w = min(sc_w, int(ww * 0.95) - side_w - px(60))
         for sf in self.scrolls:
             if sf is self.lay_sf:
                 continue
-            sf.cv.configure(height=content_h - sf.reserve, width=width - 70)
-        lay_list_h = content_h - self.layout_tool.winfo_reqheight() - 40
-        self.lay_sf.cv.configure(height=max(150, lay_list_h), width=width - 70)
+            sf.cv.configure(height=content_h - sf.reserve, width=sc_w)
+        self.lay_sf.cv.configure(height=max(150, content_h - tool_h), width=sc_w)
         win.update_idletasks()
-        w = max(width, win.winfo_reqwidth())
+        w = min(win.winfo_reqwidth(), int(ww * 0.97))
         h = min(win.winfo_reqheight(), int(wh * 0.95))
+        win.minsize(min(w, px(760)), min(h, px(480)))
         if first:
             self._center(win, w, h)
         else:
@@ -958,10 +928,10 @@ class SettingsWindow:
 
     def _wheel(self, e):
         try:
-            idx = self.nb.index("current")
-            if idx < len(self.scrolls):
-                self.scrolls[idx].scroll(e.delta)
-        except tk.TclError:
+            sf = self.pages[self.tab_index]["sf"]
+            if sf is not None:
+                sf.scroll(e.delta)
+        except (tk.TclError, IndexError):
             pass
 
     # ------------------------------------------------------------ collect / apply
@@ -1031,10 +1001,7 @@ class SettingsWindow:
         bad = self.validate()
         if bad is not None:
             self.say(t("st_invalid"), error=True)
-            try:
-                self.nb.select(bad)
-            except tk.TclError:
-                pass
+            self.select(bad)
             return False
         new = self.read_ui()
         changes = {k: v for k, v in new.items() if v != self.initial.get(k)}

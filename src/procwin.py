@@ -27,6 +27,7 @@ import procgfx
 import procmon
 import proclog                                   # also registers the texts
 import themes
+import uikit
 from i18n import t
 from themes import mix
 from tooltip import Tooltip
@@ -274,6 +275,7 @@ class ProcWindow:
         self.period = 1.0
         self.win = tk.Toplevel(self.root)
         self.win.withdraw()
+        uikit.set_scale(self.win)
         self.win.title(f"{config.APP_NAME} – {t('pw_title')}")
         self.win.configure(bg=self.C["bg"])
         try:
@@ -374,32 +376,18 @@ class ProcWindow:
         self.pad = 6
 
     # ------------------------------------------------------------ widgets
-    def _entry(self, parent, var, width, justify="left"):
+    def _boxed(self, parent, var, width, justify="left", icon=None, hint=None, size=10, height=None):
+        """Rounded input field (same look as the settings window); returns (field, entry)."""
         C = self.C
-        return tk.Entry(parent, textvariable=var, width=width, bg=C["track"], fg=C["fg"], insertbackground=C["fg"],
-                        relief="flat", highlightthickness=0, bd=0, font=self.f_txt, justify=justify,
-                        selectbackground=C["select"], selectforeground=C["fg"])
-
-    def _boxed(self, parent, var, width, justify="left", icon=None, hint=None):
-        """Entry in a bordered frame whose border takes the UI colour while it has the focus."""
-        C = self.C
-        fr = tk.Frame(parent, bg=C["track"], highlightthickness=1, highlightbackground=C["border"],
-                      highlightcolor=C["ui"])
-        if icon is not None:
-            lab = tk.Label(fr, image=icon, bg=C["track"], bd=0)
-            lab.image = icon
-            lab.pack(side="left", padx=(9, 0))
-        e = self._entry(fr, var, width, justify)
-        e.pack(side="left", padx=(8, 8), ipady=5)
-        e.bind("<FocusIn>", lambda ev: fr.config(highlightbackground=C["ui"]))
-        e.bind("<FocusOut>", lambda ev: fr.config(highlightbackground=C["border"]))
+        f = uikit.entry(parent, C, var, width, (self.F_TXT, size), justify=justify, icon=icon, height=height)
+        e = f.entry
         if hint:                                          # placeholder text while empty
-            ph = tk.Label(fr, text=hint, bg=C["track"], fg=C["faint"], font=self.f_txt, bd=0, cursor="xterm")
+            ph = tk.Label(f, text=hint, bg=f.fill, fg=C["faint"], font=(self.F_TXT, size), bd=0, cursor="xterm")
             ph.place(in_=e, x=1, rely=0.5, anchor="w")
             ph.bind("<Button-1>", lambda ev: e.focus_set())
             var.trace_add("write", lambda *a: ph.place_forget() if var.get() else
                           ph.place(in_=e, x=1, rely=0.5, anchor="w"))
-        return fr, e
+        return f, e
 
     def _build(self):
         C = self.C
@@ -411,7 +399,7 @@ class ProcWindow:
         # --- search
         self.v_search = tk.StringVar()
         box, self.e_search = self._boxed(bar, self.v_search, 26, icon=procgfx.magnifier(15, C["dim"]),
-                                         hint=t("pw_search_ph"))
+                                         hint=t("pw_search_ph"), height=uikit.px(34))
         box.pack(side="left")
         self.v_search.trace_add("write", lambda *a: self.refresh(force=True, resort=True))
         # --- log everything
@@ -437,23 +425,24 @@ class ProcWindow:
             self.v_min[m] = v
             grp = tk.Frame(fl, bg=C["bg"])
             grp.pack(side="left", padx=(0, 14))
-            dot = tk.Canvas(grp, width=8, height=8, bg=C["bg"], highlightthickness=0, bd=0)
-            dot.create_oval(0, 0, 8, 8, fill=C[MCOL[m]], outline="")
-            dot.pack(side="left", padx=(0, 6))
+            ic = procgfx.metric_icon(m, 16, C[MCOL[m]])
+            if ic is not None:
+                lb = tk.Label(grp, image=ic, bg=C["bg"], bd=0)
+                lb.image = ic
+                lb.pack(side="left", padx=(0, 5))
             tk.Label(grp, text=m.upper() if m != "disk" else "Disk", bg=C["bg"], fg=C["dim"],
-                     font=self.f_small).pack(side="left", padx=(0, 6))
-            fr, e = self._boxed(grp, v, 5, "center")
-            e.config(font=self.f_small)
+                     font=self.f_small).pack(side="left", padx=(0, 7))
+            fr, e = self._boxed(grp, v, 5, "center", size=9, height=uikit.px(28))
             fr.pack(side="left")
             tk.Label(grp, text=UNIT[m], bg=C["bg"], fg=C["faint"], font=self.f_small).pack(side="left", padx=(5, 0))
             v.trace_add("write", lambda *a, m=m: self._min_changed(m))
         # "show everything": ignore the limits above
         self.v_showall = tk.BooleanVar(value=_STATE["show_all"])
-        cb = tk.Checkbutton(fl, text=t("pw_show_all"), variable=self.v_showall, command=self._showall_toggled,
-                            bg=C["bg"], fg=C["fg"], activebackground=C["bg"], activeforeground=C["fg"],
-                            selectcolor=C["card"], font=self.f_small, bd=0, highlightthickness=0, cursor="hand2")
-        cb.pack(side="left", padx=(6, 0))
-        Tooltip(cb, t("pw_show_all_tip"))
+        cb = uikit.Check(fl, t("pw_show_all"), self.v_showall, C, (self.F_TXT, 9), bg=C["bg"],
+                         command=self._showall_toggled, small=True)
+        cb.pack(side="left", padx=(8, 0))
+        for w_ in (cb.sw, cb.lbl):
+            Tooltip(w_, t("pw_show_all_tip"))
         # --- list
         body = tk.Frame(self.outer, bg=C["bg"])
         body.pack(fill="both", expand=True)
@@ -1147,10 +1136,16 @@ class ProcWindow:
             else:
                 tx, anc = x, anchor
             h.create_text(tx, y, text=text, anchor=anc, font=font, fill=fg)
+            lead = 0
+            if key in COLS:                                  # the metric's icon in front of its title
+                ic = procgfx.metric_icon(key, 14, C[MCOL[key]])
+                if ic is not None:
+                    lead = 19
+                    h.create_image(tx - font.measure(text) - 4 - 7, y, image=ic)
             if active:
                 w = font.measure(text)
                 if anchor == "e":
-                    ax = tx - w - 9
+                    ax = tx - w - 9 - lead
                 elif anchor == "w":
                     ax = tx + w + 9
                 else:

@@ -193,3 +193,56 @@ def rrect(w, h, r, fill):
             d.rounded_rectangle([0, 0, w * k - 1, h * k - 1], radius=min(r, h / 2) * k, fill=fill)
         return gfx._render(w, h, paint)
     return _frame(("rr", w, h, r, fill), make)
+
+
+# ---------------------------------------------------------------- metric icons (process window)
+def metric_icon(kind, s, col):
+    """Small line icon for a process-window metric, s x s px: cpu (chip) | ram (stick) | gpu (card) |
+    vram (memory chip) | disk (drive). Drawn with strokes in `col`."""
+    if not AVAILABLE:
+        return None
+    n = max(10, int(round(s)))
+
+    def make():
+        def paint(d, k):
+            w = max(1.15, n * 0.085)
+
+            def pin(x0, y0, x1, y1):
+                gfx._line(d, k, x0 * n, y0 * n, x1 * n, y1 * n, w, col)
+            if kind == "cpu":
+                gfx.rrect(d, k, n * 0.24, n * 0.24, n * 0.76, n * 0.76, n * 0.10, outline=col, w=w)
+                gfx.rrect(d, k, n * 0.39, n * 0.39, n * 0.61, n * 0.61, n * 0.04, fill=col)
+                for p in (0.38, 0.62):
+                    pin(p, 0.06, p, 0.24)
+                    pin(p, 0.76, p, 0.94)
+                    pin(0.06, p, 0.24, p)
+                    pin(0.76, p, 0.94, p)
+            elif kind == "ram":
+                gfx.rrect(d, k, n * 0.05, n * 0.26, n * 0.95, n * 0.66, n * 0.09, outline=col, w=w)
+                for x in (0.17, 0.43, 0.69):
+                    gfx.rrect(d, k, n * x, n * 0.37, n * (x + 0.14), n * 0.55, n * 0.03, fill=col)
+                for x in (0.14, 0.28, 0.42, 0.58, 0.72, 0.86):
+                    pin(x, 0.70, x, 0.84)
+            elif kind == "gpu":
+                gfx.rrect(d, k, n * 0.05, n * 0.22, n * 0.95, n * 0.70, n * 0.09, outline=col, w=w)
+                gfx._arc(d, k, n * 0.62, n * 0.46, n * 0.15, 0, 360, w, col)
+                gfx._disc(d, k, n * 0.62, n * 0.46, n * 0.045, col)
+                gfx.rrect(d, k, n * 0.12, n * 0.32, n * 0.34, n * 0.42, n * 0.03, fill=col)
+                for x in (0.22, 0.36, 0.50, 0.64):
+                    pin(x, 0.74, x, 0.88)
+            elif kind == "vram":
+                gfx.rrect(d, k, n * 0.20, n * 0.10, n * 0.80, n * 0.90, n * 0.08, outline=col, w=w)
+                gfx._disc(d, k, n * 0.33, n * 0.23, n * 0.045, col)
+                for y in (0.40, 0.55, 0.70):
+                    pin(0.34, y, 0.66, y)
+                for y in (0.26, 0.42, 0.58, 0.74):
+                    pin(0.05, y, 0.20, y)
+                    pin(0.80, y, 0.95, y)
+            else:                                                # disk
+                gfx.rrect(d, k, n * 0.06, n * 0.16, n * 0.94, n * 0.84, n * 0.13, outline=col, w=w)
+                gfx._arc(d, k, n * 0.34, n * 0.50, n * 0.19, 0, 360, w, col)
+                gfx._disc(d, k, n * 0.34, n * 0.50, n * 0.06, col)
+                pin(0.62, 0.34, 0.84, 0.34)
+                gfx._disc(d, k, n * 0.76, n * 0.66, n * 0.055, col)
+        return gfx._render(n, n, paint)
+    return _fixed(("metric", kind, n, col), make)

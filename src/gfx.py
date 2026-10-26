@@ -212,3 +212,9 @@ def info(dia, col):
             _line(d, k, c, dia * 0.45, c, dia * 0.72, max(1.1, dia * 0.12), col)
         return _render(dia, dia, paint)
     return _get(("info", dia, col), make)
+
+
+def rrect(d, k, x0, y0, x1, y1, r, fill=None, outline=None, w=1.0):
+    """Rounded rectangle in the k-times magnified drawing space of _render (coordinates given unmagnified)."""
+    d.rounded_rectangle([x0 * k, y0 * k, x1 * k - 1, y1 * k - 1], radius=max(0.0, r) * k, fill=fill,
+                        outline=outline, width=max(1, int(round(w * k))) if outline else 0)
