@@ -32,7 +32,7 @@ i18n.register({
                        "Smaller values give finer detail but bigger files.",
         "hp_logging": "While this is on, the readings are saved to a CSV file you can open in Excel. "
                       "You can also press L on the panel.",
-        "hp_logall": "Required saves only the rows you see on the panel. All data saves every sensor the data "
+        "hp_logall": "Panel data saves only the rows you see on the panel. All data saves every sensor the data "
                      "source offers: many more columns and bigger files.",
         "hp_logdir": "Where the CSV files are saved. Leave it empty to use the default folder.",
         "hp_delim": "The character that separates the columns in the CSV. Automatic follows your Windows "
@@ -63,7 +63,7 @@ i18n.register({
         # ---- settings: Layout
         "hp_layout": "Choose which rows appear on the panel, and edit their names, order and colour limits. "
                      "Changes apply with Apply or Save. Reset brings back the automatic layout.",
-        "hp_lay_show": "Untick to hide a row from the panel. It is then left out of the Required CSV too.",
+        "hp_lay_show": "Untick to hide a row from the panel. It is then left out of the Panel data CSV too.",
         "hp_lay_limits": "The value shown fully green and the value shown fully red; colours blend in between. "
                          "Leave both empty for automatic limits. Swap them when low is bad (like FPS).",
         "hp_lay_bar": "Shows a small bar next to the value for this row.",
@@ -91,7 +91,7 @@ i18n.register({
                       "or since recording started.",
         "hp_logbtn": "Click to start or stop recording to a CSV file (or press L). Green means the readings "
                      "are being saved.",
-        "hp_modebtn": "Chooses what is saved: Required is only the rows you see on the panel, All data is every "
+        "hp_modebtn": "Chooses what is saved: Panel data is only the rows you see on the panel, All data is every "
                       "sensor. Click to switch.",
         "hp_resetbtn": "Starts MIN, MAX and AVG over from now (or press R). Recording is not affected.",
         "hp_gearbtn": "Opens the settings (or press S).",
@@ -109,7 +109,7 @@ i18n.register({
                        "Küçük değer daha ince ayrıntı verir ama dosyalar büyür.",
         "hp_logging": "Bu açıkken okumalar, Excel'de açabileceğiniz bir CSV dosyasına kaydedilir. "
                       "Panelde L tuşuna da basabilirsiniz.",
-        "hp_logall": "Gerekli, yalnızca panelde gördüğünüz satırları kaydeder. Tüm veriler, veri kaynağının "
+        "hp_logall": "Paneldeki veriler, yalnızca panelde gördüğünüz satırları kaydeder. Tüm veriler, veri kaynağının "
                      "sunduğu bütün sensörleri kaydeder: çok daha fazla sütun ve daha büyük dosyalar.",
         "hp_logdir": "CSV dosyalarının kaydedileceği yer. Varsayılan klasör için boş bırakın.",
         "hp_delim": "CSV'de sütunları ayıran karakter. Otomatik, Windows bölge ayarlarınızı izler; "
@@ -138,7 +138,7 @@ i18n.register({
                    "Tek seferlik kurulum gerekir (install.ps1).",
         "hp_layout": "Panelde hangi satırların görüneceğini seçin; adlarını, sıralarını ve renk sınırlarını "
                      "düzenleyin. Değişiklikler Uygula veya Kaydet ile geçerli olur. Sıfırla, otomatik düzeni geri getirir.",
-        "hp_lay_show": "Bir satırı panelden gizlemek için işareti kaldırın. Gerekli CSV'den de çıkar.",
+        "hp_lay_show": "Bir satırı panelden gizlemek için işareti kaldırın. Paneldeki veriler CSV'sinden de çıkar.",
         "hp_lay_limits": "Tam yeşil görünen değer ve tam kırmızı görünen değer; arası renk geçişidir. "
                          "Otomatik sınırlar için ikisini de boş bırakın. Düşük değer kötüyse (FPS gibi) yer değiştirin.",
         "hp_lay_bar": "Bu satırda değerin yanında küçük bir çubuk gösterir.",
@@ -163,7 +163,7 @@ i18n.register({
                       "ortalama.",
         "hp_logbtn": "CSV dosyasına kaydı başlatmak ya da durdurmak için tıklayın (veya L'ye basın). Yeşil, "
                      "okumaların kaydedildiği anlamına gelir.",
-        "hp_modebtn": "Neyin kaydedileceğini seçer: Gerekli, yalnızca panelde gördüğünüz satırlar; Tüm veriler, "
+        "hp_modebtn": "Neyin kaydedileceğini seçer: Paneldeki veriler, yalnızca panelde gördüğünüz satırlar; Tüm veriler, "
                       "her sensör. Değiştirmek için tıklayın.",
         "hp_resetbtn": "MİN, MAKS ve ORT değerlerini şu andan başlatır (veya R'ye basın). Kayıt etkilenmez.",
         "hp_gearbtn": "Ayarları açar (veya S'ye basın).",

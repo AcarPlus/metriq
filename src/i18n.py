@@ -19,7 +19,7 @@ _STR = {
         "download": "Download", "upload": "Upload", "disk_read": "Disk Read", "disk_write": "Disk Write",
         "fps": "FPS", "fps_1": "FPS 1% Low", "fps_01": "FPS 0.1% Low", "drive": "Drive",
         # status bar
-        "log_on": "RECORDING ON", "log_off": "RECORDING OFF", "sw_required": "Required", "sw_all": "All data",
+        "log_on": "RECORDING ON", "log_off": "RECORDING OFF", "sw_required": "Panel data", "sw_all": "All data",
         "interval_lbl": "interval (s)", "reset_done": "MIN / MAX / AVG reset", "conn_ok": "HWiNFO connected", "conn_wait": "waiting for HWiNFO…",
         "frozen": "data paused, {src} reconnecting…",
         "log_err": "recording failed: the CSV file cannot be written",
@@ -99,7 +99,7 @@ _STR = {
         "gpu_memtemp": "VRAM (Mem Junction)", "gpu_fan": "GPU Fan", "dimm": "RAM DIMM {n}", "mb": "Anakart {n}",
         "download": "Download", "upload": "Upload", "disk_read": "Disk Okuma", "disk_write": "Disk Yazma",
         "fps": "FPS", "fps_1": "FPS 1% Low", "fps_01": "FPS 0.1% Low", "drive": "Disk",
-        "log_on": "KAYIT AÇIK", "log_off": "KAYIT KAPALI", "sw_required": "Gerekli", "sw_all": "Tüm veriler",
+        "log_on": "KAYIT AÇIK", "log_off": "KAYIT KAPALI", "sw_required": "Paneldeki veriler", "sw_all": "Tüm veriler",
         "interval_lbl": "aralık (sn)", "reset_done": "MİN / MAKS / ORT sıfırlandı", "conn_ok": "HWiNFO bağlı", "conn_wait": "HWiNFO bekleniyor…",
         "frozen": "veri akışı duraklatıldı, {src} yeniden bağlanıyor…",
         "log_err": "kayıt başarısız: CSV dosyası yazılamıyor",
