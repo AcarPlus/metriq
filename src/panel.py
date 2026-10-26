@@ -1224,6 +1224,8 @@ def main():
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()          # benchmark worker processes (perf_core.py) when frozen
     try:
         main()
     except Exception:

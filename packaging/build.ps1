@@ -50,6 +50,10 @@ if (-not (Test-Path -LiteralPath $vpy)) {
 & $vpy -m pip install --disable-pip-version-check --upgrade pip pyinstaller psutil pillow
 if ($LASTEXITCODE -ne 0) { throw 'pip install pyinstaller failed' }
 
+# GPU benchmark helper (C#, .NET Framework csc.exe, no SDK / NuGet needed) -> gpu\build\GpuBench.exe, bundled by the spec
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'gpu\build.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'GPU helper build failed' }
+
 if (Test-Path -LiteralPath (Join-Path $root 'dist\metriQ')) { Remove-Item -LiteralPath (Join-Path $root 'dist\metriQ') -Recurse -Force }
 & $vpy -m PyInstaller --noconfirm --clean --distpath (Join-Path $root 'dist') --workpath (Join-Path $root 'build\pyinstaller') (Join-Path $PSScriptRoot 'metriq.spec')
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed' }

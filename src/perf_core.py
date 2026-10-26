@@ -34,10 +34,10 @@ GPU_EXE = "GpuBench.exe"
 # 1000 points = what the dev PC measured (AMD Ryzen 7 9700X, 32 GB DDR5, NVMe SSD, GeForce RTX 5070 Ti, Python 3.13,
 # 2026-10-27). Units: CPU kernel iterations / s, GB/s, ns, MB/s, GFLOPS. Scores are only comparable inside metriQ.
 REF = {
-    "cpu": {"single_int": 1.0, "single_float": 1.0, "multi_int": 1.0, "multi_float": 1.0},
-    "ram": {"read": 1.0, "write": 1.0, "copy": 1.0, "latency": 1.0},
-    "ssd": {"seq_read": 1.0, "seq_write": 1.0, "rnd_read": 1.0, "rnd_write": 1.0},
-    "gpu": {"gflops": 1.0, "bandwidth": 1.0},
+    "cpu": {"single_int": 5.52e6, "single_float": 14.95e6, "multi_int": 48.9e6, "multi_float": 125.1e6},
+    "ram": {"read": 60.5, "write": 82.2, "copy": 29.8, "latency": 44.2},
+    "ssd": {"seq_read": 4700.0, "seq_write": 5220.0, "rnd_read": 72.6, "rnd_write": 225.5},
+    "gpu": {"gflops": 37100.0, "bandwidth": 970.0},
 }
 LOWER_IS_BETTER = {("ram", "latency")}
 
@@ -480,7 +480,7 @@ def run_ram(ctl):
             metrics[name] = nbytes / dt / 1e9               # copy: bytes copied / s
             done += secs
         del bufs
-        metrics["latency"] = _latency(ctl, 4.0 * k, lambda f: ctl.progress((done + 4.0 * k * f) / total, "RAM latency"))
+        metrics["latency"] = _latency(ctl, max(0.8, 4.0 * k), lambda f: ctl.progress((done + 4.0 * k * f) / total, "RAM latency"))
         ctl.progress(1.0, "done")
         return _finish("ram", ctl, metrics, t0, {"threads": nth, "buffer_mb": per * nth * 2 >> 20})
     finally:

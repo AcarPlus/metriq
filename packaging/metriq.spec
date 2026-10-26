@@ -34,6 +34,11 @@ os.makedirs(os.path.dirname(_work), exist_ok=True)
 with open(_work, "w", encoding="utf-8") as _f:
     _f.write(str(_vi))
 
+# GPU benchmark helper (gpu\build.ps1 compiles it with the .NET Framework csc.exe; packaging\build.ps1 does that first)
+GPU_EXE = os.path.join(ROOT, "gpu", "build", "GpuBench.exe")
+if not os.path.isfile(GPU_EXE):
+    raise SystemExit("GpuBench.exe missing: run gpu\\build.ps1 first (packaging\\build.ps1 does it)")
+
 a = Analysis(
     [os.path.join(SRC, "panel.py")],
     pathex=[SRC],
@@ -44,6 +49,7 @@ a = Analysis(
         (os.path.join(SRC, "metriq.ico"), "."),
         (os.path.join(SRC, "hidden.vbs"), "."),
         (os.path.join(SRC, "set_interval.ps1"), "."),
+        (GPU_EXE, "."),
     ],
     hiddenimports=['psutil', 'PIL', 'PIL.Image', 'PIL.ImageDraw', 'PIL.ImageTk'],
     hookspath=[],

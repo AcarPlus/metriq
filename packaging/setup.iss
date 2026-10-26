@@ -72,6 +72,10 @@ Type: filesandordirs; Name: "{autoprograms}\HWiNFO Panel"
 Type: files; Name: "{autodesktop}\HWiNFO Panel.lnk"
 
 [Files]
+; the GPU benchmark helper (GpuBench.exe) is bundled into dist\metriQ\_internal by metriq.spec: fail if it is not
+#if !FileExists(SourcePath + "..\dist\metriQ\_internal\GpuBench.exe")
+  #error GpuBench.exe missing in dist\metriQ: run packaging\build.ps1 first
+#endif
 Source: "..\dist\metriQ\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; what the scheduled tasks run: lives under Program Files (writable by administrators only)
 Source: "..\src\hidden.vbs"; DestDir: "{app}\tasks"; Flags: ignoreversion

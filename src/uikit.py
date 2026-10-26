@@ -159,6 +159,10 @@ def nav_icon(kind, size, col):
         elif kind == "theme":                                # half-filled circle
             gfx._arc(d, k, n * 0.5, n * 0.5, n * 0.34, 0, 360, w, col)
             d.pieslice([n * 0.16 * k, n * 0.16 * k, n * 0.84 * k, n * 0.84 * k], 90, 270, fill=col)
+        elif kind == "perf":                                 # speedometer
+            gfx._arc(d, k, n * 0.5, n * 0.56, n * 0.36, 150, 390, w, col)
+            L(0.5, 0.56, 0.68, 0.36, w * 1.1)
+            gfx._disc(d, k, n * 0.5, n * 0.56, n * 0.07, col)
         else:                                                # diag: pulse line
             pts = [(0.08, 0.54), (0.30, 0.54), (0.40, 0.22), (0.54, 0.80), (0.64, 0.46), (0.72, 0.54), (0.92, 0.54)]
             for a, b in zip(pts, pts[1:]):
