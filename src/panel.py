@@ -337,7 +337,10 @@ def main():
             return t("hint_lhm")
         if not hw_active():
             return ""
-        h = t("hint_no_shm") if hwctl.proc_running() else t("hint_not_running")
+        now = time.time()
+        if now - st.get("pr_t", 0) > 3:              # a process snapshot per tick is wasted work while nothing changes
+            st["pr_t"], st["pr_v"] = now, hwctl.proc_running()
+        h = t("hint_no_shm") if st["pr_v"] else t("hint_not_running")
         if not st["tasks"]:
             h += " · " + t("hint_readonly")
         return h
@@ -710,9 +713,12 @@ def main():
             cv.itemconfig(s["pill"], fill=mix(C["card"], C["green"] if on else C["red"], 0.18))
             cv.itemconfig(s["dot"], fill=C["green"] if on else C["red"])
             cv.itemconfig(s["sw_track"], fill=mix(C["track"], C["ui"], 0.55) if all_ else C["track"])
-        cv.itemconfig(s["txt"], text=t("log_on") if on else t("log_off"))
-        cv.itemconfig(s["sw_l"], fill=C["faint"] if all_ else C["fg"])
-        cv.itemconfig(s["sw_r"], fill=C["fg"] if all_ else C["faint"])
+        sk = (on, all_, i18n._lang)
+        if s.get("static_key") != sk:
+            s["static_key"] = sk
+            cv.itemconfig(s["txt"], text=t("log_on") if on else t("log_off"))
+            cv.itemconfig(s["sw_l"], fill=C["faint"] if all_ else C["fg"])
+            cv.itemconfig(s["sw_r"], fill=C["fg"] if all_ else C["faint"])
         draw_toasts(status_msgs())
         if st.get("soon_after"):
             try:
@@ -884,8 +890,9 @@ def main():
                 st["auto"] = True
                 set_layout_cfg([])
                 changed = True
-        if st["auto"] and len(rd) != st["auto_n"]:
-            st["auto_n"] = len(rd)
+        if st["auto"] and len(rd) != st["auto_n"] and (st["auto_n"] < 0 or time.time() - st.get("auto_t", 0) > 5):
+            # (a reading count that jitters, e.g. dynamic HWiNFO sensors, must not re-run the detection every tick)
+            st["auto_n"], st["auto_t"] = len(rd), time.time()
             new_cfg = layout.autodetect(rd)
             new = layout.build_sections(new_cfg)
             old_sig = [r.key for r in layout.all_rows(st["sections"])]
@@ -925,6 +932,9 @@ def main():
 
     def refresh_tasks():
         st["tasks"] = hwctl.tasks_installed(refresh=True)
+        return st["tasks"]
+
+    def cached_tasks():
         return st["tasks"]
 
     def apply_settings(changes, lay_mode="keep", lay_cfg=None):
@@ -996,7 +1006,7 @@ def main():
 
     api = types.SimpleNamespace(root=root, cfg=cfg, C=C, fonts=(F_TXT, F_HEAD, F_NUM), fonts_now=lambda: (F_TXT, F_HEAD, F_NUM),
                                 apply=apply_settings, layout=layout_snapshot, readings=read_now,
-                                monitor=panel_monitor, refresh_tasks=refresh_tasks,
+                                monitor=panel_monitor, refresh_tasks=refresh_tasks, tasks=cached_tasks,
                                 detect=hwctl.detect_hwinfo, monitors=config.monitors, source=src)
 
     procs = procwin.Controller(api)

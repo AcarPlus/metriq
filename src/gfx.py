@@ -37,7 +37,7 @@ def _render(w, h, paint):
     """PhotoImage of w x h pixels; paint(draw, k) draws in k-times magnified pixel coordinates."""
     im = Image.new("RGBA", (w * SS, h * SS), (0, 0, 0, 0))
     paint(ImageDraw.Draw(im), SS)
-    return ImageTk.PhotoImage(im.resize((w, h), Image.LANCZOS))
+    return ImageTk.PhotoImage(im.reduce(SS))          # box filter of the SSxSS block = same AA, several times faster than LANCZOS
 
 
 def _px(v):

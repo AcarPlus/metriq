@@ -278,10 +278,7 @@ class ProcWindow:
         uikit.set_scale(self.win)
         self.win.title(f"{config.APP_NAME} – {t('pw_title')}")
         self.win.configure(bg=self.C["bg"])
-        try:
-            self.win.iconbitmap(default=os.path.join(config.APP_DIR, "metriq.ico"))
-        except Exception:
-            pass
+        uikit.set_window_icon(self.win)
         try:
             self.win.attributes("-topmost", bool(self.root.attributes("-topmost")))
         except tk.TclError:

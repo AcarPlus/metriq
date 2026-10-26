@@ -10,9 +10,12 @@ Look: a sidebar (one entry per page, accent coloured) and rounded cards on the r
 Pages are added with add_page()/_page(); settings_theme.py and crashscan_ui.py add their own.
 """
 import copy
+import gc
 import os
 import re
+import threading
 import tkinter as tk
+import traceback
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
 import backend
@@ -73,10 +76,7 @@ class SettingsWindow:
         self.win = tk.Toplevel(self.root)
         self.win.title(t("st_title"))
         self.win.configure(bg=self.C["bg"])
-        try:
-            self.win.iconbitmap(default=os.path.join(config.APP_DIR, "metriq.ico"))
-        except Exception:
-            pass
+        uikit.set_window_icon(self.win)
         self.win.transient(self.root)
         self.win.withdraw()
         uikit.set_scale(self.win)
@@ -84,12 +84,18 @@ class SettingsWindow:
         self.tab_index = 0
         self.initial = {}
         self.pages = []
+        self._closing = False            # Save / Cancel in progress: nothing may be rebuilt any more
+        self._rebuild_job = None
+        self._src_gen = 0                # update_sources: only the newest background probe may write its result
+        self._built = False
         self.build_ui(first=True)
         self.win.protocol("WM_DELETE_WINDOW", self.cancel)
         self.win.bind("<Escape>", lambda e: self.cancel())
         self.win.bind("<MouseWheel>", self._wheel)
 
     def winfo_exists(self):
+        if self._closing:
+            return False
         try:
             return bool(self.win.winfo_exists())
         except tk.TclError:
@@ -230,8 +236,11 @@ class SettingsWindow:
     def build_ui(self, first=False):
         C = self.C
         cfg = self.api.cfg
-        for w in self.win.winfo_children():
-            w.destroy()
+        self._release_vars()
+        self._vars_before = {id(o) for o in gc.get_objects() if isinstance(o, tk.Variable)}
+        old = list(self.win.winfo_children())
+        for w in old:                    # hide now, destroy once the new content is up (no empty window in between)
+            w.pack_forget()
         self.win.title(t("st_title"))
         self.checks = []
         self.lay_checks = []
@@ -280,6 +289,47 @@ class SettingsWindow:
         self.initial = self.read_ui()
         self.select(min(self.tab_index, len(self.pages) - 1))
         self._fit(first)
+        self._built = True
+        if old:
+            self.win.after_idle(lambda: self._destroy_all(old))
+
+    def _release_vars(self):
+        """Remove the traces of every Tk variable made by the last build. A trace is a Tcl command that holds a Python
+        closure, which holds the widgets: without this each build (and every open / close) leaked its whole widget tree,
+        its images and their GDI bitmaps until the process hit the 10 000 handle limit ("Fail to allocate bitmap")."""
+        before = getattr(self, "_vars_before", None)
+        if before is None:
+            return
+        for o in gc.get_objects():
+            if isinstance(o, tk.Variable) and id(o) not in before:
+                try:
+                    for mode, cb in o.trace_info():
+                        o.trace_remove(mode, cb)
+                except (tk.TclError, RuntimeError, AttributeError):
+                    pass
+
+    @staticmethod
+    def _destroy_all(widgets):
+        for w in widgets:
+            try:
+                w.destroy()
+            except tk.TclError:
+                pass
+
+    def rebuild_later(self):
+        """Language / theme changed: rebuild the pages once the current event is finished (never inside the click
+        handler of a widget that is about to be destroyed)."""
+        if self._rebuild_job is None and not self._closing:
+            self._rebuild_job = self.win.after_idle(self._rebuild)
+
+    def _rebuild(self):
+        self._rebuild_job = None
+        if self._closing or not self.winfo_exists():
+            return
+        try:
+            self.build_ui()
+        except tk.TclError:
+            traceback.print_exc()
 
     # ---------------- pages
     def _page(self, i, scroll=True):
@@ -522,7 +572,7 @@ class SettingsWindow:
         self.row(card, t("st_manage"), self.switch(card.body, self.v_manage), help="manage")
         self.row(card, t("st_sync"), self.switch(card.body, self.v_sync), help="sync")
 
-        tasks = self.api.refresh_tasks()
+        tasks = self.api.tasks() if self._built else self.api.refresh_tasks()     # schtasks only when the window opens
         self.lbl_tasks = tk.Label(card.body, text=t("st_tasks_ok") if tasks else t("st_tasks_no"), bg=bg,
                                   fg=C["green"] if tasks else C["yellow"], font=(self.F_TXT, 10), anchor="w",
                                   justify="left")
@@ -533,16 +583,35 @@ class SettingsWindow:
 
     def update_sources(self):
         """Active source, what is available on this PC, and which data the active source cannot provide."""
+        self._src_gen += 1
+        gen = self._src_gen
+        url = self.v_lhm.get().strip() or "auto"
+        res = {}
+
+        def probe():                     # an unreachable LHM can take seconds: never on the UI thread
+            try:
+                res["v"] = (backend.hwinfo_available(), backend.lhm_available({"lhm_url": url}))
+            except Exception:
+                res["v"] = (False, False)
+
+        def poll():
+            if gen != self._src_gen or self._closing or not self.winfo_exists():
+                return
+            if "v" in res:
+                self._show_sources(*res["v"])
+            else:
+                self.win.after(60, poll)
+        self._show_sources(None, None)
+        threading.Thread(target=probe, daemon=True).start()
+        self.win.after(60, poll)
+
+    def _show_sources(self, hw, lhm):
         src = self.api.source
-        try:
-            hw = backend.hwinfo_available()
-            lhm = backend.lhm_available({"lhm_url": self.v_lhm.get().strip() or "auto"})
-        except Exception:
-            hw = lhm = False
         via = src.via()
         yes, no = t("st_av_yes"), t("st_av_no")
-        avail = (f"{t('st_avail')}:   {t('st_av_hw')}: {yes if hw else no}   ·   {t('st_av_lhm')}: "
-                 f"{yes if lhm else no}   ·   {t('st_av_builtin')}: {t('st_av_always')}")
+        q = lambda v: "…" if v is None else (yes if v else no)
+        avail = (f"{t('st_avail')}:   {t('st_av_hw')}: {q(hw)}   ·   {t('st_av_lhm')}: "
+                 f"{q(lhm)}   ·   {t('st_av_builtin')}: {t('st_av_always')}")
         notes = src.notes()
         try:
             self.lbl_src.config(text=t("st_active", name=backend.display_name(src.active) +
@@ -1000,8 +1069,11 @@ class SettingsWindow:
         except tk.TclError:
             pass
 
-    def apply(self):
-        """Validate, apply live, write config.json. Returns True when everything went through."""
+    def apply(self, closing=False):
+        """Validate, apply live, write config.json. Returns True when everything went through.
+        closing: Save is about to close the window, so it is not rebuilt for a new language / theme."""
+        if self._closing:
+            return False
         bad = self.validate()
         if bad is not None:
             self.say(t("st_invalid"), error=True)
@@ -1022,13 +1094,15 @@ class SettingsWindow:
         elif lay_mode == "auto":
             self.lay_is_auto = True
         self.lay_mode = "keep"
-        if lang_changed or theme_changed:
+        if closing:
+            pass
+        elif lang_changed or theme_changed:
             if theme_changed:          # the settings window follows the theme
                 self.C, (self.F_TXT, self.F_HEAD, self.F_NUM) = self.api.C, self.api.fonts_now()
                 self.win.configure(bg=self.C["bg"])
                 self._style()
                 self._dark_title()
-            self.build_ui()
+            self.rebuild_later()
         else:
             try:
                 self.win.attributes("-topmost", bool(self.root.attributes("-topmost")))
@@ -1036,18 +1110,37 @@ class SettingsWindow:
                 pass
             self._lay_note()
             self.update_sources()
-        self.say(t("st_applied") if ok else t("st_write_err"), error=not ok)
+        if not closing:
+            self.say(t("st_applied") if ok else t("st_write_err"), error=not ok)
         return ok
 
     def save(self):
-        if self.apply():
+        if self._closing:
+            return
+        if self.apply(closing=True):
             self.close()
 
     def cancel(self):
         self.close()
 
     def close(self):
+        """Hide at once, destroy after the running event: the window is never torn down inside its own callback."""
+        if self._closing:
+            return
+        self._closing = True
+        self._src_gen += 1
         try:
+            self.win.withdraw()
+            self.win.after_idle(self._destroy_win)
+        except tk.TclError:
+            pass
+
+    def _destroy_win(self):
+        try:
+            self._release_vars()
+            uikit.forget_fonts(self.win)
             self.win.destroy()
         except tk.TclError:
             pass
+        self._vars_before = None
+        gc.collect()
