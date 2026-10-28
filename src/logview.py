@@ -459,6 +459,7 @@ class ChartTip(tooltip.Tooltip):
         p = themes.palette()
         if self.tip is None:
             self.tip = tk.Toplevel(self.w)
+            self.tip.withdraw()                       # shown by _place, once it has its position
             self.tip.wm_overrideredirect(True)
             try:
                 self.tip.attributes("-topmost", True)
@@ -504,17 +505,16 @@ class ChartTip(tooltip.Tooltip):
         self.tip.update_idletasks()
         w, h = self.tip.winfo_reqwidth(), self.tip.winfo_reqheight()
         x, y = self._xy
-        sw, sh = self.tip.winfo_screenwidth(), self.tip.winfo_screenheight()
-        try:
-            vx, vy = self.w.winfo_vrootx(), self.w.winfo_vrooty()
-        except tk.TclError:
-            vx = vy = 0
+        import uikit
+        vx, vy, vr, vb = uikit.monitor_work(x, y, self.w)       # the monitor under the pointer (may be negative)
         gx, gy = x + 18, y + 16
-        if gx + w > vx + sw - 6 and x - w - 14 > vx:
+        if gx + w > vr - 6 and x - w - 14 > vx:
             gx = x - w - 14                      # flip to the left of the pointer near the screen edge
-        if gy + h > vy + sh - 6:
+        if gy + h > vb - 6:
             gy = max(vy + 4, y - h - 10)
         self.tip.geometry(f"+{int(gx)}+{int(gy)}")
+        if self.tip.state() == "withdrawn":
+            self.tip.deiconify()
 
 
 # ====================================================================== the viewer

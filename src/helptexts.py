@@ -24,8 +24,6 @@ i18n.register({
         "hp_window_mode": "Maximized fills the screen but keeps the window frame. Full screen hides everything "
                           "else. Window is a normal window you can move and resize.",
         "hp_topmost": "Keeps the panel above other windows, so it stays visible while you work or play.",
-        "hp_scale": "Makes the rows and text bigger or smaller. If everything does not fit on the screen, "
-                    "the rows shrink on their own.",
         "hp_updates": "Looks for a newer metriQ about once a day. Nothing is installed without asking you first.",
         # ---- settings: Logging
         "hp_interval": "How often the panel reads the sensors and writes a line to the CSV, in seconds. "
@@ -103,7 +101,6 @@ i18n.register({
         "hp_window_mode": "Büyütülmüş ekranı kaplar ama pencere çerçevesi kalır. Tam ekran her şeyi gizler. "
                           "Pencere, taşıyıp yeniden boyutlandırabileceğiniz normal bir penceredir.",
         "hp_topmost": "Paneli diğer pencerelerin üstünde tutar; çalışırken ya da oyun oynarken görünür kalır.",
-        "hp_scale": "Satırları ve yazıları büyütür ya da küçültür. Her şey ekrana sığmazsa satırlar kendiliğinden küçülür.",
         "hp_updates": "Günde bir kez daha yeni bir metriQ olup olmadığına bakar. Sormadan hiçbir şey kurulmaz.",
         "hp_interval": "Panelin sensörleri ne sıklıkla okuyup CSV'ye bir satır yazdığı (saniye). "
                        "Küçük değer daha ince ayrıntı verir ama dosyalar büyür.",

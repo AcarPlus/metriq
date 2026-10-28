@@ -18,7 +18,6 @@ FROZEN = bool(getattr(sys, "frozen", False))            # built with PyInstaller
 APP_DIR = getattr(sys, "_MEIPASS", HERE) if FROZEN else HERE
 
 INTERVAL_MIN, INTERVAL_MAX = 0.5, 30.0
-SCALE_MIN, SCALE_MAX = 80, 150
 
 DEFAULTS = {
     "backend": "auto",               # "auto" | "hwinfo" | "lhm" | "builtin" (sensor data source, see README)
@@ -26,12 +25,12 @@ DEFAULTS = {
     "monitor": "auto",               # "auto" | monitor index (see tools/list_monitors.py)
     "window_mode": "maximized",      # "maximized" | "fullscreen" | "window"
     "columns": "auto",               # "auto" | 1..4 (auto: 1 on portrait screens, else 2 or 3 by aspect ratio)
-    "ui_scale": 100,                 # row height / font scale in percent (80 - 150), never larger than fits
     "theme": "dark",                 # built-in theme, see themes.py (dark, oled, nord, dracula, catppuccin, tokyo, ...)
     "theme_overrides": {},           # any theme token on top of the theme, e.g. {"bg": "#101010", "radius": 8}
     "value_color_mode": "smooth",    # "smooth" (gradient) | "stepped" (3-5 flat colour bands)
     "value_steps": [],               # stepped: [] = 4 equal bands, or 2-4 thresholds in % of each row's range
     "topmost": True,
+    "diag_errors": True,             # diagnostics tab: show the error-detection section
     "check_updates": True,           # look for a newer release on GitHub at start and every 24 h (README: Privacy)
     "interval": 5.0,                 # CSV logging interval, seconds (0.5 - 30)
     "logging": False,                # CSV logging on/off
@@ -250,7 +249,7 @@ def load_config():
             pass
     cfg["interval"] = clamp_interval(cfg.get("interval"))
     cfg["columns"] = norm_columns(cfg.get("columns"))
-    cfg["ui_scale"] = clamp_scale(cfg.get("ui_scale"))
+    cfg.pop("ui_scale", None)        # removed feature: ignore old values
     cfg["backend"] = norm_backend(cfg.get("backend"))
     return cfg, note
 
@@ -283,14 +282,6 @@ def layout_key(source):
 def norm_backend(v):
     v = str(v or "auto").strip().lower()
     return v if v in ("auto", "hwinfo", "lhm", "builtin") else "auto"
-
-
-def clamp_scale(v):
-    try:
-        v = float(str(v).replace(",", "."))
-    except (TypeError, ValueError):
-        v = DEFAULTS["ui_scale"]
-    return int(round(min(SCALE_MAX, max(SCALE_MIN, v))))
 
 
 def save_keys(cfg, *keys):

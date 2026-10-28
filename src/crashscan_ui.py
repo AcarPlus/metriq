@@ -32,11 +32,9 @@ class DiagTab:
         sw.full(rcard, intro, pady=(0, 8), divider=False)
         bar = tk.Frame(rcard.body, bg=rbg)
         sw.full(rcard, bar, pady=(0, 8), divider=False)
-        self.btn = sw.button(bar, t("cr_scan"), self.start, primary=True)
+        self.btn = sw.small_btn(bar, "↻", self.start, bg=rbg)           # refresh (the scan runs on its own)
         self.btn.pack(side="left")
         helptexts.info_icon(bar, "scan", bg=rbg).pack(side="left", padx=(8, 0))
-        sw.button(bar, t("cr_open_dir"), self.open_dir).pack(side="left", padx=(8, 0))
-        logview.add_button(sw, bar, self.folder)
         self.status = sw.label(bar, "", dim=True, size=9, bg=rbg)
         self.status.pack(side="left", padx=(12, 0))
         self.normal = []
@@ -47,10 +45,14 @@ class DiagTab:
         self.rec_btn = sw.button(rrow, t("lv_open_at"), self.open_recording)
         self.rec_btn.pack(side="left")
         self.rec_btn.config(state="disabled")
+        sw.button(rrow, t("cr_open_dir"), self.open_dir).pack(side="left", padx=(8, 0))
 
         # ---- suspicious recordings: error detection
         card = sw.card(p, t("cr_err_title"))
         bg = card.fillc
+        self.v_err = tk.BooleanVar(value=bool(sw.api.cfg.get("diag_errors", True)))
+        sw.row(card, t("cr_err_show"), sw.switch(card.body, self.v_err, self._toggle_err))
+        n0 = len(card.body.winfo_children())
         self.tree = self._tree(card, ("date", "type", "sum"), [t("cr_col_date"), t("cr_col_type"), t("cr_col_sum")],
                                (150, 120, 360), 6, lambda e: self.show())
         box2 = uikit.Card(card.body, C, fill=C["bg"], pad=(12, 12, 10, 10), radius=8, bg=bg)
@@ -69,6 +71,21 @@ class DiagTab:
         self.open_btn.config(state="disabled")
         self.view_btn = logview.add_event_button(sw, row, self.current, self.folder)
         self.view_btn.config(state="disabled")                       # only with a selected suspicious event
+        self.err_widgets = [w for w in card.body.winfo_children()[n0:] if w.winfo_manager() == "grid"]
+        self._toggle_err(save=False)
+        self.start()                                                 # scan as soon as the tab opens
+
+    def _toggle_err(self, save=True):
+        on = bool(self.v_err.get())
+        for w in self.err_widgets:
+            try:
+                (w.grid if on else w.grid_remove)()
+            except tk.TclError:
+                pass
+        if save:
+            cfg = self.sw.api.cfg
+            cfg["diag_errors"] = on
+            config.save_keys(cfg, "diag_errors")
 
     def _tree(self, card, cols, heads, widths, height, on_select):
         sw, C = self.sw, self.C

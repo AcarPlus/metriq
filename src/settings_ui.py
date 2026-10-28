@@ -14,6 +14,7 @@ import gc
 import os
 import re
 import threading
+import time
 import tkinter as tk
 import traceback
 from tkinter import colorchooser, filedialog, messagebox, ttk
@@ -67,6 +68,155 @@ def _fmt_num(v):
 
 
 # ====================================================================== the window
+
+
+def _lay_geom(W):
+    """x positions of the layout-editor columns for a row of width W (shared by LayRow and LayHead)."""
+    px = uikit.px
+    bw, gap, sww, ew = px(26), px(3), px(34), px(64)
+    x_btn = W - px(4) - 3 * bw - 2 * gap
+    x_bar = x_btn - px(14) - sww
+    x_red = x_bar - px(10) - ew
+    x_green = x_red - px(8) - ew
+    x_name = px(56)
+    return {"sw": px(4), "sww": sww, "name": (x_name, max(x_name + px(60), x_green - px(8))),
+            "g": (x_green, x_green + ew), "r": (x_red, x_red + ew), "bar": x_bar, "btn": x_btn, "bw": bw, "gap": gap}
+
+
+class LayHead(tk.Canvas):
+    """Column captions of one layout card (with the (i) help markers), drawn on one canvas."""
+
+    def __init__(self, ui, parent, bg):
+        super().__init__(parent, bg=bg, height=uikit.px(22), highlightthickness=0, bd=0)
+        self.ui, self.bgc, self.icons, self._wd = ui, bg, [], 0
+        self.bind("<Configure>", lambda e: self.redraw(e.width))
+
+    def redraw(self, W):
+        if W == self._wd:
+            return
+        self._wd = W
+        ui, C = self.ui, self.ui.C
+        g = _lay_geom(W)
+        self.delete("all")
+        for ic in self.icons:
+            ic.destroy()
+        self.icons = []
+        h = uikit.px(22)
+        for x, txt, hk in ((g["sw"], t("st_lay_show"), "lay_show"), (g["name"][0] + 4, t("st_lay_name"), None),
+                           (g["g"][0] + 4, t("st_lay_green"), "lay_limits"),
+                           (g["r"][0] + 4, t("st_lay_red"), "lay_limits"), (g["bar"], t("st_lay_bar"), "lay_bar")):
+            tid = self.create_text(x, h // 2, text=txt, anchor="w", fill=C["faint"], font=(ui.F_TXT, 8))
+            if hk:
+                ic = helptexts.info_icon(self, hk, bg=self.bgc, size=11)
+                ic.place(x=self.bbox(tid)[2] + 3, y=h // 2, anchor="w")
+                self.icons.append(ic)
+
+
+class LayRow(tk.Canvas):
+    """One row of the layout editor on a single canvas (switch, name, limits, bar switch, move / delete buttons).
+    The three entry fields only become real widgets when the user clicks them."""
+
+    def __init__(self, ui, parent, bg, si, ri, vars_):
+        super().__init__(parent, bg=bg, height=uikit.px(36), highlightthickness=0, bd=0)
+        self.ui, self.bgc, self.si, self.ri = ui, bg, si, ri
+        self.vv, self.nv, self.gv, self.rv, self.bv = vars_
+        self.ents, self.err, self._wd, self._refs = {}, False, 0, []
+        self.bind("<Configure>", lambda e: self.redraw(e.width))
+        self.bind("<Button-1>", self.click)
+
+    def set_error(self, bad):
+        if bool(bad) != self.err:
+            self.err = bool(bad)
+            for k in ("g", "r"):
+                if k in self.ents:
+                    self.ents[k].set_error(self.err)
+            self.redraw(self._wd, force=True)
+
+    def _var(self, key):
+        return {"name": self.nv, "g": self.gv, "r": self.rv}[key]
+
+    def redraw(self, W, force=False):
+        if W == self._wd and not force:
+            return
+        self._wd = W
+        ui, C, px = self.ui, self.ui.C, uikit.px
+        g = _lay_geom(W)
+        h = px(36)
+        self.delete("all")
+        self._refs = []
+
+        def rr(x0, y0, w_, h_, r, fill, outline=None):
+            im = uikit.draw_rr(self, x0, y0, w_, h_, r, fill, outline, 1, "d")
+            if im is not None:
+                self._refs.append(im)
+
+        def pill(x, on):
+            w_, h_ = g["sww"], px(18)
+            y = (h - h_) // 2
+            rr(x, y, w_, h_, h_ // 2, C["ui"] if on else C["track"])
+            d = h_ - 6
+            kx = x + w_ - d - 3 if on else x + 3
+            self.create_oval(kx, y + 3, kx + d, y + 3 + d, fill="#ffffff", outline="", tags="d")
+        pill(g["sw"], self.vv.get())
+        pill(g["bar"], self.bv.get())
+        fh = px(30)
+        for key in ("name", "g", "r"):
+            x0, x1 = g[key]
+            if key in self.ents:
+                self.ents[key].place(x=x0, y=(h - fh) // 2, width=x1 - x0, height=fh)
+                continue
+            bad = self.err and key != "name"
+            rr(x0, (h - fh) // 2, x1 - x0, fh, px(8), C["bg"], C["red"] if bad else C["border"])
+            txt = self._var(key).get()
+            lim = max(8, (x1 - x0 - px(16)) // px(7))
+            if len(txt) > lim:
+                txt = txt[:lim - 1] + "\u2026"
+            self.create_text(x0 + px(10), h // 2, text=txt, anchor="w", fill=C["fg"], font=(ui.F_TXT, 10), tags="d")
+        for i, glyph in enumerate(("\u25b2", "\u25bc", "\u2715")):
+            x = g["btn"] + i * (g["bw"] + g["gap"])
+            rr(x, (h - px(26)) // 2, g["bw"], px(26), px(7), C["track"])
+            self.create_text(x + g["bw"] // 2, h // 2, text=glyph, fill=C["dim"], font=(ui.F_TXT, 8), tags="d")
+
+    def click(self, e):
+        g = _lay_geom(self._wd or self.winfo_width())
+        x = e.x
+        if g["sw"] <= x <= g["sw"] + g["sww"]:
+            self.vv.set(not self.vv.get())
+            self.ui._dirty()
+            self.redraw(self._wd, force=True)
+        elif g["bar"] <= x <= g["bar"] + g["sww"]:
+            self.bv.set(not self.bv.get())
+            self.ui._dirty()
+            self.redraw(self._wd, force=True)
+        elif x >= g["btn"]:
+            i = int((x - g["btn"]) // (g["bw"] + g["gap"]))
+            if i == 0:
+                self.ui.move_row(self.si, self.ri, -1)
+            elif i == 1:
+                self.ui.move_row(self.si, self.ri, 1)
+            elif i == 2:
+                self.ui.delete_row(self.si, self.ri)
+        else:
+            for key in ("name", "g", "r"):
+                if g[key][0] <= x <= g[key][1]:
+                    self.edit(key)
+                    break
+
+    def edit(self, key):
+        if key not in self.ents:
+            fld = self.ui.entry(self, self._var(key), 24 if key == "name" else 6, bg=self.bgc, height=uikit.px(30))
+            self.ents[key] = fld
+            if key != "name" and self.err:
+                fld.set_error(True)
+            self.redraw(self._wd, force=True)
+            self.update_idletasks()
+        try:
+            self.ents[key].entry.focus_set()
+            self.ents[key].entry.icursor("end")
+        except tk.TclError:
+            pass
+
+
 class SettingsWindow:
     def __init__(self, api):
         self.api = api
@@ -79,8 +229,7 @@ class SettingsWindow:
         uikit.set_window_icon(self.win)
         self.win.transient(self.root)
         self.win.withdraw()
-        self._scaling0 = None
-        self._apply_ui_scale()
+        uikit.set_scale(self.win)
         self._style()
         self.tab_index = 0
         self.initial = {}
@@ -93,23 +242,6 @@ class SettingsWindow:
         self.win.protocol("WM_DELETE_WINDOW", self.cancel)
         self.win.bind("<Escape>", lambda e: self.cancel())
         self.win.bind("<MouseWheel>", self._wheel)
-
-    def _apply_ui_scale(self):
-        """The panel's "UI scale" (ui_scale, %) also scales this window: Tk's point-to-pixel factor drives every
-        point-sized font and uikit.px (controls). The factor is restored when the window closes."""
-        tk_ = self.root.tk
-        try:
-            if self._scaling0 is None:
-                self._scaling0 = float(tk_.call("tk", "scaling"))
-            f = config.clamp_scale(self.api.cfg.get("ui_scale")) / 100.0
-            new = self._scaling0 * f
-            changed = abs(float(tk_.call("tk", "scaling")) - new) > 1e-6
-            if changed:
-                tk_.call("tk", "scaling", new)
-                uikit.forget_fonts(self.win)
-        except tk.TclError:
-            pass
-        uikit.set_scale(self.win)
 
     def winfo_exists(self):
         if self._closing:
@@ -139,7 +271,7 @@ class SettingsWindow:
             pass
         f = (self.F_TXT, 10)
         s.configure("HP.Treeview", background=C["bg"], fieldbackground=C["bg"], foreground=C["fg"],
-                    rowheight=int(28 * config.clamp_scale(self.api.cfg.get("ui_scale")) / 100), borderwidth=0, font=f, bordercolor=C["bg"], lightcolor=C["bg"],
+                    rowheight=28, borderwidth=0, font=f, bordercolor=C["bg"], lightcolor=C["bg"],
                     darkcolor=C["bg"], relief="flat")
         s.layout("HP.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
         s.map("HP.Treeview", background=[("selected", C["select"])], foreground=[("selected", C["fg"])])
@@ -255,7 +387,6 @@ class SettingsWindow:
         C = self.C
         cfg = self.api.cfg
         self._release_vars()
-        self._apply_ui_scale()
         self._vars_before = {id(o) for o in gc.get_objects() if isinstance(o, tk.Variable)}
         old = list(self.win.winfo_children())
         for w in old:                    # hide now, destroy once the new content is up (no empty window in between)
@@ -452,19 +583,10 @@ class SettingsWindow:
         self.cb_cols = self.combo(card.body, [t("st_auto"), "1", "2", "3", "4"], self.col_vals.index(cur), 20)
         self.row(card, t("st_columns"), self.cb_cols, help="columns")
 
-        self.v_scale = tk.StringVar(value=str(config.clamp_scale(cfg.get("ui_scale"))))
-        self.e_scale = self.spinbox(card.body, self.v_scale, config.SCALE_MIN, config.SCALE_MAX, 5, "%.0f", 6)
-        self.row(card, t("st_scale"), self.e_scale, t("st_scale_hint"), help="scale")
-
         card = self.card(p, t("st_card_updates"), "net")
         self.v_upd = tk.BooleanVar(value=bool(cfg.get("check_updates", True)))
         self.row(card, t("st_check_updates"), self.switch(card.body, self.v_upd), help="updates")
 
-        def ok_scale():
-            v = _to_float(self.v_scale.get())
-            return config.SCALE_MIN <= v <= config.SCALE_MAX and v == int(v)
-        rc = self.add_check(self.checks, 0, [self.e_scale], ok_scale)
-        self.v_scale.trace_add("write", lambda *a: rc())
 
     # ---------------- logging
     def _tab_log(self, p, cfg):
@@ -736,7 +858,7 @@ class SettingsWindow:
         self.pages[3]["sf"] = self.lay_sf
         self.scrolls.append(self.lay_sf)
         self.layout_tool = tool
-        self.render_layout()
+        self.render_layout(incremental=True)
 
     def _lay_note(self):
         if not self.lay:
@@ -782,19 +904,53 @@ class SettingsWindow:
             elif "visible" in row:
                 row["visible"] = True
 
-    def render_layout(self):
-        C = self.C
+    def _run_steps(self, it, alive, incremental):
+        """Drives a generator in slices of ~8 ms (one event-loop turn in between, so the window keeps painting)
+        or, when not incremental, to the end at once."""
+        def tick():
+            if self._closing or not alive():
+                return
+            t0 = time.perf_counter()
+            try:
+                while True:
+                    next(it)
+                    if incremental:
+                        self.win.update_idletasks()      # lay out / paint this step now (idle work would pile up)
+                        if time.perf_counter() - t0 >= 0.008:
+                            break
+            except (StopIteration, tk.TclError):
+                return
+            self.win.after(1, tick)
+        if incremental:
+            self.win.after(1, tick)
+        else:
+            tick()
+
+    def render_layout(self, incremental=False):
         sf = self.lay_sf
-        y0 = sf.cv.yview()[0]
+        self._lay_gen = gen = getattr(self, "_lay_gen", 0) + 1
         for w in sf.inner.winfo_children():
             w.destroy()
         self.lay_checks.clear()
         self.row_ui, self.sec_ui = [], []
+        self._lay_ph = None
+        if incremental:                                   # skeleton while the cards are built in slices
+            self._lay_ph = self.label(sf.inner, "…", dim=True, bg=self.C["bg"])
+            self._lay_ph.pack(anchor="w", padx=8, pady=8)
+        self._run_steps(self._render_layout_steps(gen, sf.cv.yview()[0]), lambda: self._lay_gen == gen, incremental)
+
+    def _render_layout_steps(self, gen, y0):
+        C = self.C
+        sf = self.lay_sf
         px = uikit.px
         for si, sec in enumerate(self.lay):
+            yield
             colv = themes.accent_for(sec.get("icon"), sec.get("color"))
             card = uikit.Card(sf.inner, C, None, colv, bg=C["bg"], pad=(px(22), px(14), px(12), px(12)))
             card.pack(fill="x", padx=(0, 6), pady=(0, 12))
+            if self._lay_ph is not None:
+                self._lay_ph.destroy()
+                self._lay_ph = None
             cbg = card.fillc
             hdr = tk.Frame(card.body, bg=cbg)
             hdr.grid(row=0, column=0, sticky="ew", pady=(0, 6))
@@ -812,38 +968,20 @@ class SettingsWindow:
             self.sec_ui.append((sec, tv, colv))
             body = tk.Frame(card.body, bg=cbg)
             body.grid(row=1, column=0, sticky="ew")
-            for ci, (txt, hk) in enumerate(((t("st_lay_show"), "lay_show"), (t("st_lay_name"), None),
-                                            (t("st_lay_green"), "lay_limits"), (t("st_lay_red"), "lay_limits"),
-                                            (t("st_lay_bar"), "lay_bar"))):
-                hf = tk.Frame(body, bg=cbg)
-                hf.grid(row=0, column=ci, sticky="w", padx=(4, 8), pady=(2, 2))
-                tk.Label(hf, text=txt, bg=cbg, fg=C["faint"], font=(self.F_TXT, 8), anchor="w").pack(side="left")
-                if hk:
-                    helptexts.info_icon(hf, hk, bg=cbg, size=11).pack(side="left", padx=(3, 0))
-            body.grid_columnconfigure(1, weight=1)
+            body.grid_columnconfigure(0, weight=1)
+            LayHead(self, body, cbg).grid(row=0, column=0, sticky="ew", pady=(2, 2))
+            yield
             for ri, row in enumerate(sec["rows"]):
-                gr = ri + 1
                 vv = tk.BooleanVar(value=row.get("visible", True) is not False)
-                self.switch(body, vv, self._dirty, small=True).grid(row=gr, column=0, padx=(4, 8), pady=3, sticky="w")
                 nv = tk.StringVar(value=str(row.get("name") or row.get("label") or ""))
-                ne = self.entry(body, nv, 24, height=px(30))
-                ne.grid(row=gr, column=1, padx=(0, 8), pady=3, sticky="we")
                 lim = row.get("limits")
                 has_lim = isinstance(lim, (list, tuple)) and len(lim) == 2
                 gv = tk.StringVar(value=_fmt_num(lim[0]) if has_lim else "")
                 rv = tk.StringVar(value=_fmt_num(lim[1]) if has_lim else "")
-                ge = self.entry(body, gv, 6, height=px(30))
-                ge.grid(row=gr, column=2, padx=(0, 8), pady=3)
-                re_ = self.entry(body, rv, 6, height=px(30))
-                re_.grid(row=gr, column=3, padx=(0, 8), pady=3)
                 bar = row.get("bar")
                 bv = tk.BooleanVar(value=(has_lim and lim[0] != lim[1]) if bar is None else bool(bar))
-                self.switch(body, bv, self._dirty, small=True).grid(row=gr, column=4, padx=(4, 8), pady=3, sticky="w")
-                bf = tk.Frame(body, bg=cbg)
-                bf.grid(row=gr, column=5, padx=(4, 0), pady=3, sticky="e")
-                self.small_btn(bf, "▲", lambda i=si, j=ri: self.move_row(i, j, -1), bg=cbg).pack(side="left", padx=(0, 2))
-                self.small_btn(bf, "▼", lambda i=si, j=ri: self.move_row(i, j, 1), bg=cbg).pack(side="left", padx=(0, 2))
-                self.small_btn(bf, "✕", lambda i=si, j=ri: self.delete_row(i, j), bg=cbg).pack(side="left")
+                rowcv = LayRow(self, body, cbg, si, ri, (vv, nv, gv, rv, bv))
+                rowcv.grid(row=ri + 1, column=0, sticky="ew")
                 nv.trace_add("write", lambda *a: self._dirty())
                 self.row_ui.append((row, nv, gv, rv, bv, vv))
 
@@ -852,9 +990,14 @@ class SettingsWindow:
                     if not g and not r:
                         return True
                     return _to_float(g) != _to_float(r)
-                rc = self.add_check(self.lay_checks, 3, [ge, re_], lim_ok)
+                rc = self.add_check(self.lay_checks, 3, [rowcv], lim_ok)
                 gv.trace_add("write", lambda *a, rc=rc: (rc(), self._dirty()))
                 rv.trace_add("write", lambda *a, rc=rc: (rc(), self._dirty()))
+                if ri % 3 == 2:
+                    yield
+            yield
+        if self._lay_ph is not None:
+            self._lay_ph.destroy()
         self._lay_note()
         sf.inner.update_idletasks()
         sf.cv.configure(scrollregion=sf.cv.bbox("all"))
@@ -1006,7 +1149,7 @@ class SettingsWindow:
         dlg.bind("<Escape>", lambda e: dlg.destroy())
         dlg.update_idletasks()
         w, h = 1000, 620
-        self._center(dlg, w, h)
+        self._center_on_parent(dlg, w, h)
         dlg.after(50, qe.focus_set)
 
     # ------------------------------------------------------------ sizing / placement
@@ -1070,6 +1213,16 @@ class SettingsWindow:
             y = max(0, (win.winfo_screenheight() - h) // 2)
         win.geometry(f"{w}x{h}+{x}+{y}")
 
+    def _center_on_parent(self, dlg, w, h):
+        """Centre a dialog over the settings window, on whichever monitor that window is on."""
+        win = self.win
+        cx, cy = win.winfo_rootx() + win.winfo_width() // 2, win.winfo_rooty() + win.winfo_height() // 2
+        ml, mt, mr, mb = uikit.monitor_work(cx, cy, win)
+        w, h = min(w, mr - ml - 20), min(h, mb - mt - 20)
+        x = max(ml, min(cx - w // 2, mr - w))
+        y = max(mt, min(cy - h // 2, mb - h))
+        dlg.geometry(f"{w}x{h}+{x}+{y}")
+
     def _wheel(self, e):
         try:
             sf = self.pages[self.tab_index]["sf"]
@@ -1093,7 +1246,6 @@ class SettingsWindow:
             "window_mode": self.wm_vals[max(0, self.cb_wm.current())],
             "topmost": bool(self.v_top.get()),
             "check_updates": bool(self.v_upd.get()),
-            "ui_scale": num(self.v_scale.get(), int, self.v_scale.get()),
             "interval": num(self.v_interval.get(), lambda v: round(v, 1), self.v_interval.get()),
             "logging": bool(self.v_logging.get()),
             "log_all": bool(self.v_logall.get()),
@@ -1217,12 +1369,6 @@ class SettingsWindow:
             self._release_vars()
             uikit.forget_fonts(self.win)
             self.win.destroy()
-        except tk.TclError:
-            pass
-        try:
-            if self._scaling0 is not None:
-                self.root.tk.call("tk", "scaling", self._scaling0)
-                uikit.set_scale(self.root)
         except tk.TclError:
             pass
         self._vars_before = None

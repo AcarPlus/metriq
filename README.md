@@ -53,7 +53,7 @@ Türkçe açıklama için aşağıya bakın: [Türkçe](#türkçe).
   more than 20 s (the free HWiNFO version stops its sensors after 12 hours). Without this the panel runs in read-only
   mode and shows a hint when HWiNFO is not running.
 - **Settings window** (gear button next to the interval box, or press `S`): language, columns, monitor, window mode,
-  always on top, row / font scale, logging, CSV format, data source and HWiNFO options, and the layout itself (show /
+  always on top, logging, CSV format, data source and HWiNFO options, and the layout itself (show /
   hide rows, names, colour limits, bars, section titles / colours / order, "Add sensor" from the live sensor list).
   Changes apply live. The *Data source* tab also lists which data the active source cannot provide, and why.
 - **Multi-column layout** for wide screens: sections are distributed over 1 to 3 columns (automatic by window shape).
@@ -203,7 +203,6 @@ v1.2.0, still works).
 | `monitor` | `"auto"` or index | `auto` = first non-primary portrait monitor, otherwise the primary one. Indexes: `python tools\list_monitors.py` |
 | `window_mode` | `"maximized"`, `"fullscreen"`, `"window"` | how the window is placed on that monitor |
 | `columns` | `"auto"`, `1`, `2`, `3` | number of columns; `auto` = 1 on a portrait window, otherwise 3 if width / height is 2.0 or more, else 2. Whole sections are distributed in order, a section is never split |
-| `ui_scale` | 80 to 150 | row height / font scale in percent (rows never exceed the available height) |
 | `topmost` | `true` / `false` | keep the window on top |
 | `check_updates` | `true` / `false` | check GitHub for a newer release at start and every 24 h (see [Privacy](#privacy)) |
 | `interval` | 0.5 to 30 | CSV logging interval in seconds |
@@ -390,7 +389,7 @@ pencere modu, her zaman üstte, satır / yazı ölçeği, kayıt ve CSV biçimi,
 düzenin kendisi (satırları gösterme / gizleme, adlar, renk sınırları, çubuklar, bölüm başlığı / rengi / sırası, canlı
 sensör listesinden "Sensör ekle") buradan değiştirilir; Veri kaynağı sekmesi etkin kaynağın hangi verileri
 veremediğini ve nedenini de gösterir; değişiklikler anında uygulanır. **Sütunlar:** geniş ekranlarda bölümler
-1-3 sütuna dağıtılır (`columns`: `auto`, 1, 2, 3; `ui_scale`: 80-150). Gizlenen satırlar `"visible": false` olarak
+1-3 sütuna dağıtılır (`columns`: `auto`, 1, 2, 3). Gizlenen satırlar `"visible": false` olarak
 dosyada kalır.
 
 **Kısayollar:** `L` kaydı açar/kapatır, `S` ayarlar, `F11` tam ekran. **CSV:** her kayıt oturumu ayrı dosyadır; ayırıcı ve ondalık

@@ -75,6 +75,17 @@ def families():
     return _FAMS
 
 
+_MEAS = {}
+
+
+def _measure(f, text):
+    """Width of `text` in bold font f = (family, size[, ...]); Font objects are slow to create, so cache."""
+    key = (f[0], f[1], text)
+    if key not in _MEAS:
+        _MEAS[key] = tkfont.Font(family=f[0], size=f[1], weight="bold").measure(text)
+    return _MEAS[key]
+
+
 def _font(sty, token, size, *auto, bold=False):
     want = sty[token]
     fams = set(families())
@@ -152,12 +163,9 @@ class ThemeTab:
         ui.scrolls.append(sf)
         ui.pages[4]["sf"] = sf
         self.sf = sf
-        p = sf.inner
-        self._build_themes(p)
-        self._build_colors(p)
-        self._build_shape(p)
-        self._build_values(p)
-        self.sync()
+        self._p = sf.inner
+        self._ready = False
+        self._first_sync()
 
     # ------------------------------------------------------------ state
     def style(self):
@@ -197,8 +205,9 @@ class ThemeTab:
             cv.bind("<Button-1>", lambda e, n=name: self.pick_theme(n))
             cv.bind("<Enter>", lambda e, n=name: self.draw_card(n, hover=True))
             cv.bind("<Leave>", lambda e, n=name: self.draw_card(n))
-            self.cards[name] = cv
-            self.draw_card(name)
+            self.cards[name] = cv                       # drawn by _first_sync / sync
+            if i % 4 == 3:
+                yield                                   # (generator: the first build maps the cards in slices)
 
     def _build_colors(self, p):
         C, ui = self.C, self.ui
@@ -219,6 +228,8 @@ class ThemeTab:
             b.bind("<Button-3>", lambda e, tk_=tok: self.reset_token(tk_))
             b.grid(row=row, column=col * 2 + 1, sticky="w", pady=4)
             self.swatch[tok] = b
+            if i % 6 == 5:
+                yield
         gh = tk.Frame(card.body, bg=bg)
         ui.full(card, gh, pady=(4, 2), divider=False, sticky="w")
         ui.label(gh, t("th_grad_hint"), dim=True, size=9, bg=bg).pack(side="left")
@@ -364,7 +375,44 @@ class ThemeTab:
             self.draw_preview()
 
     # ------------------------------------------------------------ keep widgets and preview in sync
+    def _first_sync(self):
+        """First fill of the page in ~8 ms slices (the theme cards and the preview are rendered pictures)."""
+        def steps():
+            p = self._p
+            for build in (self._build_themes, self._build_colors, self._build_shape, self._build_values):
+                r = build(p)
+                if r is not None:
+                    yield from r
+                yield
+            self._ready = True
+            sty = self.style()
+            for i, (tok, b) in enumerate(self.swatch.items()):         # each swatch renders its own picture
+                b.set(sty[tok], tok in self.ov)
+                if i % 2 == 1:
+                    yield
+            self._sync_widgets()
+            yield
+            for i, n in enumerate(list(self.cards)):
+                self.draw_card(n)
+                if i % 3 == 2:
+                    yield
+            self._show_adv()
+            self.on_steps()
+            yield
+            self._draw_preview_now()
+        self.ui._run_steps(steps(), lambda: True, True)
+
     def sync(self):
+        if not self._ready:
+            return
+        self._sync_widgets()
+        for n in self.cards:
+            self.draw_card(n)
+        self._show_adv()
+        self.on_steps()
+        self.draw_preview()
+
+    def _sync_widgets(self):
         sty = self.style()
         self._lock = True
         try:
@@ -381,11 +429,6 @@ class ThemeTab:
             self.cb_mode.current(self.mode_vals.index(self.mode))
         finally:
             self._lock = False
-        for n in self.cards:
-            self.draw_card(n)
-        self._show_adv()
-        self.on_steps()
-        self.draw_preview()
 
     # ------------------------------------------------------------ theme cards
     def draw_card(self, name, hover=False):
@@ -455,6 +498,15 @@ class ThemeTab:
         self.pv.create_image(x, y, image=im, anchor=anchor)
 
     def draw_preview(self):
+        """Debounced: Configure events and edits arrive in bursts."""
+        if getattr(self, "_pv_job", None) is None and self._ready:
+            try:
+                self._pv_job = self.pv.after(30, self._draw_preview_now)
+            except tk.TclError:
+                pass
+
+    def _draw_preview_now(self):
+        self._pv_job = None
         cv = self.pv
         try:
             W = max(cv.winfo_width(), 300)
@@ -551,7 +603,7 @@ class ThemeTab:
         ph = min(bh - 8, 20)
         lbl = t("log_off")
         f = _txt(sty, 10, True)
-        pw = tkfont.Font(family=f[0], size=f[1], weight="bold").measure(lbl) + ph * 1.4
+        pw = _measure(f, lbl) + ph * 1.4
         if gfx.AVAILABLE:
             self._img(gfx.pill(pw, ph, themes.mix(P["card"], P["red"], 0.18), P["red"], 6 + ph * 0.3, ph * 0.17),
                       x1 + 10, mid - ph / 2)
@@ -564,7 +616,7 @@ class ThemeTab:
             self._img(gfx.knob(5.0, P["fg"]), tx + 34 - 5 - 3, ty + 8, "center")      # centre of the "all" end
             toast = "✓ " + t("reset_done")
             tfn = _txt(sty, 9, True)
-            tw = tkfont.Font(family=tfn[0], size=tfn[1], weight="bold").measure(toast) + 22
+            tw = _measure(tfn, toast) + 22
             tx2 = tx + 34 + 12
             if tx2 + tw < x1 + rw - 6:
                 th2 = 18

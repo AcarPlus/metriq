@@ -389,7 +389,7 @@ def main():
         HEAD, FOOT, STATUS = layout.HEAD, layout.FOOT, layout.STATUS    # in row heights
         sty = themes.current()
         R, sp = sty.radius, sty.spacing                  # card corner radius, row pitch factor
-        p = layout.plan(sections, W, H, cfg["columns"], cfg["ui_scale"], sp)
+        p = layout.plan(sections, W, H, cfg["columns"], 100, sp)
         rh, m, g = p.rh, p.m, p.g
         rp = rh * sp                                      # row pitch (rows keep the font size of rh)
         inset = max(6.0, R * 0.4)                         # zebra stripes stay inside rounded corners
@@ -955,7 +955,7 @@ def main():
         real = {k: v for k, v in changes.items() if cfg.get(k) != v}
         cfg.update(real)
         keys = list(real)
-        need_build = bool({"columns", "ui_scale", "language"} & set(real))
+        need_build = bool({"columns", "language"} & set(real))
         if "language" in real:
             i18n.set_language(cfg["language"])
             if st["auto"]:

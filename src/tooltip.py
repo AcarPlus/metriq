@@ -81,6 +81,7 @@ class Tooltip:
         p = themes.palette()
         if self.tip is None:
             self.tip = tk.Toplevel(self.w)
+            self.tip.withdraw()                       # shown by _place, once it has its position
             self.tip.wm_overrideredirect(True)
             try:
                 self.tip.attributes("-topmost", True)
@@ -132,7 +133,15 @@ class Tooltip:
                 x = self._xy[0] - w - 10
         except tk.TclError:
             pass
+        try:
+            import uikit
+            ml, mt, mr, mb = uikit.monitor_work(self._xy[0], self._xy[1], self.w)
+            x, y = max(ml, min(x, mr - w)), max(mt, min(y, mb - h))
+        except Exception:
+            pass
         self.tip.geometry(f"+{int(x)}+{int(y)}")
+        if self.tip.state() == "withdrawn":
+            self.tip.deiconify()
 
     def hide(self):
         if self._live:

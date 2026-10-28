@@ -43,15 +43,18 @@ def monitor_work(x, y, w):
     try:
         import ctypes
         from ctypes import wintypes
-        pt = wintypes.POINT(int(x), int(y))
-        hm = ctypes.windll.user32.MonitorFromPoint(pt, 2)             # MONITOR_DEFAULTTONEAREST
+        u = ctypes.windll.user32
+        u.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]   # without these the 64-bit handle is truncated
+        u.MonitorFromPoint.restype = wintypes.HANDLE
+        u.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+        hm = u.MonitorFromPoint(wintypes.POINT(int(x), int(y)), 2)    # MONITOR_DEFAULTTONEAREST
 
         class MI(ctypes.Structure):
             _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT),
                         ("dwFlags", wintypes.DWORD)]
         mi = MI()
         mi.cbSize = ctypes.sizeof(MI)
-        if ctypes.windll.user32.GetMonitorInfoW(hm, ctypes.byref(mi)):
+        if hm and u.GetMonitorInfoW(hm, ctypes.byref(mi)):
             r = mi.rcWork
             return r.left, r.top, r.right, r.bottom
     except Exception:
@@ -1140,7 +1143,7 @@ class Card(_Cv):
 
             def paint(d, k):
                 gfx.rrect(d, k, 0, 0, w, h, r, fill=self.fillc, outline=C["border"], w=1)
-                if self.accent:
+                if self.accent and h > 2 * r:
                     d.rectangle([0, r * k, 3 * k - 1, (h - r) * k], fill=self.accent)
             im = _cached(key, w, h, paint)
             self.create_image(0, 0, image=self.keep(im), anchor="nw", tags="bg")
