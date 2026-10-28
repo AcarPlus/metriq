@@ -1025,23 +1025,29 @@ class Viewer:
             return
         self.last_pick_key = key
         cats = {self.rec.by_idx[i].cat for i in idxs}
-        if set(idxs) <= set(self.sel):
-            # second click on an active preset: switch its series off again and fold its groups
-            off = set(idxs)
+        active = getattr(self, "active_presets", set())
+        if key in active:
+            # second click: the preset's whole group is switched off (incl. series added later with Show all)
+            active.discard(key)
             self.expanded -= cats
-            self.set_selection([i for i in self.sel if i not in off])
+            self.set_selection([i for i in self.sel if self.rec.by_idx[i].cat not in cats])
         else:
+            active.add(key)
             self.expanded |= cats
             self.set_selection(list(self.sel) + [i for i in idxs if i not in self.sel])
+        self.active_presets = active
         self.plist.set_rows(self.plist.rows, keep=False)
 
     def show_all(self):
-        """Toggle: selects every series of the groups that are open in the picker (all series when none is open)
-        and shows the full time range; pressed again while all of them are shown, it switches them all off."""
+        """Toggle: selects every series of the groups whose preset is switched on and shows the full time range;
+        pressed again while all of them are shown, it switches them off. Does nothing when no preset is on."""
         if self.rec is None:
             return
-        groups = set(self.expanded)
-        idxs = [s.idx for s in self.rec.series if not groups or s.cat in groups]
+        groups = {self.rec.by_idx[i].cat for k in getattr(self, "active_presets", set())
+                  for i in (self.presets.get(k) or [])}
+        if not groups:
+            return
+        idxs = [s.idx for s in self.rec.series if s.cat in groups]
         if idxs and set(idxs) <= set(self.sel):
             off = set(idxs)
             self.set_selection([i for i in self.sel if i not in off])
@@ -1060,6 +1066,7 @@ class Viewer:
             pass
 
     def clear_sel(self):
+        self.active_presets = set()
         self.set_selection([])
 
     def _mark_presets(self):
@@ -1068,7 +1075,7 @@ class Viewer:
         C = self.C
         for k, b in self.preset_btns.items():
             ser = self.presets.get(k)
-            on = bool(ser) and set(ser) <= set(self.sel)
+            on = bool(ser) and k in getattr(self, "active_presets", set())
             base = C["ui"] if on else C["track"]
             b.base = base
             b.config(bg=base, fg=C["on_ui"] if on else (C["fg"] if ser else C["faint"]),
