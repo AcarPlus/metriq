@@ -2,10 +2,6 @@
 
 # metriQ
 
-*metriQ was called "HWiNFO Panel" up to v1.1.x.* The name changed because the app also works without HWiNFO now.
-Existing installs upgrade in place (the Setup removes the old program folder and shortcuts; settings and logs are
-moved to the new data folder on first start, see [Install](#install)).
-
 A compact always-on-top dashboard for Windows that shows live sensor data: clocks, usage, power, temperatures, fans,
 network/disk throughput and FPS, each with a colour gradient (green to red), a bar, and panel-side MIN / MAX / AVG.
 It can also record the values to CSV files. Made for a small secondary or portrait monitor, but it runs happily on any
@@ -127,13 +123,6 @@ HWiNFO and change its polling interval without a UAC prompt each time. The inter
 Setup again). English and Turkish wizard. Uninstall from *Settings > Apps*; it removes the tasks and the program folder
 and keeps your settings and logs in `%LOCALAPPDATA%\metriQ`. An older `config.json` written by the Store-Python
 source version is taken over on first start.
-
-**Upgrading from "HWiNFO Panel" (v1.1.x):** just run the new Setup. It replaces the old install (same uninstall entry),
-removes the old program folder (`%ProgramFiles%\HWiNFO Panel`), its shortcuts and its old scheduled tasks
-(`\HWiNFO Panel\...`) and carries a "start with Windows" entry over. On the first start metriQ MOVES your old data
-folder `%LOCALAPPDATA%\HWiNFO Panel` (`config.json`, `logs\`, ...) to `%LOCALAPPDATA%\metriQ` (only when the new folder
-has no `config.json` yet; a `log_dir` that pointed into the old folder is rewritten). v1.1.x can still update itself to
-this version. The old environment variable `HWINFO_PANEL_DIR` is still accepted as a fallback for `METRIQ_DIR`.
 
 **Option 2 - portable zip.** Unzip `metriQ-<version>-portable.zip` anywhere and run `metriQ.exe`
 (read-only mode, no tasks; set `METRIQ_DIR` to keep the settings next to it).
@@ -328,9 +317,7 @@ Until signing is in place, releases are unsigned (see the SmartScreen note above
 
 Canlı sensör verisi gösteren, her zaman üstte duran küçük bir Windows panosu: saat/kullanım, güç, sıcaklık, fan,
 ağ/disk ve FPS; her satırda yeşilden kırmızıya renk, çubuk ve panel tarafında MİN / MAKS / ORT. İsterseniz değerleri
-CSV dosyasına kaydeder. HWiNFO / REALiX veya LibreHardwareMonitor projesiyle bağlantısı yoktur. (**metriQ**, v1.1.x'e
-kadar "HWiNFO Panel" adını taşıyordu; yeni Setup eski kurulumun üzerine kurulur, eski ayar ve kayıt klasörü
-`%LOCALAPPDATA%\HWiNFO Panel` ilk açılışta `%LOCALAPPDATA%\metriQ` altına taşınır.)
+CSV dosyasına kaydeder. HWiNFO / REALiX veya LibreHardwareMonitor projesiyle bağlantısı yoktur.
 
 **Gereksinimler:** Windows 10/11; Python 3.10+ (tkinter dahil; yalnızca kaynaktan çalıştırmak için); bir veri kaynağı (aşağıda). HWiNFO için: Ayarlar >
 **Shared Memory Support** açık olmalı (ücretsiz sürümde paylaşılan bellek her başlatmada **12 saat** ile sınırlıdır).
