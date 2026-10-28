@@ -37,6 +37,28 @@ def px(v):
     return int(round(v * SCALE))
 
 
+def monitor_work(x, y, w):
+    """(left, top, right, bottom) work area of the monitor containing virtual-screen point (x, y); negative
+    coordinates (monitors left of / above the primary) are normal. Falls back to the Tk screen."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        pt = wintypes.POINT(int(x), int(y))
+        hm = ctypes.windll.user32.MonitorFromPoint(pt, 2)             # MONITOR_DEFAULTTONEAREST
+
+        class MI(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT),
+                        ("dwFlags", wintypes.DWORD)]
+        mi = MI()
+        mi.cbSize = ctypes.sizeof(MI)
+        if ctypes.windll.user32.GetMonitorInfoW(hm, ctypes.byref(mi)):
+            r = mi.rcWork
+            return r.left, r.top, r.right, r.bottom
+    except Exception:
+        pass
+    return 0, 0, w.winfo_screenwidth(), w.winfo_screenheight()
+
+
 def _cached(key, w, h, paint):
     im = _IM.get(key)
     if im is None:
@@ -500,7 +522,8 @@ class Combo(Field):
             pass
         pad = px(4)
         wmax = max(fo.measure(v) for v in self.values) + px(52)
-        W = max(self.winfo_width(), min(wmax, self.winfo_screenwidth() - 40))
+        ml, mt, mr, mb = monitor_work(self.winfo_rootx(), self.winfo_rooty(), self)
+        W = max(self.winfo_width(), min(wmax, mr - ml - 40))
         H = rows * rh + 2 * pad
         cv = _Cv(pop, bg=C["card"], width=W - 2, height=H)
         cv.pack(padx=1, pady=1)
@@ -579,10 +602,11 @@ class Combo(Field):
         draw()
         pop.update_idletasks()
         x, y = self.winfo_rootx(), self.winfo_rooty() + self.winfo_height() + px(4)
-        if y + H + 2 > self.winfo_screenheight() - 40:
+        if y + H + 2 > mb - 8:
             y = self.winfo_rooty() - H - 2 - px(4)
-        x = max(0, min(x, self.winfo_screenwidth() - W - 2))
-        pop.geometry(f"{W}x{H + 2}+{x}+{y}")
+        y = max(mt, y)
+        x = max(ml, min(x, mr - W - 2))
+        pop.geometry("%dx%d+%d+%d" % (W, H + 2, x, y))      # "+-1080+-588" is valid Tk for negative coordinates
         try:                                                 # Windows 11: rounded corners for the popup
             import ctypes
             hwnd = ctypes.windll.user32.GetParent(pop.winfo_id()) or pop.winfo_id()

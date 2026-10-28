@@ -17,12 +17,14 @@ import backend
 import config
 import crashscan
 import gfx
+import hwsm
 import helptexts
 import hwctl
 import i18n
 import layout
 import proclog
 import logview
+import perf_core
 import procwin
 import settings_ui
 import themes
@@ -218,6 +220,14 @@ def launch_command():
     return f'"{exe}" "{os.path.join(HERE, "panel.py")}"'
 
 
+def _arm_hard_exit(seconds):
+    """Last resort: end the process when a clean exit takes longer than `seconds` (a stuck child process or driver)."""
+    def go():
+        time.sleep(seconds)
+        os._exit(0)
+    threading.Thread(target=go, name="hard-exit", daemon=True).start()
+
+
 def main():
     cfg, note = config.load_config()
     i18n.set_language(cfg["language"])
@@ -373,6 +383,7 @@ def main():
             gfx.begin()
         st["items"].clear()
         st["last"].clear()
+        st["need_draw"] = True
         st["empty"] = None
         sections = st["sections"]
         HEAD, FOOT, STATUS = layout.HEAD, layout.FOOT, layout.STATUS    # in row heights
@@ -426,6 +437,7 @@ def main():
             col_now = cx0 + cw * fr["now"]                  # right edge of the number, unit follows
             col_min, col_max, col_avg = cx0 + cw * fr["mn"], cx0 + cw * fr["mx"], cx1 - pad
             yy = m
+            rp, gc = p.pitch[ci], p.gaps[ci]
             for sec in col_secs:
                 accent = themes.accent_for(sec.icon, sec.color)
                 hh, pb = rh * HEAD, rh * FOOT
@@ -479,7 +491,7 @@ def main():
                         it[k] = cv.create_text(xx, my, text="–", anchor="e", font=f_num, fill=C["dim"])
                     st["items"][id(row)] = it
                     ry += rp
-                yy += ch + g
+                yy += ch + gc
         # ----- status bar (full width, a single row: record pill, mode switch, interval, reset, gear);
         # messages are shown as small toasts just above it (see draw_toasts)
         sx0, sx1 = m, W - m
@@ -1099,7 +1111,7 @@ def main():
             pass
         except Exception:
             traceback.print_exc()
-        root.after(300, upd_pump)
+        root.after(600, upd_pump)
 
     def upd_download(info):
         def cb(p):
@@ -1167,16 +1179,37 @@ def main():
                     hwctl.repair_hwinfo(cfg["interval"], st["hw_exe"])   # restart + SensorsSM=1
                 else:
                     hwctl.run_task(hwctl.TASK_START)
+        try:
+            mini = root.state() == "iconic"
+        except tk.TclError:
+            mini = False
+        if st.get("mini") and not mini:
+            st["last"].clear()                  # restored: the canvas content is stale, redraw everything once
+        st["mini"] = mini
         rows = layout.all_rows(st["sections"])
+        # HWiNFO has not polled since the last tick: nothing new to show (the values are identical)
+        poll = hwsm.last_poll if (ok and src.active == "hwinfo") else None
+        same = (poll is not None and poll == st.get("poll") and not st.get("need_draw") and not st["frozen"]
+                and not cfg["logging"] and not mini)
+        st["poll"] = poll
+        if not same:
+            st["need_draw"] = False
         st["nall"] = len(rd) if ok else st.get("nall", 0)
         st["nreq"] = len(rows)
         logvals = []
-        for row in rows:
+        for row in (() if same else rows):
             r = row.match(rd) if ok else None
             logvals.append(logger.num(r["value"], row.csv_decimals()) if r else "")
             it = st["items"].get(id(row))
             if not it or frozen:
                 continue        # frozen: last values stay on screen, stats / bars do not move
+            if mini:
+                # minimised: keep the statistics current, skip every canvas update (redone on restore)
+                if r:
+                    v = r["value"]
+                    s = stats.setdefault(row.key, [v, v, 0.0, 0])
+                    s[0], s[1], s[2], s[3] = min(s[0], v), max(s[1], v), s[2] + v, s[3] + 1
+                continue
             if r:
                 v = r["value"]
                 s = stats.setdefault(row.key, [v, v, 0.0, 0])
@@ -1189,8 +1222,11 @@ def main():
                     set_text(it[k], row.fmt_value(val), mix(layout.value_color(row, val, C["fg"]), C["card"], 0.18))
                 if "bar" in it:
                     x0, x1, y0, y1 = it["bargeo"]
-                    cv.coords(it["bar"], x0, y0, x0 + (x1 - x0) * layout.frac(row, v), y1)
-                    cv.itemconfig(it["bar"], fill=col)
+                    bx = int(round(x0 + (x1 - x0) * layout.frac(row, v)))
+                    if st["last"].get(it["bar"]) != (bx, col):       # skip the redraw of an unchanged bar
+                        st["last"][it["bar"]] = (bx, col)
+                        cv.coords(it["bar"], x0, y0, bx, y1)
+                        cv.itemconfig(it["bar"], fill=col)
         logger.ext.update()                 # process sampling runs only while the recording needs it
         if not frozen and ok and cfg["logging"] and rows and now - logger.last >= cfg["interval"] - 0.05:
             logger.last = now
@@ -1206,17 +1242,32 @@ def main():
             except Exception:
                 st["log_err"] = time.time()
         refresh_status()
-        root.after(500, tick)
+        # HWiNFO: cheap (unchanged polls are skipped) -> 2 Hz; the other sources re-sample each tick -> 1 Hz
+        slow = (mini and not cfg["logging"]) or (src.active != "hwinfo" and not (cfg["logging"] and cfg["interval"] < 1))
+        root.after(1000 if slow else 500, tick)
 
     def on_close():
+        if st.get("closing"):
+            return
         st["closing"] = True
-        procs.close()
-        logger.ext.shutdown()
-        logger.close()
-        src.close()
+        try:
+            root.withdraw()                              # the window is gone at once; the clean-up follows
+        except tk.TclError:
+            pass
+        _arm_hard_exit(3.0)                              # something blocking below must not keep the process alive
+        steps = [procs.close, logger.ext.shutdown, logger.close, perf_core.kill_all_jobs, src.close]
         if bool(cfg["manage_hwinfo"]) and st["tasks"] and (hw_active() or st.get("hw_used")):
-            hwctl.run_task(hwctl.TASK_STOP)
-        root.destroy()
+            steps.append(lambda: hwctl.run_task(hwctl.TASK_STOP))
+        for fn in steps:
+            try:
+                fn()
+            except Exception:
+                traceback.print_exc()
+        try:
+            root.quit()
+            root.destroy()
+        except tk.TclError:
+            pass
     root.protocol("WM_DELETE_WINDOW", on_close)
 
     st["last_restart"] = time.time()
@@ -1231,6 +1282,9 @@ def main():
     root.after(300, upd_pump)
     upd_reschedule(5000)
     root.mainloop()
+    if st.get("closing"):
+        perf_core.kill_all_jobs()
+        sys.exit(0)
 
 
 if __name__ == "__main__":

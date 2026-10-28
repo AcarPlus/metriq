@@ -34,7 +34,7 @@ def display_name(name):
 
 def hwinfo_available():
     try:
-        return bool(hwsm.read_all() is not None)
+        return hwsm.available()
     except Exception:
         return False
 
@@ -98,12 +98,18 @@ class Manager:
     def _probe_loop(self):
         """auto: look for HWiNFO / LHM in the background (an LHM probe can take seconds when it is not running)."""
         while not self.closed.is_set():
+            slow = False
             if self.setting() == "auto":
                 try:
-                    self.avail = {"hwinfo": hwinfo_available(), "lhm": lhm_available(self.cfg)}
+                    hw = hwinfo_available()
+                    # HWiNFO is up and delivering: LibreHardwareMonitor is only a fallback, so do not look for it
+                    # (a probe is a socket connect + a process listing)
+                    healthy = hw and self.active == "hwinfo" and not self.down_since
+                    self.avail = {"hwinfo": hw, "lhm": self.avail["lhm"] if healthy else lhm_available(self.cfg)}
+                    slow = healthy
                 except Exception:
                     pass
-            self.closed.wait(PROBE_S)
+            self.closed.wait(PROBE_S * 3 if slow else PROBE_S)
 
     def setting(self):
         return norm(self.cfg.get("backend"))

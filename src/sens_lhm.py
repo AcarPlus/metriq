@@ -204,6 +204,16 @@ class _Web:
 
 def web_reachable(url=DEFAULT_URL, timeout=0.35):
     try:
+        import socket
+        from urllib.parse import urlparse
+        u = urlparse(url)
+        # a closed port is the common case: find out with a bare connect (no HTTP / TLS set-up per probe)
+        with socket.create_connection((u.hostname or "127.0.0.1", u.port or (443 if u.scheme == "https" else 80)),
+                                      timeout):
+            pass
+    except Exception:
+        return False
+    try:
         root = _Web(url).fetch(timeout)
         return isinstance(root, dict) and "Children" in root
     except Exception:

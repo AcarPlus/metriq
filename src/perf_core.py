@@ -1656,10 +1656,24 @@ class BenchJob:
             self.proc.join(timeout)
 
 
-def _kill_all_jobs():
+def kill_all_jobs():
+    """Every benchmark / stress process still around dies now (also one that reported "end" but hangs while exiting)."""
     for j in BenchJob._jobs:
-        if not j.ended:
-            j.kill()
+        j.stop.set()
+        try:
+            if j.started and j.proc.is_alive():
+                j.proc.kill()
+        except Exception:
+            pass
+        try:
+            if j.started and j.proc.pid:
+                subprocess.Popen(["taskkill", "/PID", str(j.proc.pid), "/T", "/F"], stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, creationflags=0x08000000)
+        except Exception:
+            pass
+
+
+_kill_all_jobs = kill_all_jobs
 
 
 import atexit  # noqa: E402
@@ -1692,27 +1706,105 @@ def run_job(tests, mode="quick", cfg=None, stress=None, on_msg=None, timeout=360
 
 # ---------------------------------------------------------------------------------------------- history / export
 def history_path():
+    """benchmarks.json in the per-user data folder (config.data_dir(): LOCALAPPDATA/metriQ), never in the install
+    folder or a temp folder, so it survives updates and reinstalls."""
     return os.path.join(config.data_dir(), "benchmarks.json")
 
 
-def load_history():
+def _legacy_history_paths():
+    """Places older builds / other ways of starting the app may have written the history to."""
+    cur = os.path.normcase(os.path.abspath(history_path()))
+    cands = []
+    if not config.env_dir():                          # a test / portable data folder is its own world
+        base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
+        for name in (config.APP_NAME, config.OLD_APP_NAME):
+            cands.append(os.path.join(base, name, "benchmarks.json"))
+        try:                                          # Microsoft Store Python: %LOCALAPPDATA% is redirected into the package
+            import glob
+            cands += glob.glob(os.path.join(base, "Packages", "*", "LocalCache", "Local", "*", "benchmarks.json"))
+        except Exception:
+            pass
+        try:                                          # next to the program (portable / dev copies)
+            exe_dir = os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__))
+            cands += [os.path.join(exe_dir, "benchmarks.json"), os.path.join(os.path.dirname(exe_dir), "benchmarks.json")]
+        except Exception:
+            pass
+    out, seen = [], {cur}
+    for p in cands:
+        k = os.path.normcase(os.path.abspath(p))
+        if k not in seen and os.path.isfile(p):
+            seen.add(k)
+            out.append(p)
+    return out
+
+
+def _read_list(path):
+    """(list, ok): ok is False when the file exists but could not be parsed (never treat that as "empty")."""
     try:
-        with open(history_path(), encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             d = json.load(f)
-        return d if isinstance(d, list) else []
+    except FileNotFoundError:
+        return [], True
     except (OSError, ValueError):
-        return []
+        return [], False
+    return ([x for x in d if isinstance(x, dict)], True) if isinstance(d, list) else ([], False)
+
+
+def _write_list(path, hist):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(hist, f, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+_migrated = [False]
+
+
+def migrate_history():
+    """Merge runs found in older locations into the history file (once per process; only ever adds runs)."""
+    if _migrated[0]:
+        return
+    _migrated[0] = True
+    try:
+        cur, ok = _read_list(history_path())
+        if not ok:
+            return
+        have = {round(float(r.get("ts", 0)), 3) for r in cur}
+        add = []
+        for p in _legacy_history_paths():
+            old, ok2 = _read_list(p)
+            for r in old:
+                k = round(float(r.get("ts", 0) or 0), 3)
+                if ok2 and k not in have and r.get("results") is not None:
+                    have.add(k)
+                    add.append(r)
+        if add:
+            _write_list(history_path(), sorted(cur + add, key=lambda r: r.get("ts", 0))[-HISTORY_MAX:])
+    except Exception:
+        pass
+
+
+def load_history():
+    migrate_history()
+    hist, ok = _read_list(history_path())
+    return hist
 
 
 def save_run(run):
-    hist = load_history()
+    """Append a run. An unreadable existing file is kept as benchmarks.json.bad (never overwritten by an empty list)."""
+    migrate_history()
+    path = history_path()
+    hist, ok = _read_list(path)
+    if not ok:
+        try:
+            bad = path + ".bad-%d" % int(time.time())
+            os.replace(path, bad)
+        except OSError:
+            pass
     hist.append(run)
     hist = hist[-HISTORY_MAX:]
-    os.makedirs(config.data_dir(), exist_ok=True)
-    tmp = history_path() + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(hist, f, ensure_ascii=False)
-    os.replace(tmp, history_path())
+    _write_list(path, hist)
     return hist
 
 

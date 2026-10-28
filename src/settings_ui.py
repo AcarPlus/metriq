@@ -79,7 +79,8 @@ class SettingsWindow:
         uikit.set_window_icon(self.win)
         self.win.transient(self.root)
         self.win.withdraw()
-        uikit.set_scale(self.win)
+        self._scaling0 = None
+        self._apply_ui_scale()
         self._style()
         self.tab_index = 0
         self.initial = {}
@@ -92,6 +93,23 @@ class SettingsWindow:
         self.win.protocol("WM_DELETE_WINDOW", self.cancel)
         self.win.bind("<Escape>", lambda e: self.cancel())
         self.win.bind("<MouseWheel>", self._wheel)
+
+    def _apply_ui_scale(self):
+        """The panel's "UI scale" (ui_scale, %) also scales this window: Tk's point-to-pixel factor drives every
+        point-sized font and uikit.px (controls). The factor is restored when the window closes."""
+        tk_ = self.root.tk
+        try:
+            if self._scaling0 is None:
+                self._scaling0 = float(tk_.call("tk", "scaling"))
+            f = config.clamp_scale(self.api.cfg.get("ui_scale")) / 100.0
+            new = self._scaling0 * f
+            changed = abs(float(tk_.call("tk", "scaling")) - new) > 1e-6
+            if changed:
+                tk_.call("tk", "scaling", new)
+                uikit.forget_fonts(self.win)
+        except tk.TclError:
+            pass
+        uikit.set_scale(self.win)
 
     def winfo_exists(self):
         if self._closing:
@@ -121,7 +139,7 @@ class SettingsWindow:
             pass
         f = (self.F_TXT, 10)
         s.configure("HP.Treeview", background=C["bg"], fieldbackground=C["bg"], foreground=C["fg"],
-                    rowheight=28, borderwidth=0, font=f, bordercolor=C["bg"], lightcolor=C["bg"],
+                    rowheight=int(28 * config.clamp_scale(self.api.cfg.get("ui_scale")) / 100), borderwidth=0, font=f, bordercolor=C["bg"], lightcolor=C["bg"],
                     darkcolor=C["bg"], relief="flat")
         s.layout("HP.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
         s.map("HP.Treeview", background=[("selected", C["select"])], foreground=[("selected", C["fg"])])
@@ -237,6 +255,7 @@ class SettingsWindow:
         C = self.C
         cfg = self.api.cfg
         self._release_vars()
+        self._apply_ui_scale()
         self._vars_before = {id(o) for o in gc.get_objects() if isinstance(o, tk.Variable)}
         old = list(self.win.winfo_children())
         for w in old:                    # hide now, destroy once the new content is up (no empty window in between)
@@ -266,17 +285,23 @@ class SettingsWindow:
         self.host = tk.Frame(content, bg=C["bg"])
         self.host.pack(fill="both", expand=True, padx=(26, 8), pady=(0, 6))
 
+        # the first three pages hold the plain settings (cheap); layout, theme, diagnostics and performance are built
+        # on the first visit (the layout page alone takes ~0.6 s)
+        self.lay_sf = self.layout_tool = self.lbl_lay = self.theme_tab = None
+        self.lay, self.lay_mode, self.lay_is_auto = [], "keep", None
+        self._lazy = {}
+        self._theme0 = ThemeTab.initial_values(cfg)
         self._tab_look(self._page(0).inner, cfg)
         self._tab_log(self._page(1).inner, cfg)
         self._tab_hw(self._page(2).inner, cfg)
         self._page(3, scroll=False)
-        self._tab_layout()
+        self._lazy[3] = self._tab_layout
         self._page(4, scroll=False)
-        self._tab_theme(cfg)
+        self._lazy[4] = lambda: self._tab_theme(cfg)
         self._page(5)
-        crashscan_ui.add_tab(self)
+        self._lazy[5] = lambda: crashscan_ui.add_tab(self)
         self._page(6)
-        perf_ui.add_tab(self)
+        self._lazy[6] = lambda: perf_ui.add_tab(self)
 
         tk.Label(bar, text=f"{config.APP_NAME} v{version.__version__}", bg=C["bg"], fg=C["faint"],
                  font=(self.F_TXT, 9)).pack(side="left")
@@ -358,6 +383,7 @@ class SettingsWindow:
 
     def select(self, i):
         i = max(0, min(int(i), len(self.pages) - 1))
+        self._ensure(i)
         for pg in self.pages:
             pg["frame"].pack_forget()
         pg = self.pages[i]
@@ -365,6 +391,18 @@ class SettingsWindow:
         self.tab_index = i
         self.nav.set_active(i)
         self.title_lbl.config(text=pg["title"])
+
+    def _ensure(self, i):
+        """Build page i if it has not been built yet (first visit)."""
+        fn = self._lazy.pop(i, None)
+        if fn is None:
+            return
+        self.win.configure(cursor="watch")
+        try:
+            fn()
+            self._size_scrolls()
+        finally:
+            self.win.configure(cursor="")
 
     # ---------------- theme (see settings_theme.py)
     def _tab_theme(self, cfg):
@@ -409,9 +447,9 @@ class SettingsWindow:
                                   self.lang_vals.index(cur) if cur in self.lang_vals else 0, 20)
         self.row(card, t("st_language"), self.cb_lang)
 
-        self.col_vals = ["auto", 1, 2, 3]
+        self.col_vals = ["auto", 1, 2, 3, 4]
         cur = config.norm_columns(cfg.get("columns"))
-        self.cb_cols = self.combo(card.body, [t("st_auto"), "1", "2", "3"], self.col_vals.index(cur), 20)
+        self.cb_cols = self.combo(card.body, [t("st_auto"), "1", "2", "3", "4"], self.col_vals.index(cur), 20)
         self.row(card, t("st_columns"), self.cb_cols, help="columns")
 
         self.v_scale = tk.StringVar(value=str(config.clamp_scale(cfg.get("ui_scale"))))
@@ -572,7 +610,7 @@ class SettingsWindow:
         self.row(card, t("st_manage"), self.switch(card.body, self.v_manage), help="manage")
         self.row(card, t("st_sync"), self.switch(card.body, self.v_sync), help="sync")
 
-        tasks = self.api.tasks() if self._built else self.api.refresh_tasks()     # schtasks only when the window opens
+        tasks = self.api.tasks()                          # cached; the schtasks query runs in the background below
         self.lbl_tasks = tk.Label(card.body, text=t("st_tasks_ok") if tasks else t("st_tasks_no"), bg=bg,
                                   fg=C["green"] if tasks else C["yellow"], font=(self.F_TXT, 10), anchor="w",
                                   justify="left")
@@ -580,6 +618,32 @@ class SettingsWindow:
         self.full(card, self.lbl_tasks, pady=(8, 2))
         self.update_detected()
         self.update_sources()
+        if not self._built:
+            self._refresh_tasks_bg()
+
+    def _refresh_tasks_bg(self):
+        res = {}
+
+        def work():
+            try:
+                res["v"] = bool(self.api.refresh_tasks())
+            except Exception:
+                pass
+        threading.Thread(target=work, daemon=True).start()
+
+        def poll():
+            if self._closing or not self.winfo_exists():
+                return
+            if "v" not in res:
+                self.win.after(100, poll)
+                return
+            try:
+                ok = res["v"]
+                self.lbl_tasks.config(text=t("st_tasks_ok") if ok else t("st_tasks_no"),
+                                      fg=self.C["green"] if ok else self.C["yellow"])
+            except (tk.TclError, AttributeError):
+                pass
+        self.win.after(100, poll)
 
     def update_sources(self):
         """Active source, what is available on this PC, and which data the active source cannot provide."""
@@ -682,7 +746,8 @@ class SettingsWindow:
         else:
             txt = ""
         try:
-            self.lbl_lay.config(text=txt)
+            if self.lbl_lay is not None:
+                self.lbl_lay.config(text=txt)
         except tk.TclError:
             pass
 
@@ -956,19 +1021,13 @@ class SettingsWindow:
         px = uikit.px
         chrome = px(170)                                   # page title + bottom bar + paddings
         avail_h = int(wh * 0.92) - chrome
-        simple = [min(sf.req_height(), sf.cap or 10 ** 6) + sf.reserve for sf in self.scrolls if sf is not self.lay_sf]
-        tool_h = self.layout_tool.winfo_reqheight() + self.lbl_lay.winfo_reqheight() + 14
-        lay_h = self.lay_sf.req_height() + tool_h
-        want = max(simple + [min(lay_h, px(640))]) + 10
-        content_h = max(px(360), min(want, avail_h, px(700)))
+        simple = [min(sf.req_height(), sf.cap or 10 ** 6) + sf.reserve for sf in self.scrolls]
+        want = max(simple + [px(640)]) + 10                # (pages not built yet scroll inside the same size)
+        self._content_h = max(px(360), min(want, avail_h, px(700)))
         side_w = self.nav.winfo_reqwidth()
-        sc_w = max([sf.req_width() for sf in self.scrolls] + [px(680)])
-        sc_w = min(sc_w, int(ww * 0.95) - side_w - px(60))
-        for sf in self.scrolls:
-            if sf is self.lay_sf:
-                continue
-            sf.cv.configure(height=content_h - sf.reserve, width=sc_w)
-        self.lay_sf.cv.configure(height=max(150, content_h - tool_h), width=sc_w)
+        sc_w = max([sf.req_width() for sf in self.scrolls] + [px(720)])
+        self._sc_w = min(sc_w, int(ww * 0.95) - side_w - px(60))
+        self._size_scrolls()
         win.update_idletasks()
         w = min(win.winfo_reqwidth(), int(ww * 0.97))
         h = min(win.winfo_reqheight(), int(wh * 0.95))
@@ -986,6 +1045,18 @@ class SettingsWindow:
             self._dark_title()
             win.lift()
             win.focus_force()
+
+    def _size_scrolls(self):
+        """Give every built scroll area the common size (the layout page also holds a toolbar above its list)."""
+        ch, sw_ = getattr(self, "_content_h", None), getattr(self, "_sc_w", None)
+        if ch is None:
+            return
+        for sf in self.scrolls:
+            if sf is self.lay_sf:
+                tool_h = self.layout_tool.winfo_reqheight() + self.lbl_lay.winfo_reqheight() + 14
+                sf.cv.configure(height=max(150, ch - tool_h), width=sw_)
+            else:
+                sf.cv.configure(height=ch - sf.reserve, width=sw_)
 
     def _center(self, win, w, h):
         mon = self.api.monitor()
@@ -1037,7 +1108,13 @@ class SettingsWindow:
             "manage_hwinfo": bool(self.v_manage.get()),
             "sync_hwinfo_interval": bool(self.v_sync.get()),
         }
-        d.update(self.theme_tab.read())
+        if self.theme_tab is not None:
+            d.update(self.theme_tab.read())
+        else:                                    # theme page not visited yet: unchanged
+            cfg = self.api.cfg
+            d.update({"theme": self._theme0["theme"], "theme_overrides": dict(self._theme0["theme_overrides"]),
+                      "value_color_mode": self._theme0["value_color_mode"],
+                      "value_steps": list(self._theme0["value_steps"])})
         return d
 
     def validate(self):
@@ -1140,6 +1217,12 @@ class SettingsWindow:
             self._release_vars()
             uikit.forget_fonts(self.win)
             self.win.destroy()
+        except tk.TclError:
+            pass
+        try:
+            if self._scaling0 is not None:
+                self.root.tk.call("tk", "scaling", self._scaling0)
+                uikit.set_scale(self.root)
         except tk.TclError:
             pass
         self._vars_before = None

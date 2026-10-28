@@ -116,6 +116,16 @@ class ThemeTab:
                   ("th_track", "track"), ("th_text", "text"), ("th_name", "name"), ("th_dim", "dim"),
                   ("th_faint", "faint"))
 
+    @staticmethod
+    def initial_values(cfg):
+        """What read() returns for a theme page that has not been touched (the saved settings, normalised)."""
+        name = str(cfg.get("theme") or themes.DEFAULT).strip().lower()
+        if name not in themes.THEMES:
+            name = themes.DEFAULT
+        return {"theme": name, "theme_overrides": themes.clean_overrides(cfg.get("theme_overrides")),
+                "value_color_mode": themes.norm_mode(cfg.get("value_color_mode")),
+                "value_steps": list(themes.norm_steps(cfg.get("value_steps")))}
+
     def __init__(self, ui, cfg):
         import settings_ui as su          # (imported late: settings_ui imports this module)
         self.ui, self.C, self.su = ui, ui.C, su
@@ -246,7 +256,8 @@ class ThemeTab:
         self.cb_mode.bind("<<ComboboxSelected>>", self.on_mode)
         ui.row(card, t("th_mode"), self.cb_mode, help="th_mode")
         self.v_auto = tk.BooleanVar(value=not self.steps)
-        ui.row(card, t("th_auto"), ui.switch(card.body, self.v_auto, self.on_auto), help="th_auto")
+        sw_auto = ui.switch(card.body, self.v_auto, self.on_auto)
+        self._adv = [(ui.row(card, t("th_auto"), sw_auto, help="th_auto"), sw_auto)]
         row = tk.Frame(card.body, bg=bg)
         self.step_vars, self.step_entries = [], []
         init = self.steps or DEFAULT_STEPS
@@ -258,8 +269,30 @@ class ThemeTab:
             self.step_vars.append(v)
             self.step_entries.append(e)
         ui.label(row, "%", dim=True, bg=bg).pack(side="left", padx=(6, 0))
-        ui.row(card, t("th_thresholds"), row, t("th_steps_hint"), help="th_steps")
-        self.rc = ui.add_check(ui.checks, self.idx, self.step_entries, lambda: self.parse_steps() is not None)
+        self._adv.append((ui.row(card, t("th_thresholds"), row, t("th_steps_hint"), help="th_steps"), row))
+        self._adv_card, self._adv_parts = card, None
+        self._show_adv()
+        self.rc = ui.add_check(ui.checks, self.idx, self.step_entries, lambda: self.mode != "stepped" or self.parse_steps() is not None)
+
+    def _show_adv(self):
+        """The automatic / threshold rows only exist for the stepped mode: hidden for smooth."""
+        body = self._adv_card.body
+        if self._adv_parts is None:                      # first call: everything is still shown, remember the pieces
+            parts = []
+            for left, widget in self._adv:
+                r = int(left.grid_info().get("row", 0))
+                parts += [left, widget] + list(body.grid_slaves(row=r - 1))      # + the divider above the row
+            self._adv_parts = parts
+            self._adv_shown = True
+        want = self.mode == "stepped"
+        if want == self._adv_shown:
+            return
+        self._adv_shown = want
+        for w in self._adv_parts:
+            try:
+                w.grid() if want else w.grid_remove()
+            except tk.TclError:
+                pass
 
     # ------------------------------------------------------------ actions
     def pick_theme(self, name):
@@ -350,6 +383,7 @@ class ThemeTab:
             self._lock = False
         for n in self.cards:
             self.draw_card(n)
+        self._show_adv()
         self.on_steps()
         self.draw_preview()
 

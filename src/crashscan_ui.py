@@ -24,36 +24,35 @@ class DiagTab:
         self.sw, self.C, self.p = sw, sw.C, p
         self.events, self.winlog, self.result, self.busy = [], True, None, False
         C, F = self.C, sw.F_TXT
-        card = sw.card(p, t("cr_title"))
-        bg = card.fillc
-        intro = sw.label(card.body, t("cr_intro"), dim=True, size=9, bg=bg)
+        # ---- normal recordings (above the error detection)
+        rcard = sw.card(p, t("cr_rec_title"))
+        rbg = rcard.fillc
+        intro = sw.label(rcard.body, t("cr_rec_intro"), dim=True, size=9, bg=rbg)
         uikit.autowrap(intro)
-        sw.full(card, intro, pady=(0, 8), divider=False)
-        bar = tk.Frame(card.body, bg=bg)
-        sw.full(card, bar, pady=(0, 8), divider=False)
+        sw.full(rcard, intro, pady=(0, 8), divider=False)
+        bar = tk.Frame(rcard.body, bg=rbg)
+        sw.full(rcard, bar, pady=(0, 8), divider=False)
         self.btn = sw.button(bar, t("cr_scan"), self.start, primary=True)
         self.btn.pack(side="left")
-        helptexts.info_icon(bar, "scan", bg=bg).pack(side="left", padx=(8, 0))
+        helptexts.info_icon(bar, "scan", bg=rbg).pack(side="left", padx=(8, 0))
         sw.button(bar, t("cr_open_dir"), self.open_dir).pack(side="left", padx=(8, 0))
         logview.add_button(sw, bar, self.folder)
-        self.status = sw.label(bar, "", dim=True, size=9, bg=bg)
+        self.status = sw.label(bar, "", dim=True, size=9, bg=rbg)
         self.status.pack(side="left", padx=(12, 0))
+        self.normal = []
+        self.rtree = self._tree(rcard, ("start", "last", "rows"), t("cr_rec_cols").split("|"), (170, 170, 80), 5,
+                                lambda e: self._rec_sel())
+        rrow = tk.Frame(rcard.body, bg=rbg)
+        sw.full(rcard, rrow, pady=(0, 2), divider=False, sticky="w")
+        self.rec_btn = sw.button(rrow, t("lv_open_at"), self.open_recording)
+        self.rec_btn.pack(side="left")
+        self.rec_btn.config(state="disabled")
 
-        box = uikit.Card(card.body, C, fill=C["bg"], pad=(6, 6, 6, 6), radius=8, bg=bg)
-        sw.full(card, box, pady=(0, 8), divider=False)
-        self.tree = ttk.Treeview(box.body, columns=("date", "type", "sum"), show="headings", height=6,
-                                 style="HP.Treeview", selectmode="browse")
-        for col, key, w in (("date", "cr_col_date", 150), ("type", "cr_col_type", 120), ("sum", "cr_col_sum", 360)):
-            self.tree.heading(col, text=t(key))
-            self.tree.column(col, width=w, anchor="w", stretch=(col == "sum"))
-        sb = uikit.Scrollbar(box.body, C, self.tree.yview, bg=C["bg"])
-        self.tree.configure(yscrollcommand=sb.set)
-        self.tree.pack(side="left", fill="x", expand=True)
-        sb.pack(side="left", fill="y", padx=(4, 0))
-        self.tree.bind("<<TreeviewSelect>>", lambda e: self.show())
-        self.tree.bind("<MouseWheel>", lambda e: (self.tree.yview_scroll(-1 if e.delta > 0 else 1, "units"),
-                                                  "break")[1])
-
+        # ---- suspicious recordings: error detection
+        card = sw.card(p, t("cr_err_title"))
+        bg = card.fillc
+        self.tree = self._tree(card, ("date", "type", "sum"), [t("cr_col_date"), t("cr_col_type"), t("cr_col_sum")],
+                               (150, 120, 360), 6, lambda e: self.show())
         box2 = uikit.Card(card.body, C, fill=C["bg"], pad=(12, 12, 10, 10), radius=8, bg=bg)
         sw.full(card, box2, pady=(0, 8), divider=False)
         self.txt = tk.Text(box2.body, height=12, wrap="word", bg=C["bg"], fg=C["fg"], relief="flat", bd=0,
@@ -68,7 +67,33 @@ class DiagTab:
         self.open_btn = sw.button(row, t("cr_open_csv"), self.open_csv)
         self.open_btn.pack(side="left")
         self.open_btn.config(state="disabled")
-        logview.add_event_button(sw, row, self.current, self.folder)
+        self.view_btn = logview.add_event_button(sw, row, self.current, self.folder)
+        self.view_btn.config(state="disabled")                       # only with a selected suspicious event
+
+    def _tree(self, card, cols, heads, widths, height, on_select):
+        sw, C = self.sw, self.C
+        box = uikit.Card(card.body, C, fill=C["bg"], pad=(6, 6, 6, 6), radius=8, bg=card.fillc)
+        sw.full(card, box, pady=(0, 8), divider=False)
+        tree = ttk.Treeview(box.body, columns=cols, show="headings", height=height, style="HP.Treeview",
+                            selectmode="browse")
+        for col, head, w in zip(cols, heads, widths):
+            tree.heading(col, text=head)
+            tree.column(col, width=w, anchor="w", stretch=(col == cols[-1]))
+        sb = uikit.Scrollbar(box.body, C, tree.yview, bg=C["bg"])
+        tree.configure(yscrollcommand=sb.set)
+        tree.pack(side="left", fill="x", expand=True)
+        sb.pack(side="left", fill="y", padx=(4, 0))
+        tree.bind("<<TreeviewSelect>>", on_select)
+        tree.bind("<MouseWheel>", lambda e: (tree.yview_scroll(-1 if e.delta > 0 else 1, "units"), "break")[1])
+        return tree
+
+    def _rec_sel(self):
+        self.rec_btn.config(state="normal" if self.rtree.selection() else "disabled")
+
+    def open_recording(self):
+        sel = self.rtree.selection()
+        if sel:
+            logview.show(self.sw.api, self.folder(), path=self.normal[int(sel[0])]["path"])
 
     # ------------------------------------------------------------ helpers
     def folder(self):
@@ -132,6 +157,11 @@ class DiagTab:
                 self.status.config(text=t("cr_err", e=r["error"]), fg=self.C["red"])
                 return
             self.events, self.winlog = r["events"], r["winlog"]
+            self.normal = r.get("normal", [])
+            self.rtree.delete(*self.rtree.get_children())
+            for i, rec in enumerate(self.normal):
+                self.rtree.insert("", "end", iid=str(i), values=(rec["start"], rec["last"], rec["rows"]))
+            self._rec_sel()
             self.tree.delete(*self.tree.get_children())
             for i, ev in enumerate(self.events):
                 self.tree.insert("", "end", iid=str(i), values=(
@@ -140,6 +170,7 @@ class DiagTab:
                                else t("cr_none"), fg=self.C["dim"])
             self.set_text(t("cr_select") if self.events else t("cr_none"))
             self.open_btn.config(state="disabled")
+            self.view_btn.config(state="disabled")
             if self.events:
                 self.tree.selection_set("0")
         except tk.TclError:
@@ -151,3 +182,4 @@ class DiagTab:
             return
         self.set_text(crashscan.details(ev, self.winlog))
         self.open_btn.config(state="normal")
+        self.view_btn.config(state="normal")

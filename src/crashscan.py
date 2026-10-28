@@ -30,6 +30,8 @@ i18n.register({
         "cr_scan": "Scan", "cr_scanning": "Scanning...", "cr_open_csv": "Open recording", "cr_open_dir": "Open folder",
         "cr_col_date": "Date", "cr_col_type": "Type", "cr_col_sum": "Summary",
         "cr_type_abrupt": "Ended abruptly", "cr_type_gap": "Gap",
+        "cr_rec_title": "Recordings", "cr_rec_intro": "Recordings without problems (clean stop, no gaps). Press Scan to list them.",
+        "cr_rec_cols": "Started|Last row|Rows", "cr_rec_none": "No normal recordings found.", "cr_err_title": "Error detection",
         "cr_none": "No suspicious recordings found.", "cr_found": "{n} event(s) found in {f} recording(s).",
         "cr_select": "Select an event to see the details.", "cr_err": "Scan failed: {e}",
         "cr_sum_abrupt": "Recording stopped at {last}, no clean stop",
@@ -55,6 +57,8 @@ i18n.register({
         "cr_scan": "Tara", "cr_scanning": "Taranıyor...", "cr_open_csv": "Kaydı aç", "cr_open_dir": "Klasörü aç",
         "cr_col_date": "Tarih", "cr_col_type": "Tür", "cr_col_sum": "Özet",
         "cr_type_abrupt": "Ani bitti", "cr_type_gap": "Boşluk",
+        "cr_rec_title": "Kayıtlar", "cr_rec_intro": "Sorunsuz kayıtlar (temiz kapanış, boşluk yok). Listelemek için Tara'ya basın.",
+        "cr_rec_cols": "Başlangıç|Son satır|Satır", "cr_rec_none": "Normal kayıt bulunamadı.", "cr_err_title": "Hata tespiti",
         "cr_none": "Şüpheli kayıt bulunamadı.", "cr_found": "{f} kayıtta {n} olay bulundu.",
         "cr_select": "Ayrıntı için bir olay seçin.", "cr_err": "Tarama başarısız: {e}",
         "cr_sum_abrupt": "Kayıt {last} anında durdu, temiz kapanış yok",
@@ -265,14 +269,21 @@ def summarize_tail(rec, end_idx, seconds=TAIL_SECONDS):
 
 # ------------------------------------------------------------------ scanning recordings
 def scan_recordings(folder, active_path=None, max_files=MAX_FILES):
-    """Returns a list of event dicts (newest first). Never raises for single broken files."""
+    """Returns (list of event dicts newest first, number of files). Never raises for single broken files."""
+    events, _, n = scan_all(folder, active_path, max_files)
+    return events, n
+
+
+def scan_all(folder, active_path=None, max_files=MAX_FILES):
+    """(suspicious events, normal recordings, number of files). A normal recording has no gap and no abrupt end:
+    {"name", "path", "start", "last", "rows"} (newest first)."""
     try:
         names = [n for n in os.listdir(folder) if n.lower().endswith(".csv")]
     except OSError:
-        return [], 0
+        return [], [], 0
     paths = sorted((os.path.join(folder, n) for n in names), key=os.path.getmtime, reverse=True)[:max_files]
     idx = _load_index(folder)["files"]
-    events, now = [], time.time()
+    events, normal, now = [], [], time.time()
     ordered = sorted(paths, key=os.path.getmtime)           # old -> new, to know when the next recording began
     starts = {}
     for p in ordered:
@@ -288,6 +299,7 @@ def scan_recordings(folder, active_path=None, max_files=MAX_FILES):
         if not rec.times:
             continue
         itv = rec.interval()
+        n_before = len(events)
         # (b) gaps
         for i in range(1, len(rec.times)):
             gap = (rec.times[i] - rec.times[i - 1]).total_seconds()
@@ -296,19 +308,30 @@ def scan_recordings(folder, active_path=None, max_files=MAX_FILES):
         # (a) abrupt end
         ent = idx.get(rec.name)
         if ent is None or ent.get("closed"):
-            continue                                        # old file (no marker known) or closed cleanly
+            _normal(normal, rec, n_before, events)          # old file (no marker known) or closed cleanly
+            continue
         if active_path and os.path.normcase(active_path) == os.path.normcase(p):
+            _normal(normal, rec, n_before, events)
             continue
         try:
             fresh = now - os.path.getmtime(p) < max(10.0, 3 * itv + 2)
         except OSError:
             fresh = False
         if fresh and k == len(ordered) - 1:
+            _normal(normal, rec, n_before, events)
             continue                                        # still being written right now
         nxt = next((starts[q][1] for q in ordered[k + 1:] if q in starts and starts[q][1]), None)
         events.append(_event("abrupt", rec, len(rec.times) - 1, itv, next_start=nxt))
     events.sort(key=lambda e: e["ts_last"], reverse=True)
-    return events, len(paths)
+    normal.sort(key=lambda r: r["last"], reverse=True)
+    return events, normal, len(paths)
+
+
+def _normal(out, rec, n_before, events):
+    """Record `rec` as a normal recording unless it produced an event (gap) in this scan."""
+    if len(events) == n_before:
+        out.append({"name": rec.name, "path": rec.path, "start": rec.times[0].strftime("%Y-%m-%d %H:%M:%S"),
+                    "last": rec.times[-1].strftime("%Y-%m-%d %H:%M:%S"), "rows": len(rec.times)})
 
 
 def _event(kind, rec, i, itv, gap=0.0, resume=None, next_start=None):
@@ -405,10 +428,10 @@ def correlate(events, win_events, minutes=CORR_MINUTES):
 
 def scan(folder, active_path=None):
     """Full scan. Returns {'events': [...], 'files': n, 'winlog': bool}."""
-    events, nfiles = scan_recordings(folder, active_path)
+    events, normal, nfiles = scan_all(folder, active_path)
     wins, ok = query_windows_events() if events else ([], True)
     correlate(events, wins)
-    return {"events": events, "files": nfiles, "winlog": ok}
+    return {"events": events, "normal": normal, "files": nfiles, "winlog": ok}
 
 
 # ------------------------------------------------------------------ text for the UI

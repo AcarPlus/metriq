@@ -25,7 +25,7 @@ DEFAULTS = {
     "language": "auto",              # "auto" (Windows UI language) | "tr" | "en"
     "monitor": "auto",               # "auto" | monitor index (see tools/list_monitors.py)
     "window_mode": "maximized",      # "maximized" | "fullscreen" | "window"
-    "columns": "auto",               # "auto" | 1 | 2 | 3 (auto: 1 on portrait screens, else 2 or 3 by aspect ratio)
+    "columns": "auto",               # "auto" | 1..4 (auto: 1 on portrait screens, else 2 or 3 by aspect ratio)
     "ui_scale": 100,                 # row height / font scale in percent (80 - 150), never larger than fits
     "theme": "dark",                 # built-in theme, see themes.py (dark, oled, nord, dracula, catppuccin, tokyo, ...)
     "theme_overrides": {},           # any theme token on top of the theme, e.g. {"bg": "#101010", "radius": 8}
@@ -264,10 +264,10 @@ def clamp_interval(v):
 
 
 def norm_columns(v):
-    """'auto' | 1 | 2 | 3 (anything else -> 'auto')."""
+    """'auto' | 1..4 (anything else -> 'auto')."""
     try:
         n = int(v)
-        if n in (1, 2, 3):
+        if n in (1, 2, 3, 4):
             return n
     except (TypeError, ValueError):
         pass

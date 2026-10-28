@@ -138,12 +138,12 @@ BAR_MIN_COL_W = 520                       # narrower columns drop the bar column
 
 
 def resolve_columns(setting, W, H):
-    """'auto' | 1 | 2 | 3 -> number of columns. Auto: 1 when taller than wide, else 3 for aspect >= 2.0, else 2."""
+    """'auto' | 1..4 -> number of columns. Auto: 1 when taller than wide, else 3 for aspect >= 2.0, else 2."""
     try:
         n = int(setting)
     except (TypeError, ValueError):
         n = 0
-    if n in (1, 2, 3):
+    if n in (1, 2, 3, 4):
         return n
     if H > W:
         return 1
@@ -155,9 +155,9 @@ def section_units(sec, sp=1.0):
     return HEAD + FOOT + len(sec.rows) * sp
 
 
-def partition(sections, n):
+def _partition_dp(sections, n):
     """Split the section list into at most n consecutive, non-empty groups with the smallest possible tallest
-    group (ties: most even). A section is never split. Always returns at least one (possibly empty) group."""
+    group (ties: most even). A section is never split here. Always returns at least one (possibly empty) group."""
     if not sections:
         return [[]]
     w = [section_units(s) + GAP_UNITS for s in sections]
@@ -188,9 +188,69 @@ def partition(sections, n):
     return [sections[a:b] for a, b in reversed(cuts)]
 
 
+def _col_units(col):
+    return sum(section_units(s) + GAP_UNITS for s in col)
+
+
+def _split_fill(sections, n):
+    """Greedy fill of n columns to the same height; a long section (>= 6 rows) may be continued in the next column
+    (each part keeps the title with a "(i/m)" suffix)."""
+    T = sum(section_units(s) + GAP_UNITS for s in sections) / n
+    cols, cur = [[]], 0.0
+    for si, sec in enumerate(sections):
+        rows = list(sec.rows)
+        while rows:
+            need = HEAD + FOOT + len(rows) + GAP_UNITS
+            cap = T - cur
+            if len(cols) >= n or not cols[-1] or need <= cap + 2.0:
+                cols[-1].append((si, rows))
+                cur += need
+                break
+            k = int(cap - HEAD - FOOT - GAP_UNITS)
+            if len(rows) >= 6 and k >= 3 and len(rows) - k >= 3:
+                cols[-1].append((si, rows[:k]))
+                rows = rows[k:]
+            cols.append([])
+            cur = 0.0
+    cnt = {}
+    for c in cols:
+        for si, _ in c:
+            cnt[si] = cnt.get(si, 0) + 1
+    seen, out = {}, []
+    for c in cols:
+        g = []
+        for si, rows in c:
+            sec = sections[si]
+            if cnt[si] > 1:
+                seen[si] = seen.get(si, 0) + 1
+                sec = Section("%s (%d/%d)" % (sec.title, seen[si], cnt[si]), sec.color, sec.icon, rows)
+            g.append(sec)
+        if g:
+            out.append(g)
+    return out or [[]]
+
+
+def partition(sections, n):
+    """Split the sections into at most n columns of similar height; long sections may continue in the next column
+    when that balances the columns clearly better than whole sections can."""
+    base = _partition_dp(sections, n)
+    if len(base) < 2 and n < 2 or not sections:
+        return base
+    n = max(1, min(int(n), 4))
+    if n < 2:
+        return base
+    try:
+        alt = _split_fill(sections, n)
+    except Exception:
+        return base
+    hb = max(_col_units(c) for c in base)
+    ha = max(_col_units(c) for c in alt)
+    return alt if len(alt) >= len(base) and ha < hb * 0.92 else base
+
+
 class Plan:
     """Result of plan(): everything build() needs to place the columns."""
-    __slots__ = ("W", "H", "ncol", "cols", "m", "g", "gut", "cwc", "rh", "rh_fit", "with_bar", "heights", "fits", "sp")
+    __slots__ = ("W", "H", "ncol", "cols", "m", "g", "gut", "cwc", "rh", "rh_fit", "with_bar", "heights", "fits", "sp", "pitch", "gaps")
 
 
 def plan(sections, W, H, setting="auto", scale=100, spacing=1.0):
@@ -211,6 +271,20 @@ def plan(sections, W, H, setting="auto", scale=100, spacing=1.0):
     except (TypeError, ValueError):
         sc = 1.0
     p.rh = max(MIN_RH, min(p.rh_fit, base * sc))
+    # stretch each column to the available height: row pitch first (up to +60 %), then the gaps between the cards
+    avail = H - 2 * p.m - STATUS * p.rh
+    p.pitch, p.gaps = [], []
+    for c, n in zip(p.cols, nsec):
+        nrows = sum(len(s.rows) for s in c)
+        fixed = n * (HEAD + FOOT) * p.rh
+        free = avail - fixed - nrows * spacing * p.rh - n * p.g
+        k = 1.0
+        if nrows and free > 0:
+            k = min(1.6, 1.0 + free / (nrows * spacing * p.rh))
+        free2 = avail - fixed - nrows * spacing * p.rh * k - n * p.g
+        gap = p.g + (min(free2 / max(1, n), p.g * 4) if free2 > 0 else 0.0)
+        p.pitch.append(spacing * p.rh * k)
+        p.gaps.append(gap)
     p.heights = [u * p.rh + n * p.g for u, n in zip(units, nsec)]
     p.fits = 2 * p.m + max(p.heights) + STATUS * p.rh <= H + 0.5
     p.with_bar = p.cwc >= BAR_MIN_COL_W

@@ -9,6 +9,7 @@ Every reading is returned as a dict:
 """
 import ctypes
 import struct
+import time
 from ctypes import wintypes
 
 SHM_NAME = "Global\\HWiNFO_SENS_SM2"
@@ -29,6 +30,19 @@ def _s(b):
     return b.split(b"\0")[0].decode("mbcs", errors="replace")
 
 
+_cache = None
+last_poll = None            # HWiNFO's poll counter of the last read (consumers compare it to skip unchanged data)
+
+
+def available():
+    """True when the shared memory exists (cheap: no parsing)."""
+    h = _k.OpenFileMappingW(FILE_MAP_READ, False, SHM_NAME)
+    if not h:
+        return False
+    _k.CloseHandle(h)
+    return True
+
+
 def read_all():
     """All readings, or RuntimeError if the shared memory is not available."""
     h = _k.OpenFileMappingW(FILE_MAP_READ, False, SHM_NAME)
@@ -44,19 +58,34 @@ def read_all():
     finally:
         _k.UnmapViewOfFile(p)
         _k.CloseHandle(h)
+    global _cache, last_poll
+    last_poll = poll
+    key = (sc, rc, so, ss, ro, rs)
+    if _cache is not None and _cache[0] == key and _cache[1] == poll and time.time() - _cache[3] < 5.0:
+        return [dict(d) for d in _cache[2]]          # HWiNFO has not polled since the last read: same values
+    static = _cache[4] if _cache is not None and _cache[0] == key else {}
     sens = []
     for i in range(sc):
         o = so + i * ss
         sens.append((_s(buf[o + 8:o + 136]), _s(buf[o + 136:o + 264])))
     out = []
+    unpack = struct.unpack_from
     for i in range(rc):
         o = ro + i * rs
-        t, si, rid = struct.unpack_from("<III", buf, o)
-        lab = _s(buf[o + 12:o + 140])
-        usr = _s(buf[o + 140:o + 268])
-        unit = _s(buf[o + 268:o + 284])
-        val, vmin, vmax, vavg = struct.unpack_from("<dddd", buf, o + 284)
+        sb = buf[o:o + 284]                           # type, sensor index, id, labels, unit: parsed once while unchanged
+        si = unpack("<I", sb, 4)[0]
         s_orig, s_user = sens[si] if si < len(sens) else ("", "")
-        out.append(dict(type=t, sensor=s_orig, sensor_user=s_user or s_orig, id=rid, label=lab or usr,
-                        label_user=usr or lab, unit=unit, value=val, min=vmin, max=vmax, avg=vavg))
-    return out
+        st = static.get(i)
+        if st is None or st[0] != sb or st[1] != (s_orig, s_user):
+            t, _, rid = unpack("<III", sb, 0)
+            lab = _s(sb[12:140])
+            usr = _s(sb[140:268])
+            unit = _s(sb[268:284])
+            st = static[i] = (sb, (s_orig, s_user), dict(type=t, sensor=s_orig, sensor_user=s_user or s_orig, id=rid,
+                                                         label=lab or usr, label_user=usr or lab, unit=unit))
+        val, vmin, vmax, vavg = unpack("<dddd", buf, o + 284)
+        d = dict(st[2])
+        d["value"], d["min"], d["max"], d["avg"] = val, vmin, vmax, vavg
+        out.append(d)
+    _cache = (key, poll, out, time.time(), static)
+    return [dict(d) for d in out]
