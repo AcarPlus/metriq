@@ -79,6 +79,14 @@ def _paint_icon(d, k, kind, cx, cy, s, col, bg):
                   col)
         _disc(d, k, cx, cy, s * 0.74, col)
         _disc(d, k, cx, cy, s * 0.30, bg)
+    elif kind == "chart":
+        w_ = max(2, s * 0.2)
+        _line(d, k, cx - s * 0.85, cy - s * 0.85, cx - s * 0.85, cy + s * 0.85, w_, col)
+        _line(d, k, cx - s * 0.85, cy + s * 0.85, cx + s * 0.95, cy + s * 0.85, w_, col)
+        pts = [(cx - s * 0.5, cy + s * 0.35), (cx - s * 0.1, cy - s * 0.1), (cx + s * 0.25, cy + s * 0.2),
+               (cx + s * 0.8, cy - s * 0.6)]
+        for a, b in zip(pts, pts[1:]):
+            _line(d, k, a[0], a[1], b[0], b[1], w_, col, True)
     elif kind == "reset":
         _arc(d, k, cx, cy, s * 0.78, 0, 290, max(2, s * 0.22), col)
         a = math.radians(70)

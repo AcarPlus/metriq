@@ -699,7 +699,7 @@ class Viewer:
         self._btn(tb, t("lv_clear"), self.clear_sel, small=True).pack(side="left", padx=(8, 0))
         self.series_btn = self._btn(tb, t("lv_series"), self.toggle_picker, small=True)
         self.series_btn.pack(side="right")
-        self._btn(tb, t("lv_all"), self.reset_view, small=True).pack(side="right", padx=(0, 6))
+        self._btn(tb, t("lv_all"), self.show_all, small=True).pack(side="right", padx=(0, 6))
 
         self.cv = tk.Canvas(mid, bg=C["bg"], highlightthickness=0, bd=0, cursor="crosshair")
         self.cv.grid(row=1, column=0, sticky="nsew")
@@ -942,6 +942,8 @@ class Viewer:
         self._load_job = self.win.after(30, poll)
 
     def set_recording(self, rec):
+        if not self._keys and getattr(self.api, "cfg", None) is not None:
+            self._keys = list(self.api.cfg.get("viewer_series") or [])
         keep = [rec.header.index(k) for k in self._keys if k in rec.header]
         self.presets = {k: [s.idx for s in logdata.preset(rec, k)] for k in PRESET_KEYS}
         self.rec = rec
@@ -1000,6 +1002,7 @@ class Viewer:
                 self.slot[i] = k
                 used.add(k)
         self._keys = [rec.header[i] for i in self.sel] if rec else []
+        self._save_sel()
         self.rebuild_pick_rows()
         self._mark_presets()
         self.request_draw()
@@ -1016,13 +1019,34 @@ class Viewer:
         self.set_selection(sel)
 
     def apply_preset(self, key):
+        """Adds the preset's series to the selection (earlier picks stay) and opens its picker groups."""
         idxs = self.presets.get(key) if self.rec is not None else None
         if not idxs:
             return
         self.last_pick_key = key
-        self.expanded = {self.rec.by_idx[i].cat for i in idxs}      # picker: just the groups of this preset
-        self.set_selection(idxs)
+        self.expanded |= {self.rec.by_idx[i].cat for i in idxs}
+        self.set_selection(list(self.sel) + list(idxs))
         self.plist.set_rows(self.plist.rows, keep=False)
+
+    def show_all(self):
+        """Selects every series of the current preset group (all series if none) and shows the full time range."""
+        if self.rec is None:
+            return
+        if self.presets.get(self.last_pick_key):
+            self.apply_preset(self.last_pick_key)
+        else:
+            self.set_selection([s.idx for s in self.rec.series])
+        self.reset_view()
+
+    def _save_sel(self):
+        cfg = getattr(self.api, "cfg", None)
+        if cfg is None or not self._keys:
+            return
+        try:
+            cfg["viewer_series"] = list(self._keys)
+            config.save_keys(cfg, "viewer_series")
+        except Exception:
+            pass
 
     def clear_sel(self):
         self.set_selection([])
@@ -1033,7 +1057,7 @@ class Viewer:
         C = self.C
         for k, b in self.preset_btns.items():
             ser = self.presets.get(k)
-            on = bool(ser) and set(ser) == set(self.sel)
+            on = bool(ser) and set(ser) <= set(self.sel)
             base = C["ui"] if on else C["track"]
             b.base = base
             b.config(bg=base, fg=C["on_ui"] if on else (C["fg"] if ser else C["faint"]),

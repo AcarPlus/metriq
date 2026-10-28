@@ -1017,6 +1017,58 @@ class Scrollbar(_Cv):
         self.put_rr((self.bw - w) / 2, y0 + 1, w, max(px(10), y1 - y0 - 2), w / 2, col, tags="thumb")
 
 
+class HScrollbar(_Cv):
+    """Horizontal twin of Scrollbar (command=widget.xview, widget.configure(xscrollcommand=sb.set))."""
+
+    def __init__(self, parent, C, command, bg=None, height=10):
+        self.C, self.cmd = C, command
+        self.bh = px(height)
+        super().__init__(parent, bg=bg, height=self.bh)
+        self.lo, self.hi = 0.0, 1.0
+        self.hot = self.drag = False
+        self._grab = 0.0
+        self.bind("<Configure>", lambda e: self.draw())
+        self.bind("<Button-1>", self._press)
+        self.bind("<B1-Motion>", self._move)
+        self.bind("<ButtonRelease-1>", lambda e: (setattr(self, "drag", False), self.draw()))
+        self.bind("<Enter>", lambda e: (setattr(self, "hot", True), self.draw()))
+        self.bind("<Leave>", lambda e: (setattr(self, "hot", False), self.draw()))
+
+    def set(self, lo, hi):
+        self.lo, self.hi = float(lo), float(hi)
+        self.draw()
+
+    def _thumb(self):
+        W = max(1, self.winfo_width())
+        x0 = self.lo * W
+        x1 = max(x0 + px(28), self.hi * W)
+        return x0, min(W, x1), W
+
+    def _press(self, e):
+        x0, x1, W = self._thumb()
+        if x0 <= e.x <= x1:
+            self.drag, self._grab = True, e.x - x0
+            self.draw()
+        else:
+            self.cmd("scroll", -1 if e.x < x0 else 1, "pages")
+
+    def _move(self, e):
+        if self.drag:
+            x0, x1, W = self._thumb()
+            self.cmd("moveto", max(0.0, (e.x - self._grab) / W))
+
+    def draw(self):
+        self.delete("all")
+        self._refs = []
+        if self.lo <= 0.0 and self.hi >= 1.0:
+            return
+        x0, x1, W = self._thumb()
+        C = self.C
+        col = C["dim"] if self.drag else (mix(C["faint"], C["dim"], 0.5) if self.hot else C["faint"])
+        h = px(6)
+        self.put_rr(x0 + 1, (self.bh - h) / 2, max(px(10), x1 - x0 - 2), h, h / 2, col, tags="thumb")
+
+
 class ScrollFrame(tk.Frame):
     """Vertically scrolling container; put widgets into .inner."""
 

@@ -149,6 +149,14 @@ def draw_icon(cv, kind, cx, cy, s, col, bg, tags=()):
         cv.create_oval(cx - s * 0.30, cy - s * 0.30, cx + s * 0.30, cy + s * 0.30, fill=bg, outline="",
                        tags=tuple(tags) + ("gear_hole",))
         return
+    if kind == "chart":
+        t_ = tuple(tags) + ("chart_fill",)
+        w_ = max(2, s * 0.2)
+        cv.create_line(cx - s * 0.85, cy - s * 0.85, cx - s * 0.85, cy + s * 0.85, cx + s * 0.95, cy + s * 0.85,
+                       fill=col, width=w_, tags=t_)
+        cv.create_line(cx - s * 0.5, cy + s * 0.35, cx - s * 0.1, cy - s * 0.1, cx + s * 0.25, cy + s * 0.2,
+                       cx + s * 0.8, cy - s * 0.6, fill=col, width=w_, joinstyle="round", tags=t_)
+        return
     if kind == "reset":
         cv.create_arc(cx - s * 0.78, cy - s * 0.78, cx + s * 0.78, cy + s * 0.78, start=70, extent=290,
                       style="arc", outline=col, width=max(2, s * 0.22), tags=tuple(tags) + ("reset_fill",))
@@ -559,11 +567,14 @@ def main():
         hit = gs * 1.45
         gx = sx1 - spad - hit
         rx = gx - hit * 2 - 4
+        vx = rx - hit * 2 - 4
         if GFX:
             s["gear_bg"] = cv.create_image(gx, my, image=gfx.button("gear", hit, gs, C["dim"], C["card"]),
                                            tags="gearbtn")
             s["reset_bg"] = cv.create_image(rx, my, image=gfx.button("reset", hit, gs, C["dim"], C["card"]),
                                             tags="resetbtn")
+            s["view_bg"] = cv.create_image(vx, my, image=gfx.button("chart", hit, gs, C["dim"], C["card"]),
+                                           tags="viewbtn")
         else:
             s["gear_bg"] = cv.create_oval(gx - hit, my - hit, gx + hit, my + hit, fill=C["card"], outline="",
                                           tags="gearbtn")
@@ -571,8 +582,11 @@ def main():
             s["reset_bg"] = cv.create_oval(rx - hit, my - hit, rx + hit, my + hit, fill=C["card"], outline="",
                                            tags="resetbtn")
             draw_icon(cv, "reset", rx, my, gs, C["dim"], C["card"], tags=("resetbtn",))
+            s["view_bg"] = cv.create_oval(vx - hit, my - hit, vx + hit, my + hit, fill=C["card"], outline="",
+                                          tags="viewbtn")
+            draw_icon(cv, "chart", vx, my, gs, C["dim"], C["card"], tags=("viewbtn",))
         spin_w = max(44.0, min(sw_span * 0.1, rs * 3.2))
-        spin_r = rx - hit - 6
+        spin_r = vx - hit - 6
         cv.create_text(spin_r - spin_w - 8, my, text=t("interval_lbl"), anchor="e", font=(F_TXT, fs_sw),
                        fill=C["dim"], tags="intlbl")
         spin.config(font=(F_NUM, -max(10, int(rs * 0.52))))
@@ -582,7 +596,7 @@ def main():
         s["toast_geo"] = ((sx0 + sx1) / 2, sy - max(4.0, rs * 0.25), sw_span - 2 * spad)
         s["f_toast"], s["f_toast_t"] = meas_font(F_TXT, ft, "bold"), (F_TXT, ft, "bold")
         for tag, fn in (("logbtn", toggle), ("modebtn", toggle_mode), ("gearbtn", open_settings),
-                        ("resetbtn", reset_stats), ("updbtn", upd_click), ("updx", upd_dismiss)):
+                        ("resetbtn", reset_stats), ("viewbtn", lambda e=None: logview.show(api)), ("updbtn", upd_click), ("updx", upd_dismiss)):
             cv.tag_bind(tag, "<Button-1>", fn)
             cv.tag_bind(tag, "<Enter>", lambda e: cv.config(cursor="hand2"))
             cv.tag_bind(tag, "<Leave>", lambda e: cv.config(cursor=""))
@@ -605,15 +619,24 @@ def main():
                 return
             cv.itemconfig("reset_fill", fill=acc if on else C["dim"], outline=acc if on else C["dim"])
             cv.itemconfig(s["reset_bg"], fill=bgc)
+        def view_hover(on):
+            bgc = mix(C["card"], acc, 0.16) if on else C["card"]
+            if GFX:
+                cv.itemconfig(s["view_bg"], image=gfx.button("chart", hit, gs, acc if on else C["dim"], bgc))
+                return
+            cv.itemconfig("chart_fill", fill=acc if on else C["dim"])
+            cv.itemconfig(s["view_bg"], fill=bgc)
+        cv.tag_bind("viewbtn", "<Enter>", lambda e: (cv.config(cursor="hand2"), view_hover(True)))
+        cv.tag_bind("viewbtn", "<Leave>", lambda e: (cv.config(cursor=""), view_hover(False)))
         cv.tag_bind("resetbtn", "<Enter>", lambda e: (cv.config(cursor="hand2"), reset_hover(True)))
         cv.tag_bind("resetbtn", "<Leave>", lambda e: (cv.config(cursor=""), reset_hover(False)))
         cv.tag_bind("gearbtn", "<Enter>", lambda e: (cv.config(cursor="hand2"), gear_hover(True)))
         cv.tag_bind("gearbtn", "<Leave>", lambda e: (cv.config(cursor=""), gear_hover(False)))
-        s["hover"] = (gear_hover, reset_hover)
+        s["hover"] = (gear_hover, reset_hover, view_hover)
         # hover help (after the binds above, which replace earlier <Enter> / <Leave> handlers of the same tags)
         for tag, key in (("hdr_now", "hdr_now"), ("hdr_min", "hdr_min"), ("hdr_max", "hdr_max"),
                          ("hdr_avg", "hdr_avg"), ("logbtn", "logbtn"), ("modebtn", "modebtn"),
-                         ("resetbtn", "resetbtn"), ("gearbtn", "gearbtn"), ("intlbl", "interval_lbl")):
+                         ("resetbtn", "resetbtn"), ("viewbtn", "viewbtn"), ("gearbtn", "gearbtn"), ("intlbl", "interval_lbl")):
             help_tip(tag, key)
         refresh_status()
 

@@ -34,6 +34,7 @@ DEFAULTS = {
     "check_updates": True,           # look for a newer release on GitHub at start and every 24 h (README: Privacy)
     "interval": 5.0,                 # CSV logging interval, seconds (0.5 - 30)
     "logging": False,                # CSV logging on/off
+    "viewer_series": [],             # series keys ticked in the recording viewer (remembered)
     "log_all": False,                # False: only the rows shown, True: every sensor reading
     "log_dir": "",                   # "" = %LOCALAPPDATA%\metriQ\logs
     "csv_delimiter": "auto",         # "auto" (Windows list separator) or e.g. ";" / ","

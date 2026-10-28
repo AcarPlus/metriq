@@ -92,6 +92,7 @@ i18n.register({
         "hp_modebtn": "Chooses what is saved: Panel data is only the rows you see on the panel, All data is every "
                       "sensor. Click to switch.",
         "hp_resetbtn": "Starts MIN, MAX and AVG over from now (or press R). Recording is not affected.",
+        "hp_viewbtn": "Opens the recording viewer (or press V).",
         "hp_gearbtn": "Opens the settings (or press S).",
         "hp_interval_lbl": "Seconds between readings and CSV lines. You can also change it in Settings > Logging.",
     },
@@ -163,6 +164,7 @@ i18n.register({
         "hp_modebtn": "Neyin kaydedileceğini seçer: Paneldeki veriler, yalnızca panelde gördüğünüz satırlar; Tüm veriler, "
                       "her sensör. Değiştirmek için tıklayın.",
         "hp_resetbtn": "MİN, MAKS ve ORT değerlerini şu andan başlatır (veya R'ye basın). Kayıt etkilenmez.",
+        "hp_viewbtn": "Kayıt görüntüleyiciyi açar (veya V'ye basın).",
         "hp_gearbtn": "Ayarları açar (veya S'ye basın).",
         "hp_interval_lbl": "Okumalar ve CSV satırları arasındaki saniye. Ayarlar > Kayıt'tan da değiştirebilirsiniz.",
     },

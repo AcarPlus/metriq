@@ -99,13 +99,16 @@ class DiagTab:
                             selectmode="browse")
         for col, head, w in zip(cols, heads, widths):
             tree.heading(col, text=head)
-            tree.column(col, width=w, anchor="w", stretch=(col == cols[-1]))
+            tree.column(col, width=w, minwidth=w, anchor="w", stretch=(col == cols[-1]))
         sb = uikit.Scrollbar(box.body, C, tree.yview, bg=C["bg"])
-        tree.configure(yscrollcommand=sb.set)
+        hb = uikit.HScrollbar(box.body, C, tree.xview, bg=C["bg"])
+        tree.configure(yscrollcommand=sb.set, xscrollcommand=hb.set)
+        hb.pack(side="bottom", fill="x", pady=(4, 0))
         tree.pack(side="left", fill="x", expand=True)
         sb.pack(side="left", fill="y", padx=(4, 0))
         tree.bind("<<TreeviewSelect>>", on_select)
         tree.bind("<MouseWheel>", lambda e: (tree.yview_scroll(-1 if e.delta > 0 else 1, "units"), "break")[1])
+        tree.bind("<Shift-MouseWheel>", lambda e: (tree.xview_scroll(-3 if e.delta > 0 else 3, "units"), "break")[1])
         return tree
 
     def _rec_tip(self):
