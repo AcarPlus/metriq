@@ -1024,19 +1024,30 @@ class Viewer:
         if not idxs:
             return
         self.last_pick_key = key
-        self.expanded |= {self.rec.by_idx[i].cat for i in idxs}
-        self.set_selection(list(self.sel) + list(idxs))
+        cats = {self.rec.by_idx[i].cat for i in idxs}
+        if set(idxs) <= set(self.sel):
+            # second click on an active preset: switch its series off again and fold its groups
+            off = set(idxs)
+            self.expanded -= cats
+            self.set_selection([i for i in self.sel if i not in off])
+        else:
+            self.expanded |= cats
+            self.set_selection(list(self.sel) + [i for i in idxs if i not in self.sel])
         self.plist.set_rows(self.plist.rows, keep=False)
 
     def show_all(self):
-        """Selects every series of the current preset group (all series if none) and shows the full time range."""
+        """Toggle: selects every series of the groups that are open in the picker (all series when none is open)
+        and shows the full time range; pressed again while all of them are shown, it switches them all off."""
         if self.rec is None:
             return
-        if self.presets.get(self.last_pick_key):
-            self.apply_preset(self.last_pick_key)
+        groups = set(self.expanded)
+        idxs = [s.idx for s in self.rec.series if not groups or s.cat in groups]
+        if idxs and set(idxs) <= set(self.sel):
+            off = set(idxs)
+            self.set_selection([i for i in self.sel if i not in off])
         else:
-            self.set_selection([s.idx for s in self.rec.series])
-        self.reset_view()
+            self.set_selection(list(self.sel) + [i for i in idxs if i not in self.sel])
+            self.reset_view()
 
     def _save_sel(self):
         cfg = getattr(self.api, "cfg", None)
