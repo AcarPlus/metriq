@@ -8,6 +8,7 @@ import config
 import crashscan
 import helptexts
 import logview
+import tooltip
 import uikit
 from i18n import t
 
@@ -38,8 +39,11 @@ class DiagTab:
         self.status = sw.label(bar, "", dim=True, size=9, bg=rbg)
         self.status.pack(side="left", padx=(12, 0))
         self.normal = []
-        self.rtree = self._tree(rcard, ("start", "last", "rows"), t("cr_rec_cols").split("|"), (170, 170, 80), 5,
+        self.rtree = self._tree(rcard, ("start", "last", "rows", "data", "side", "usage"),
+                                t("cr_rec_cols").split("|"), (128, 128, 45, 90, 105, 120), 5,
                                 lambda e: self._rec_sel())
+        self.rtree.column("rows", anchor="e")
+        self.rtip = tooltip.Tooltip(self.rtree, self._rec_tip)
         rrow = tk.Frame(rcard.body, bg=rbg)
         sw.full(rcard, rrow, pady=(0, 2), divider=False, sticky="w")
         self.rec_btn = sw.button(rrow, t("lv_open_at"), self.open_recording)
@@ -103,6 +107,19 @@ class DiagTab:
         tree.bind("<<TreeviewSelect>>", on_select)
         tree.bind("<MouseWheel>", lambda e: (tree.yview_scroll(-1 if e.delta > 0 else 1, "units"), "break")[1])
         return tree
+
+    def _rec_tip(self):
+        """Full text of the cell under the mouse (cells can be truncated)."""
+        tree = self.rtree
+        x, y = self.rtip._xy
+        row = tree.identify_row(y - tree.winfo_rooty())
+        col = tree.identify_column(x - tree.winfo_rootx())
+        if not row or not col:
+            return ""
+        try:
+            return str(tree.set(row, tree["columns"][int(col[1:]) - 1]))
+        except (tk.TclError, ValueError, IndexError):
+            return ""
 
     def _rec_sel(self):
         self.rec_btn.config(state="normal" if self.rtree.selection() else "disabled")
@@ -177,7 +194,10 @@ class DiagTab:
             self.normal = r.get("normal", [])
             self.rtree.delete(*self.rtree.get_children())
             for i, rec in enumerate(self.normal):
-                self.rtree.insert("", "end", iid=str(i), values=(rec["start"], rec["last"], rec["rows"]))
+                self.rtree.insert("", "end", iid=str(i), values=(
+                    rec["start"], rec["last"], rec["rows"],
+                    t("cr_data_" + rec.get("data", "panel")), t("cr_yes" if rec.get("side") else "cr_no"),
+                    rec.get("usage", "—")))
             self._rec_sel()
             self.tree.delete(*self.tree.get_children())
             for i, ev in enumerate(self.events):

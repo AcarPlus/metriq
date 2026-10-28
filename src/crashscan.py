@@ -31,7 +31,8 @@ i18n.register({
         "cr_col_date": "Date", "cr_col_type": "Type", "cr_col_sum": "Summary",
         "cr_type_abrupt": "Ended abruptly", "cr_type_gap": "Gap",
         "cr_rec_title": "Recordings", "cr_rec_intro": "Recordings without problems (clean stop, no gaps). The list refreshes when this tab opens.",
-        "cr_rec_cols": "Started|Last row|Rows", "cr_rec_none": "No normal recordings found.", "cr_err_title": "Error detection", "cr_err_show": "Show error detection",
+        "cr_rec_cols": "Started|Last row|Rows|Data|Program log|Usage columns",
+        "cr_data_panel": "Panel", "cr_data_all": "All", "cr_yes": "Yes", "cr_no": "No", "cr_rec_none": "No normal recordings found.", "cr_err_title": "Error detection", "cr_err_show": "Show error detection",
         "cr_none": "No suspicious recordings found.", "cr_found": "{n} event(s) found in {f} recording(s).",
         "cr_select": "Select an event to see the details.", "cr_err": "Scan failed: {e}",
         "cr_sum_abrupt": "Recording stopped at {last}, no clean stop",
@@ -58,7 +59,8 @@ i18n.register({
         "cr_col_date": "Tarih", "cr_col_type": "Tür", "cr_col_sum": "Özet",
         "cr_type_abrupt": "Ani bitti", "cr_type_gap": "Boşluk",
         "cr_rec_title": "Kayıtlar", "cr_rec_intro": "Sorunsuz kayıtlar (temiz kapanış, boşluk yok). Liste bu sekme açılınca kendiliğinden yenilenir.",
-        "cr_rec_cols": "Başlangıç|Son satır|Satır", "cr_rec_none": "Normal kayıt bulunamadı.", "cr_err_title": "Hata tespiti", "cr_err_show": "Hata tespitini göster",
+        "cr_rec_cols": "Başlangıç|Son satır|Satır|Veri|Program kaydı|Kullanım sütunları",
+        "cr_data_panel": "Paneldeki", "cr_data_all": "Tüm veriler", "cr_yes": "Var", "cr_no": "Yok", "cr_rec_none": "Normal kayıt bulunamadı.", "cr_err_title": "Hata tespiti", "cr_err_show": "Hata tespitini göster",
         "cr_none": "Şüpheli kayıt bulunamadı.", "cr_found": "{f} kayıtta {n} olay bulundu.",
         "cr_select": "Ayrıntı için bir olay seçin.", "cr_err": "Tarama başarısız: {e}",
         "cr_sum_abrupt": "Kayıt {last} anında durdu, temiz kapanış yok",
@@ -278,7 +280,8 @@ def scan_all(folder, active_path=None, max_files=MAX_FILES):
     """(suspicious events, normal recordings, number of files). A normal recording has no gap and no abrupt end:
     {"name", "path", "start", "last", "rows"} (newest first)."""
     try:
-        names = [n for n in os.listdir(folder) if n.lower().endswith(".csv")]
+        names = [n for n in os.listdir(folder) if n.lower().endswith(".csv")
+             and not n.lower().endswith("_processes.csv")]       # side files belong to their recording
     except OSError:
         return [], [], 0
     paths = sorted((os.path.join(folder, n) for n in names), key=os.path.getmtime, reverse=True)[:max_files]
@@ -327,11 +330,33 @@ def scan_all(folder, active_path=None, max_files=MAX_FILES):
     return events, normal, len(paths)
 
 
+_USAGE_RE = re.compile(r"^(CPU|RAM|GPU|VRAM|Disk) #(\d+) (program|%|MB|MB/s)$", re.I)
+_USAGE_ORDER = ("CPU", "RAM", "GPU", "VRAM", "Disk")
+
+
+def describe(rec):
+    """Extra list info: data kind ('all' = 'sensor | label [unit]' headers, else 'panel'), side file present,
+    top-N program columns {group: count}."""
+    head = rec.header[1:]
+    full = sum(1 for h in head if " | " in h and h.rstrip().endswith("]"))
+    kind = "all" if head and full * 2 > len(head) else "panel"
+    groups = {}
+    for h in head:
+        m = _USAGE_RE.match(h.strip())
+        if m and m.group(3).lower() == "program":
+            g = next(x for x in _USAGE_ORDER if x.lower() == m.group(1).lower())
+            groups[g] = groups.get(g, 0) + 1
+    usage = " · ".join(f"{g} {groups[g]}" for g in _USAGE_ORDER if g in groups) or "—"
+    side = os.path.isfile(os.path.splitext(rec.path)[0] + "_processes.csv")
+    return {"data": kind, "side": side, "usage": usage}
+
+
 def _normal(out, rec, n_before, events):
     """Record `rec` as a normal recording unless it produced an event (gap) in this scan."""
     if len(events) == n_before:
         out.append({"name": rec.name, "path": rec.path, "start": rec.times[0].strftime("%Y-%m-%d %H:%M:%S"),
-                    "last": rec.times[-1].strftime("%Y-%m-%d %H:%M:%S"), "rows": len(rec.times)})
+                    "last": rec.times[-1].strftime("%Y-%m-%d %H:%M:%S"), "rows": len(rec.times),
+                    **describe(rec)})
 
 
 def _event(kind, rec, i, itv, gap=0.0, resume=None, next_start=None):
