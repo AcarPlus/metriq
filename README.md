@@ -311,7 +311,7 @@ Until signing is in place, releases are unsigned (see the SmartScreen note above
 `hwctl.py` (HWiNFO detection and tasks), `i18n.py` (strings), `panel.py` (UI), `settings_ui.py` (settings window),
 `winicon.py` (taskbar identity), `version.py`, `packaging/` (PyInstaller spec, Inno Setup script, build script),
 `gfx.py` (anti-aliased icons and cards; needs the optional `pip install pillow`, without it the panel draws plain canvas shapes),
-`src\make_icon.py` (regenerates `metriq.ico`). License: [MIT](docs/LICENSE).
+`src\make_icon.py` (regenerates `metriq.ico`). License: [MIT](LICENSE).
 
 ---
 

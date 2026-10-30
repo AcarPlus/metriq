@@ -27,7 +27,7 @@ DisableDirPage=auto
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
 SetupIconFile=..\src\metriq.ico
-LicenseFile=..\docs\LICENSE
+LicenseFile=..\LICENSE
 OutputDir=Output
 OutputBaseFilename=metriQ-Setup-{#AppVersion}
 Compression=lzma2
@@ -105,7 +105,7 @@ Source: "..\src\hidden.vbs"; DestDir: "{app}\tasks"; Flags: ignoreversion
 Source: "..\src\set_interval.ps1"; DestDir: "{app}\tasks"; Flags: ignoreversion
 Source: "register_tasks.ps1"; DestDir: "{app}\tasks"; Flags: ignoreversion
 Source: "fan_service.ps1"; DestDir: "{app}\tasks"; Flags: ignoreversion
-Source: "..\docs\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; AppUserModelID: "{#AppId}"
