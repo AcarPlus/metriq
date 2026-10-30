@@ -25,6 +25,7 @@ BIG_FILE = 250 * 1024 * 1024            # above this every k-th row is read (kee
 NO_SCAN = 150 * 1024 * 1024             # above this the list does not scan the whole file for gaps
 
 CATS = ("temp", "clock", "power", "usage", "fan", "volt", "io", "mem", "fps", "prog", "other")
+COMPS = ("cpu", "gpu", "ram", "disk", "net", "mb", "fan", "fps", "prog", "other")     # hardware groups of the picker
 PROG_RE = re.compile(r"^(CPU|RAM|GPU|VRAM|Disk) #(\d+) (program|%|MB|MB/s)$", re.I)
 _UNIT_RE = re.compile(r"^(.*?)\s*[\[(]([^\[\]()]*)[\])]\s*$")
 _FAN_RE = re.compile(r"\bfan\b|fan\d|pwm|fan speed|duty", re.I)
@@ -52,7 +53,7 @@ def parse_secs(text):
 
 # ------------------------------------------------------------------ columns
 class Series:
-    __slots__ = ("idx", "key", "name", "section", "unit", "cat", "label", "short")
+    __slots__ = ("idx", "key", "name", "section", "unit", "cat", "comp", "label", "short")
 
     def __init__(self, idx, header):
         self.idx, self.key = idx, header
@@ -71,6 +72,7 @@ class Series:
             self.unit = {"%": "%", "mb": "MB", "mb/s": "MB/s"}.get(pm.group(3).lower(), "")
         else:
             self.cat = categorize(self.section, self.name, self.unit)
+        self.comp = component(self.section, self.name, self.unit, self.cat)
         self.label = self.name
         self.short = short_section(self.section)
 
@@ -111,6 +113,53 @@ def categorize(section, name, unit):
         return "io"
     if u in ("mb", "gb", "kb", "tb", "t", "b", "pages"):
         return "mem"
+    return "other"
+
+
+_RAM_SEC = re.compile(r"^(ddr\d?|dimm|memory)|dimm|memory timings|page file|virtual memory|physical memory", re.I)
+_RAM_NAME = re.compile(r"^(ram|dimm|bellek|memory)\b|\bdimm\b|physical memory|virtual memory|page file", re.I)
+_DISK_NAME = re.compile(r"^(disk|drive|s\.m\.a\.r\.t)|\bssd\b|nvme|\bhdd\b|read activity|write activity", re.I)
+_NET_NAME = re.compile(r"^(download|upload|network|ağ|total (dl|up))|\b(rx|tx)\b", re.I)
+_MB_NAME = re.compile(r"^(anakart|motherboard|mainboard|system \d|chipset|pch|vrm)|chipset|\bpch\b|vrm mos", re.I)
+
+
+def component(section, name, unit, cat):
+    """Hardware group a column belongs to (one of COMPS): by the sensor section of a full recording
+    ('CPU [#0]: ...', 'Drive: ...', 'Network: ...'), else by the name used in the panel's own recordings."""
+    if cat in ("prog", "fps", "fan"):
+        return cat
+    sec = section.lower().strip()
+    if sec:
+        if sec.startswith("cpu"):
+            return "cpu"
+        if re.match(r"^(dgpu|igpu|gpu)\b", sec):
+            return "gpu"
+        if _RAM_SEC.search(sec):
+            return "ram"
+        if sec.startswith(("drive", "s.m.a.r.t")):
+            return "disk"
+        if sec.startswith("network"):
+            return "net"
+        if sec.startswith("system:"):
+            return "ram" if _RAM_NAME.search(name) else "mb"
+        if "hardware errors" in sec or "whea" in sec:
+            return "other"
+        return "mb"                                           # the board's own sensor chips
+    n = name.strip()
+    if re.match(r"^cpu\b", n, re.I):
+        return "cpu"
+    if re.match(r"^(gpu|vram)\b", n, re.I):
+        return "gpu"
+    if _RAM_NAME.search(n):
+        return "ram"
+    if _DISK_NAME.search(n):
+        return "disk"
+    if _NET_NAME.search(n):
+        return "net"
+    if _MB_NAME.search(n):
+        return "mb"
+    if cat == "io":
+        return "net" if re.search(r"kb/s|kbps|kbit", unit, re.I) else "disk"
     return "other"
 
 

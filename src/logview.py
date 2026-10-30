@@ -3,15 +3,22 @@
     logview.show(api, folder=None, path=None, at=None)   open / raise the window (at = seconds, see logdata.to_secs)
     logview.add_button(sw, parent, folder=None)           "View recordings" button for the settings tabs
 
-Left: recordings (date, length, size, a marker for gaps / abrupt ends / live), centre: chart (min-max envelope per
-pixel column for any number of rows, one axis per unit), right: series picker + the programs running at the cursor.
+Layout (same look as the settings window: uikit cards, buttons, switches):
+    toolbar    recording picker (date, length, size, tags; opens a searchable list), time range, zoom, export, folder,
+               "Advanced" (band, gap marks, statistics table, remove markers)
+    left       series: search, quick picks (Temperatures, Power, ... Show all), a tree hardware group (CPU, GPU,
+               RAM, Disk, Network, ...) > kind > series with tri-state group tick boxes, programs at the cursor
+    centre     chart (min-max envelope per pixel column for any number of rows, one axis per unit, inline legend,
+               hover balloon) and a min / avg / max / cursor table
 Mouse wheel = zoom, drag = pan, click = pin a marker, double click = show everything. Data work lives in
 logdata.py; crash markers come from crashscan."""
+import csv
+import gc
 import math
 import os
 import queue
 import threading
-import types
+import time
 import tkinter as tk
 import tkinter.font as tkfont
 from bisect import bisect_left, bisect_right
@@ -45,8 +52,28 @@ i18n.register({
         "lv_cat_fan": "Fans", "lv_cat_volt": "Voltage and current", "lv_cat_io": "Network and disk",
         "lv_cat_mem": "Memory and data", "lv_cat_fps": "FPS and frame time", "lv_cat_prog": "Program columns",
         "lv_cat_other": "Other",
-        "lv_loading": "Loading...", "lv_empty": "Pick a recording on the left.",
-        "lv_nosel": "Pick a preset above or tick series on the right.", "lv_no_recs": "No recordings in this folder.",
+        "lv_comp_cpu": "CPU", "lv_comp_gpu": "GPU", "lv_comp_ram": "Memory (RAM)", "lv_comp_disk": "Disk",
+        "lv_comp_net": "Network", "lv_comp_mb": "Motherboard and system", "lv_comp_fan": "Fans",
+        "lv_comp_fps": "FPS and frame time", "lv_comp_prog": "Programs", "lv_comp_other": "Other",
+        "lv_no_rec": "No recording", "lv_pick_rec": "Choose a recording",
+        "lv_r_all": "All", "lv_r_1h": "1 h", "lv_r_15m": "15 min", "lv_r_5m": "5 min",
+        "lv_r_tip": "Show the last {x} of the recording", "lv_r_tip_all": "Show the whole recording",
+        "lv_zoom_in": "Zoom in", "lv_zoom_out": "Zoom out",
+        "lv_export": "Export", "lv_export_tip": "Save the selected series of the visible range as a CSV file",
+        "lv_export_none": "Pick at least one series to export.", "lv_exported": "Saved: {s} series, {n} rows",
+        "lv_export_err": "Could not save: {e}", "lv_export_title": "Export CSV",
+        "lv_adv": "Advanced", "lv_adv_band": "Min - max band", "lv_adv_marks": "Gap and abrupt-end marks",
+        "lv_adv_stats": "Statistics table", "lv_clear_pins": "Remove markers",
+        "lv_tip_check": "Select / unselect every series of this group. Other groups are not touched.",
+        "lv_tip_open": "Only opens or closes the list. Your selection stays as it is.",
+        "lv_tip_preset": "Adds this group's main series. Press again to remove exactly those.",
+        "lv_tip_all": "Draws every series of the groups you already have series from and shows the whole range. "
+                      "Press again to remove just those.",
+        "lv_tip_clear": "Unselect all series", "lv_no_match": "No series matches.",
+        "lv_tip_prog": "Show or hide the programs running at the cursor",
+        "lv_sel_of": "{a} of {b}",
+        "lv_loading": "Loading...", "lv_empty": "Pick a recording above.",
+        "lv_nosel": "Pick a quick group or tick series on the left.", "lv_no_recs": "No recordings in this folder.",
         "lv_col_min": "Min", "lv_col_avg": "Avg", "lv_col_max": "Max", "lv_col_cursor": "Cursor", "lv_col_pin": "Pin",
         "lv_gap": "Gap {d}", "lv_abrupt": "Ended abruptly", "lv_live": "live", "lv_prog": "programs",
         "lv_rows": "{n} rows", "lv_row1": "1 row", "lv_selected": "{n} selected",
@@ -61,11 +88,13 @@ i18n.register({
         "hp_lv_nav": "Mouse wheel zooms around the pointer, dragging moves the view, a click pins a marker (click it "
                      "again to remove it) and a double click shows the whole recording. Shift + wheel, the arrow keys "
                      "and + / - work too.",
-        "hp_lv_recs": "Your recordings, newest first. A red tag means the recording ended abruptly (crash, freeze or "
-                      "power loss), a yellow one means rows are missing in between. Green means it is still being written.",
-        "hp_lv_series": "Pick what to draw. The buttons above the chart select a ready-made group. Series with the "
-                        "same unit share an axis; a different unit gets its own axis on the right. When there are more "
-                        "rows than pixels, each pixel shows the lowest and highest value as a band.",
+        "hp_lv_recs": "The recording picker lists your recordings, newest first. A red tag means the recording "
+                      "ended abruptly (crash, freeze or power loss), a yellow one means rows are missing in "
+                      "between. Green means it is still being written.",
+        "hp_lv_series": "Tick the series to draw. A group's tick box selects or clears only the series of that "
+                        "group and the arrow only folds the list: neither touches your other picks. The round "
+                        "buttons add a ready-made set of main series (press again to remove just those). "
+                        "Series with the same unit share an axis; another unit gets its own axis on the right.",
     },
     "tr": {
         "lv_title": "Kayıt görüntüleyici", "lv_open": "Kayıtları görüntüle", "lv_open_at": "Görüntüleyicide aç",
@@ -77,8 +106,28 @@ i18n.register({
         "lv_cat_fan": "Fanlar", "lv_cat_volt": "Voltaj ve akım", "lv_cat_io": "Ağ ve disk",
         "lv_cat_mem": "Bellek ve veri", "lv_cat_fps": "FPS ve kare süresi", "lv_cat_prog": "Program sütunları",
         "lv_cat_other": "Diğer",
-        "lv_loading": "Yükleniyor...", "lv_empty": "Soldan bir kayıt seçin.",
-        "lv_nosel": "Yukarıdan hazır bir grup seçin ya da sağdan seri işaretleyin.",
+        "lv_comp_cpu": "CPU", "lv_comp_gpu": "GPU", "lv_comp_ram": "Bellek (RAM)", "lv_comp_disk": "Disk",
+        "lv_comp_net": "Ağ", "lv_comp_mb": "Anakart ve sistem", "lv_comp_fan": "Fanlar",
+        "lv_comp_fps": "FPS ve kare süresi", "lv_comp_prog": "Programlar", "lv_comp_other": "Diğer",
+        "lv_no_rec": "Kayıt yok", "lv_pick_rec": "Kayıt seçin",
+        "lv_r_all": "Tümü", "lv_r_1h": "1 sa", "lv_r_15m": "15 dk", "lv_r_5m": "5 dk",
+        "lv_r_tip": "Kaydın son {x} bölümünü göster", "lv_r_tip_all": "Kaydın tamamını göster",
+        "lv_zoom_in": "Yakınlaştır", "lv_zoom_out": "Uzaklaştır",
+        "lv_export": "Dışa aktar", "lv_export_tip": "Görünen aralıktaki seçili serileri CSV dosyası olarak kaydet",
+        "lv_export_none": "Dışa aktarmak için en az bir seri seçin.", "lv_exported": "Kaydedildi: {s} seri, {n} satır",
+        "lv_export_err": "Kaydedilemedi: {e}", "lv_export_title": "CSV olarak dışa aktar",
+        "lv_adv": "Gelişmiş", "lv_adv_band": "En düşük - en yüksek bandı", "lv_adv_marks": "Boşluk ve ani bitiş işaretleri",
+        "lv_adv_stats": "İstatistik tablosu", "lv_clear_pins": "İşaretleri kaldır",
+        "lv_tip_check": "Bu gruptaki tüm serileri seçer ya da bırakır. Diğer gruplara dokunmaz.",
+        "lv_tip_open": "Yalnızca listeyi açar ya da kapatır. Seçimin olduğu gibi kalır.",
+        "lv_tip_preset": "Bu grubun başlıca serilerini ekler. Tekrar basınca yalnızca onları kaldırır.",
+        "lv_tip_all": "Serisi seçili olan grupların tüm serilerini çizer ve kaydın tamamını gösterir. "
+                      "Tekrar basınca yalnızca bunları kaldırır.",
+        "lv_tip_clear": "Tüm seçimleri kaldır", "lv_no_match": "Eşleşen seri yok.",
+        "lv_tip_prog": "İmlecin olduğu andaki programları göster ya da gizle",
+        "lv_sel_of": "{a} / {b}",
+        "lv_loading": "Yükleniyor...", "lv_empty": "Yukarıdan bir kayıt seçin.",
+        "lv_nosel": "Soldan hazır bir grup seçin ya da seri işaretleyin.",
         "lv_no_recs": "Bu klasörde kayıt yok.",
         "lv_col_min": "En düşük", "lv_col_avg": "Ort.", "lv_col_max": "En yüksek", "lv_col_cursor": "İmleç", "lv_col_pin": "İşaret",
         "lv_gap": "Boşluk {d}", "lv_abrupt": "Ani bitti", "lv_live": "canlı", "lv_prog": "programlar",
@@ -94,14 +143,18 @@ i18n.register({
         "hp_lv_nav": "Tekerlek imlecin olduğu yeri yakınlaştırır, sürükleme görünümü kaydırır, tıklama bir işaret "
                      "bırakır (tekrar tıklayınca kalkar), çift tıklama kaydın tamamını gösterir. Shift + tekerlek, "
                      "ok tuşları ve + / - da çalışır.",
-        "hp_lv_recs": "Kayıtların, en yenisi üstte. Kırmızı etiket kaydın ani bittiğini (çökme, donma ya da elektrik "
-                      "kesintisi), sarı etiket arada satır eksik olduğunu gösterir. Yeşil: kayıt hâlâ yazılıyor.",
-        "hp_lv_series": "Çizilecekleri seç. Grafiğin üstündeki düğmeler hazır bir grubu seçer. Birimi aynı olan seriler "
-                        "aynı ekseni paylaşır; farklı birim sağda kendi eksenini alır. Satır sayısı piksel sayısından "
-                        "çoksa her piksel en düşük ve en yüksek değeri bir bant olarak gösterir.",
+        "hp_lv_recs": "Kayıt seçici, kayıtlarını en yenisi üstte olacak şekilde listeler. Kırmızı etiket "
+                      "kaydın ani bittiğini (çökme, donma ya da elektrik kesintisi), sarı etiket arada satır "
+                      "eksik olduğunu gösterir. Yeşil: kayıt hâlâ yazılıyor.",
+        "hp_lv_series": "Çizilecek serileri işaretle. Bir grubun kutusu yalnızca o gruptaki serileri seçer ya "
+                        "da bırakır, ok ise sadece listeyi açıp kapatır: ikisi de diğer seçimlerine dokunmaz. "
+                        "Yuvarlak düğmeler hazır bir ana seri takımı ekler (tekrar basınca yalnızca onları "
+                        "kaldırır). Birimi aynı olan seriler aynı ekseni paylaşır; farklı birim sağda kendi "
+                        "eksenini alır.",
     },
 })
 
+_bg = uikit._bg_of
 PRESET_KEYS = ("temp", "power", "usage", "clock", "fan", "fps")
 FLOATING = ("°C", "MHz", "GHz", "V", "mV", "x")
 UNITS = {"CPU": "%", "RAM": "MB", "GPU": "%", "VRAM": "MB", "Disk": "MB/s"}
@@ -517,7 +570,184 @@ class ChartTip(tooltip.Tooltip):
             self.tip.deiconify()
 
 
+# ====================================================================== widgets of the viewer window
+P = uikit.px
+
+
+def hover_tip(widget, cell_at, text_of):
+    """Tooltip whose text depends on what is under the pointer: cell_at(x, y) -> key (None = nothing),
+    text_of(key) -> text or rows. The balloon is re-armed whenever the pointer moves to another key."""
+    tip = tooltip.Tooltip(widget, None, _bind=False)
+    st = {"k": None}
+    tip.content = lambda: text_of(st["k"]) if st["k"] is not None else ""
+
+    def enter(e):
+        st["k"] = cell_at(e.x, e.y)
+        tip._enter(e)
+
+    def motion(e):
+        k = cell_at(e.x, e.y)
+        if k != st["k"]:
+            st["k"] = k
+            tip._leave()
+            tip._enter(e)
+    widget.bind("<Enter>", enter, add="+")
+    widget.bind("<Leave>", lambda e: tip._leave(), add="+")
+    widget.bind("<Motion>", motion, add="+")
+    widget.bind("<ButtonPress>", lambda e: tip._leave(), add="+")
+    return tip
+
+
+class FillCard(uikit.Card):
+    """uikit.Card that stretches over the space it is given (the stock card is only as tall as its content)."""
+
+    def __init__(self, parent, C, width=None, **kw):
+        self._fixed_w = width
+        super().__init__(parent, C, **kw)
+        self.body.pack_configure(fill="both", expand=True)
+
+    def _inner_cfg(self, e=None):
+        tk.Canvas.configure(self, height=P(60), width=self._fixed_w or P(120))
+
+    def _cfg(self, e):
+        if (e.width, e.height) == (self._cw, self._ch):
+            return
+        self._cw, self._ch = e.width, e.height
+        self.itemconfigure("inner", width=max(10, e.width - self.pl - self.pr),
+                           height=max(10, e.height - self.pt - self.pb))
+        if self._job is None:
+            self._job = self.after_idle(self._paint_job)
+
+
+class ChipBar(uikit._Cv):
+    """Wrapping row of pill buttons. chips = [(key, text)]; set_states({key: 'on' | 'off' | 'dis'}); command(key)."""
+
+    def __init__(self, parent, C, font, chips, command, bg=None):
+        self.C, self.font, self.chips, self.cmd = C, font, list(chips), command
+        self.fo = uikit.font_obj(parent, font)
+        self.ch, self.gap = P(26), P(6)
+        super().__init__(parent, bg=bg, height=self.ch)
+        self.states = {k: "off" for k, _ in self.chips}
+        self.hot = None
+        self.rects = []
+        self._rows = 1
+        self.bind("<Configure>", lambda e: self.draw())
+        self.bind("<Motion>", lambda e: self._set_hot(self.key_at(e.x, e.y)))
+        self.bind("<Leave>", lambda e: self._set_hot(None))
+        self.bind("<Button-1>", self._click)
+
+    def set_states(self, states):
+        if states != self.states:
+            self.states = dict(states)
+            self.draw()
+
+    def key_at(self, x, y):
+        for k, x0, y0, w in self.rects:
+            if x0 <= x <= x0 + w and y0 <= y <= y0 + self.ch:
+                return k
+        return None
+
+    def _set_hot(self, k):
+        if k != self.hot:
+            self.hot = k
+            tk.Canvas.configure(self, cursor="hand2" if k and self.states.get(k) != "dis" else "")
+            self.draw()
+
+    def _click(self, e):
+        k = self.key_at(e.x, e.y)
+        if k and self.states.get(k) != "dis":
+            self.cmd(k)
+
+    def draw(self):
+        C = self.C
+        W = max(40, self.winfo_width())
+        self.delete("all")
+        self._refs = []
+        self.rects = []
+        x = y = 0
+        rows = 1
+        for k, text in self.chips:
+            w = self.fo.measure(text) + P(22)
+            if x + w > W and x > 0:
+                x, y, rows = 0, y + self.ch + self.gap, rows + 1
+            self.rects.append((k, x, y, w))
+            st = self.states.get(k, "off")
+            hot = k == self.hot and st != "dis"
+            if st == "on":
+                fill, oc, fg = (C["ui_hover"] if hot else C["ui"]), None, C["on_ui"]
+            elif st == "dis":
+                fill, oc, fg = themes.mix(C["track"], C["card"], 0.5), None, C["faint"]
+            else:
+                fill = themes.mix(C["track"], C["fg"], 0.10) if hot else C["track"]
+                oc, fg = themes.mix(C["border"], C["dim"], 0.6) if hot else C["border"], C["fg"]
+            self.put_rr(x, y, w, self.ch, self.ch / 2, fill, oc)
+            self.create_text(x + w / 2, y + self.ch / 2, text=text, fill=fg, font=self.font)
+            x += w + self.gap
+        want = rows * self.ch + (rows - 1) * self.gap
+        if rows != self._rows:
+            self._rows = rows
+            tk.Canvas.configure(self, height=want)
+
+
+class RecPicker(uikit._Cv):
+    """The recording picker of the toolbar: date, length, size and tags of the open recording; click for the list."""
+
+    def __init__(self, viewer):
+        self.v = viewer
+        self.C = viewer.C
+        self.h = P(34)
+        super().__init__(viewer.toolbar, bg=viewer.C["bg"], height=self.h, takefocus=1, cursor="hand2")
+        self.hot = self.focused = False
+        self.bind("<Configure>", lambda e: self.draw())
+        self.bind("<Enter>", lambda e: self._st("hot", True))
+        self.bind("<Leave>", lambda e: self._st("hot", False))
+        self.bind("<FocusIn>", lambda e: self._st("focused", True))
+        self.bind("<FocusOut>", lambda e: self._st("focused", False))
+        self.bind("<Button-1>", lambda e: (self.focus_set(), viewer.toggle_rec_popup()))
+        for k in ("<Return>", "<space>", "<Down>"):
+            self.bind(k, lambda e: viewer.toggle_rec_popup())
+
+    def _st(self, a, v):
+        if getattr(self, a) != v:
+            setattr(self, a, v)
+            self.draw()
+
+    def draw(self):
+        v, C = self.v, self.C
+        self.delete("all")
+        self._refs = []
+        W, H = max(40, self.winfo_width()), self.h
+        pop = v.pop is not None
+        hi = self.focused or pop
+        oc = C["ui"] if hi else (themes.mix(C["border"], C["dim"], 0.55) if self.hot else C["border"])
+        self.put_rr(0, 0, W, H, P(8), C["track"], oc, 2 if hi else 1)
+        title, detail, badges = v.rec_summary()
+        x = P(12)
+        right = W - P(34)
+        for text, col in reversed(badges):                         # tags, right-aligned (only what fits)
+            tw = v.f9.measure(text) + P(12)
+            if right - tw < x + P(150):
+                break
+            self.put_rr(right - tw, (H - P(18)) / 2, tw, P(18), P(5), themes.mix(C["track"], col, 0.22),
+                        tags="chip")
+            self.create_text(right - tw / 2, H / 2, text=text, fill=col, font=(v.F_TXT, 8))
+            right -= tw + P(6)
+        self.create_text(x, H / 2, text=title, anchor="w", fill=C["fg"], font=v.f10b)
+        x += v.f10b.measure(title) + P(12)
+        if detail:
+            self.create_text(x, H / 2, text=fit_text(detail, v.f9, right - x - P(6)), anchor="w", fill=C["dim"],
+                             font=v.f9)
+        im = uikit.glyph("chev_down", P(14), C["fg"] if (self.hot or pop) else C["dim"])
+        if im is not None:
+            self.create_image(W - P(16), H / 2, image=self.keep(im))
+        else:
+            self.create_text(W - P(16), H / 2, text="▾", fill=C["dim"], font=v.f10)
+
+
 # ====================================================================== the viewer
+RANGE_SPANS = (None, 3600.0, 900.0, 300.0)          # toolbar: whole recording, last hour, last 15 / 5 minutes
+
+
 class Viewer:
     PAD_L, PAD_R, PAD_B, AXIS_W = 62, 16, 40, 58
 
@@ -528,30 +758,45 @@ class Viewer:
         self.C = themes.palette()
         self.palette_key = tuple(sorted(self.C.items()))
         try:
-            self.F_TXT, _, self.F_NUM = api.fonts_now()
+            self.F_TXT, self.F_HEAD, self.F_NUM = api.fonts_now()
         except Exception:
-            self.F_TXT, self.F_NUM = "Segoe UI", "Consolas"
+            self.F_TXT, self.F_HEAD, self.F_NUM = "Segoe UI", "Segoe UI Semibold", "Consolas"
+        self.win = tk.Toplevel(api.root)
+        self.win.withdraw()
+        uikit.set_scale(self.win)
         self.f9 = tkfont.Font(family=self.F_TXT, size=9)
         self.f10 = tkfont.Font(family=self.F_TXT, size=10)
         self.f10b = tkfont.Font(family=self.F_TXT, size=10, weight="bold")
         self.f9b = tkfont.Font(family=self.F_TXT, size=9, weight="bold")
         self.fnum9 = tkfont.Font(family=self.F_NUM, size=9)
+        self.PAD_L, self.PAD_R, self.PAD_B, self.AXIS_W = P(62), P(16), P(40), P(58)
         self.colors = series_colors(self.C)
         self.rec, self.sel, self.slot, self._keys, self.presets = None, [], {}, [], {}
         self.f0 = self.f1 = self.v0 = self.v1 = 0.0
         self.pins, self.hover_t, self.hover_i = [], None, None
-        self._draw_job = self._load_job = self._ens_job = None
+        self._draw_job = self._load_job = self._ens_job = self._probe_job = self._note_job = None
+        self._jobs, self._traces, self._tips = set(), [], []
+        self._closed = False
         self.paths, self.probes, self.cur_path = [], {}, None
+        self.rec_rows = []
         self.pq = queue.Queue()
+        self._probe_state = [0]
         self.probe_gen = 0
         self.expanded, self.last_pick_key = set(), "temp"
+        self._all_added = set()                        # series that "Show all" added (so that pressing it again removes just those)
+        self._preset_added = {}                        # quick pick -> the series it added
         self.drag = None
         self.strip_off = 0
-        self.picker_on = True
         self._pending_at = None
-        self.msg = ""
+        self.msg = self.note = ""
+        self.pop = self.rlist = None                   # the recording list popup
+        self._pop_closed_at = 0.0
+        self.prog_open = True
+        self._prog_user = None                         # None: the programs list folds itself on a small window
+        self._prog_shown = False
+        self.strip_rows = 5
+        self._adapt_job = None
 
-        self.win = tk.Toplevel(api.root)
         self.win.title(t("lv_title"))
         self.win.configure(bg=self.C["bg"])
         uikit.set_window_icon(self.win)
@@ -562,15 +807,63 @@ class Viewer:
         self._place()
         self._build()
         self.win.protocol("WM_DELETE_WINDOW", self.close)
-        self.win.bind("<Escape>", lambda e: self.close())
+        self.win.bind("<Escape>", lambda e: self._escape())
+        self.win.bind("<F5>", lambda e: self.reload_list())
+        self.win.bind("<Configure>", self._on_configure, add="+")
         self.win.bind("<MouseWheel>", self._wheel_any)
         for k, fn in (("<Home>", self.reset_view), ("<Left>", lambda: self.pan_by(-0.2)),
                       ("<Right>", lambda: self.pan_by(0.2)), ("<plus>", lambda: self.zoom_by(0.7)),
                       ("<minus>", lambda: self.zoom_by(1 / 0.7)), ("<KP_Add>", lambda: self.zoom_by(0.7)),
                       ("<KP_Subtract>", lambda: self.zoom_by(1 / 0.7))):
             self.win.bind(k, lambda e, fn=fn: None if isinstance(self.win.focus_get(), tk.Entry) else fn())
-        self.win.after(30, self._dark_title)
+        self._after(30, self._dark_title)
+        self.win.deiconify()
         self.reload_list()
+
+    @property
+    def probe_gen(self):
+        return self._probe_state[0]
+
+    @probe_gen.setter
+    def probe_gen(self, v):
+        self._probe_state[0] = v
+
+    # ------------------------------------------------------------ scheduled work (everything is cancelled on close)
+    def _after(self, ms, fn):
+        box = []
+
+        def run():
+            self._jobs.discard(box[0])
+            if not self._closed:
+                fn()
+        try:
+            box.append(self.win.after(ms, run))
+        except tk.TclError:
+            return None
+        self._jobs.add(box[0])
+        return box[0]
+
+    def _idle(self, fn):
+        box = []
+
+        def run():
+            self._jobs.discard(box[0])
+            if not self._closed:
+                fn()
+        try:
+            box.append(self.win.after_idle(run))
+        except tk.TclError:
+            return None
+        self._jobs.add(box[0])
+        return box[0]
+
+    def _cancel(self, job):
+        if job is not None:
+            self._jobs.discard(job)
+            try:
+                self.win.after_cancel(job)
+            except tk.TclError:
+                pass
 
     # ------------------------------------------------------------ window
     def _dark_title(self):
@@ -597,157 +890,176 @@ class Viewer:
         except Exception:
             mon = None
         mx, my, mw, mh = (mon["wx"], mon["wy"], mon["ww"], mon["wh"]) if mon else (0, 0, sw, sh)
-        w, h = min(1400, mw - 40), min(860, mh - 70)
+        w, h = min(P(1400), mw - 40), min(P(860), mh - 70)
         self.win.geometry(f"{w}x{h}+{mx + (mw - w) // 2}+{my + max(10, (mh - h) // 3)}")
-        self.win.minsize(min(1120, w), min(580, h))
+        self.win.minsize(min(P(1060), w), min(P(600), h))
+        self.prog_open = h >= P(760)                   # on a small window the programs list starts folded
 
     def alive(self):
+        if self._closed:
+            return False
         try:
             return bool(self.win.winfo_exists())
         except tk.TclError:
             return False
 
+    def _escape(self):
+        if self.pop is not None:
+            self.close_rec_popup()
+        else:
+            self.close()
+
     def close(self):
+        if self._closed:
+            return
+        self._closed = True
         self.probe_gen += 1
-        for j in (self._draw_job, self._load_job, self._ens_job):
-            if j:
-                try:
-                    self.win.after_cancel(j)
-                except tk.TclError:
-                    pass
-        try:
-            self.tip.hide()
-        except Exception:
-            pass
+        for j in list(self._jobs):
+            try:
+                self.win.after_cancel(j)
+            except tk.TclError:
+                pass
+        self._jobs.clear()
+        self.close_rec_popup()
+        for tp in [self.tip, self.ptip] + self._tips:
+            try:
+                tp._leave()
+            except Exception:
+                pass
+        for var, tid in self._traces:                    # a trace is a Tcl command that keeps this viewer alive
+            try:
+                var.trace_remove("write", tid)
+            except (tk.TclError, ValueError):
+                pass
+        self._traces.clear()
         try:
             self.win.destroy()
         except tk.TclError:
             pass
+        uikit.forget_fonts(self.win)
         if _STATE["win"] is self:
             _STATE["win"] = None
+        try:                                                  # let the Tk variables / fonts of this window go on the main thread
+            self.api.root.after(300, gc.collect)
+        except (tk.TclError, AttributeError):
+            pass
 
     # ------------------------------------------------------------ widgets
-    def _btn(self, parent, text, cmd, primary=False, small=False):
-        C = self.C
-        base = C["ui"] if primary else C["track"]
-        hover = C["ui_hover"] if primary else C["border"]
-        b = tk.Button(parent, text=text, command=cmd, bg=base, fg=C["on_ui"] if primary else C["fg"],
-                      activebackground=hover, activeforeground=C["on_ui"] if primary else C["fg"], relief="flat", bd=0,
-                      padx=8 if small else 14, pady=3 if small else 5, cursor="hand2", highlightthickness=0,
-                      font=(self.F_TXT, 9 if small else 10, "bold" if primary else "normal"), takefocus=0)
-        b.bind("<Enter>", lambda e: b.config(bg=hover))
-        b.bind("<Leave>", lambda e: b.config(bg=getattr(b, "base", base)))
-        b.base = base
-        return b
+    def _btn(self, parent, text, cmd, primary=False, small=False, bg=None, font_size=10):
+        return uikit.Button(parent, self.C, text, cmd, (self.F_TXT, font_size, "bold" if primary else "normal"),
+                            primary=primary, small=small, bg=bg or _bg(parent))
 
-    def _entry(self, parent, var, ph):
+    def _search_field(self, parent, var, ph, bg):
+        """Rounded search box with a placeholder; Escape clears it."""
         C = self.C
-        e = tk.Entry(parent, textvariable=var, bg=C["track"], fg=C["fg"], insertbackground=C["fg"], relief="flat",
-                     highlightthickness=1, highlightbackground=C["border"], highlightcolor=C["ui"],
-                     font=(self.F_TXT, 10), selectbackground=C["select"], selectforeground=C["fg"])
-        hint = tk.Label(e, text=ph, bg=C["track"], fg=C["faint"], font=(self.F_TXT, 10), cursor="xterm")
+        f = uikit.entry(parent, C, var, 10, (self.F_TXT, 10), bg=bg)
+        e = f.entry
+        hint = tk.Label(e, text=ph, bg=f.fill, fg=C["faint"], font=(self.F_TXT, 10), cursor="xterm")
         hint.bind("<Button-1>", lambda ev: e.focus_set())
 
         def upd(*a):
             if var.get():
                 hint.place_forget()
             else:
-                hint.place(x=4, rely=0.5, anchor="w")
-        var.trace_add("write", upd)
+                hint.place(x=0, rely=0.5, anchor="w")
+        self._traces.append((var, var.trace_add("write", upd)))
         upd()
         e.bind("<Escape>", lambda ev: (var.set(""), "break")[1])
-        return e
+        return f
+
+    def _tipped(self, widget, text):
+        tp = tooltip.Tooltip(widget, text)
+        self._tips.append(tp)
+        return tp
 
     def _build(self):
         C, win = self.C, self.win
-        win.grid_columnconfigure(1, weight=1)
-        win.grid_rowconfigure(0, weight=1)
+        card = C["card"]
+        win.grid_columnconfigure(0, weight=1)
+        win.grid_rowconfigure(2, weight=1)
 
-        # ---- left: recordings
-        left = tk.Frame(win, bg=C["bg"], width=262)
-        left.grid(row=0, column=0, sticky="ns", padx=(14, 0), pady=14)
-        left.pack_propagate(False)
-        head = tk.Frame(left, bg=C["bg"])
-        head.pack(fill="x")
-        tk.Label(head, text=t("lv_recs"), bg=C["bg"], fg=C["fg"], font=(self.F_TXT, 12, "bold")).pack(side="left")
-        self.rec_count = tk.Label(head, text="", bg=C["bg"], fg=C["dim"], font=(self.F_TXT, 9))
-        self.rec_count.pack(side="left", padx=(8, 0), pady=(3, 0))
-        helptexts.info_icon(head, "lv_recs", bg=C["bg"]).pack(side="right")
-        self.v_rsearch = tk.StringVar()
-        self.v_rsearch.trace_add("write", lambda *a: self.rebuild_rec_rows())
-        self._entry(left, self.v_rsearch, t("lv_search")).pack(fill="x", pady=(8, 8), ipady=4)
-        self.rlist = VList(left, C, 62, self._draw_rec, self._click_rec, bg=C["card"])
-        self.rlist.pack(fill="both", expand=True)
-        bar = tk.Frame(left, bg=C["bg"])
-        bar.pack(fill="x", pady=(8, 0))
-        self._btn(bar, t("lv_refresh"), self.reload_list, small=True).pack(side="left")
-        self._btn(bar, t("lv_open_dir"), self.open_dir, small=True).pack(side="left", padx=(6, 0))
-        self._btn(bar, t("lv_browse"), self.browse, small=True).pack(side="left", padx=(6, 0))
+        # ---- toolbar: recording picker | time range | export, folder, advanced
+        tb = self.toolbar = tk.Frame(win, bg=C["bg"])
+        tb.grid(row=0, column=0, sticky="ew", padx=P(16), pady=(P(14), P(10)))
+        tb.grid_columnconfigure(0, weight=1, minsize=P(250))
+        self.picker = RecPicker(self)
+        self.picker.grid(row=0, column=0, sticky="ew", padx=(0, P(14)))
+        self.range_seg = uikit.Segmented(tb, C, [t("lv_r_all"), t("lv_r_1h"), t("lv_r_15m"), t("lv_r_5m")], 0,
+                                         self._range_pick, (self.F_TXT, 10), bg=C["bg"])
+        self.range_seg.grid(row=0, column=1, padx=(0, P(6)))
+        hover_tip(self.range_seg, lambda x, y: max(0, min(3, int((x - P(3)) // self.range_seg.sw))),
+                  lambda i: t("lv_r_tip_all") if i == 0 else t("lv_r_tip", x=(t("lv_r_all"), t("lv_r_1h"),
+                                                                              t("lv_r_15m"), t("lv_r_5m"))[i]))
+        zb = self._btn(tb, "−", lambda: self.zoom_by(1 / 0.7), font_size=12)
+        zb.grid(row=0, column=2, padx=(0, P(4)))
+        self._tipped(zb, t("lv_zoom_out"))
+        zb = self._btn(tb, "+", lambda: self.zoom_by(0.7), font_size=12)
+        zb.grid(row=0, column=3, padx=(0, P(14)))
+        self._tipped(zb, t("lv_zoom_in"))
+        self.export_btn = self._btn(tb, t("lv_export"), self.export_csv)
+        self.export_btn.grid(row=0, column=4, padx=(0, P(8)))
+        self._tipped(self.export_btn, t("lv_export_tip"))
+        self._btn(tb, t("lv_open_dir"), self.open_dir).grid(row=0, column=5, padx=(0, P(8)))
+        self.adv_btn = self._btn(tb, t("lv_adv") + "  ▾", self.toggle_adv)
+        self.adv_btn.grid(row=0, column=6)
 
-        # ---- centre: toolbar, chart, info line, stats strip
-        mid = tk.Frame(win, bg=C["bg"])
-        mid.grid(row=0, column=1, sticky="nsew", padx=14, pady=14)
-        mid.grid_rowconfigure(1, weight=1)
-        mid.grid_columnconfigure(0, weight=1)
-        tb = tk.Frame(mid, bg=C["bg"])
-        tb.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        self.preset_btns = {}
-        for key in PRESET_KEYS:
-            b = self._btn(tb, t("lv_p_" + key), lambda k=key: self.apply_preset(k), small=True)
-            b.pack(side="left", padx=(0, 6))
-            self.preset_btns[key] = b
-        self._btn(tb, t("lv_clear"), self.clear_sel, small=True).pack(side="left", padx=(8, 0))
-        self.series_btn = self._btn(tb, t("lv_series"), self.toggle_picker, small=True)
-        self.series_btn.pack(side="right")
-        self._btn(tb, t("lv_all"), self.show_all, small=True).pack(side="right", padx=(0, 6))
+        # ---- advanced options (folded away until asked for)
+        self.adv = uikit.Card(win, C, fill=card, pad=(P(16), P(16), P(8), P(8)), radius=10, bg=C["bg"])
+        self.adv_on = False
+        row = tk.Frame(self.adv.body, bg=card)
+        row.pack(fill="x")
+        self.v_band, self.v_marks, self.v_stats = tk.BooleanVar(value=True), tk.BooleanVar(value=True), \
+            tk.BooleanVar(value=True)
+        for var, key in ((self.v_band, "lv_adv_band"), (self.v_marks, "lv_adv_marks"), (self.v_stats, "lv_adv_stats")):
+            uikit.Check(row, t(key), var, C, (self.F_TXT, 10), bg=card, command=self.request_draw,
+                        small=True).pack(side="left", padx=(0, P(22)))
+        self._btn(row, t("lv_clear_pins"), self.clear_pins, small=True, bg=card).pack(side="right")
 
-        self.cv = tk.Canvas(mid, bg=C["bg"], highlightthickness=0, bd=0, cursor="crosshair")
-        self.cv.grid(row=1, column=0, sticky="nsew")
-        self.cv.bind("<Configure>", lambda e: self.request_draw())
-        self.cv.bind("<Motion>", self._motion)
-        self.cv.bind("<Leave>", self._leave)
-        self.cv.bind("<ButtonPress-1>", self._press)
-        self.cv.bind("<B1-Motion>", self._drag)
-        self.cv.bind("<ButtonRelease-1>", self._release)
-        self.cv.bind("<Double-Button-1>", self._double)
-        self.tip = ChartTip(self.cv)
+        # ---- body: series sidebar | chart + statistics
+        body = tk.Frame(win, bg=C["bg"])
+        body.grid(row=2, column=0, sticky="nsew", padx=P(16), pady=(0, P(16)))
+        body.grid_columnconfigure(1, weight=1)
+        body.grid_rowconfigure(0, weight=1)
 
-        info = tk.Frame(mid, bg=C["bg"])
-        info.grid(row=2, column=0, sticky="ew", pady=(8, 4))
-        self.info_l = tk.Label(info, text="", bg=C["bg"], fg=C["name"], font=(self.F_TXT, 9), anchor="w")
-        self.info_l.pack(side="left")
-        helptexts.info_icon(info, "lv_nav", bg=C["bg"]).pack(side="right")
-        self.strip = tk.Canvas(mid, height=96, bg=C["card"], highlightthickness=1, highlightbackground=C["border"],
-                               bd=0)
-        self.strip.grid(row=3, column=0, sticky="ew")
-        self.strip.bind("<Configure>", lambda e: self.draw_strip())
-
-        # ---- right: series picker + programs
-        self.right = tk.Frame(win, bg=C["bg"], width=300)
-        self.right.grid(row=0, column=2, sticky="ns", padx=(0, 14), pady=14)
-        self.right.pack_propagate(False)
-        ph = tk.Frame(self.right, bg=C["bg"])
+        # sidebar
+        self.side = FillCard(body, C, width=P(310), fill=card, pad=(P(14), P(14), P(12), P(12)), bg=C["bg"])
+        self.side.grid(row=0, column=0, sticky="ns", padx=(0, P(12)))
+        sb = self.side.body
+        ph = tk.Frame(sb, bg=card)
         ph.pack(fill="x")
-        tk.Label(ph, text=t("lv_series"), bg=C["bg"], fg=C["fg"], font=(self.F_TXT, 12, "bold")).pack(side="left")
-        self.sel_count = tk.Label(ph, text="", bg=C["bg"], fg=C["dim"], font=(self.F_TXT, 9))
-        self.sel_count.pack(side="left", padx=(8, 0), pady=(3, 0))
-        helptexts.info_icon(ph, "lv_series", bg=C["bg"]).pack(side="right")
+        tk.Label(ph, text=t("lv_series"), bg=card, fg=C["fg"], font=(self.F_HEAD, 11, "bold")).pack(side="left")
+        self.sel_count = tk.Label(ph, text="", bg=card, fg=C["dim"], font=(self.F_TXT, 9))
+        self.sel_count.pack(side="left", padx=(8, 0), pady=(2, 0))
+        helptexts.info_icon(ph, "lv_series", bg=card).pack(side="right")
+        self.clear_btn = self._btn(ph, t("lv_clear"), self.clear_sel, small=True, bg=card)
+        self.clear_btn.pack(side="right", padx=(0, P(8)))
+        self._tipped(self.clear_btn, t("lv_tip_clear"))
         self.v_ssearch = tk.StringVar()
-        self.v_ssearch.trace_add("write", lambda *a: self.rebuild_pick_rows())
-        self._entry(self.right, self.v_ssearch, t("lv_series_search")).pack(fill="x", pady=(8, 8), ipady=4)
-        self.plist = VList(self.right, C, 26, self._draw_pick, self._click_pick, self._hover_pick, bg=C["card"])
-        self.plist.pack(fill="both", expand=True)
-        self.ptip = tooltip.Tooltip(self.plist.cv, self._pick_tip)
-
-        self.prog = tk.Frame(self.right, bg=C["bg"], height=290)
-        self.prog.pack_propagate(False)
-        ph2 = tk.Frame(self.prog, bg=C["bg"])
-        ph2.pack(fill="x", pady=(10, 4))
-        tk.Label(ph2, text=t("lv_programs"), bg=C["bg"], fg=C["fg"], font=(self.F_TXT, 11, "bold")).pack(side="left")
-        self.prog_time = tk.Label(ph2, text="", bg=C["bg"], fg=C["dim"], font=(self.F_TXT, 9))
+        self._traces.append((self.v_ssearch, self.v_ssearch.trace_add("write", lambda *a: self.rebuild_pick_rows())))
+        self._search_field(sb, self.v_ssearch, t("lv_series_search"), card).pack(fill="x", pady=(P(10), P(8)))
+        chips = [(k, t("lv_p_" + k)) for k in PRESET_KEYS] + [("all", t("lv_all"))]
+        self.chips = ChipBar(sb, C, (self.F_TXT, 9), chips, self._chip, bg=card)
+        self.chips.pack(fill="x", pady=(0, P(8)))
+        hover_tip(self.chips, lambda x, y: self.chips.key_at(x, y),
+                  lambda k: t("lv_tip_all") if k == "all" else t("lv_tip_preset"))
+        # programs at the cursor (packed above the series list while the recording has any)
+        self.prog = tk.Frame(sb, bg=card)
+        ph2 = self.prog_head = tk.Frame(self.prog, bg=card, cursor="hand2")
+        ph2.pack(fill="x", pady=(P(8), P(4)))
+        self.prog_chev = tk.Label(ph2, text="▾", bg=card, fg=C["dim"], font=(self.F_TXT, 10), cursor="hand2")
+        self.prog_chev.pack(side="left")
+        self.prog_title = tk.Label(ph2, text=t("lv_programs"), bg=card, fg=C["fg"], font=(self.F_HEAD, 11, "bold"),
+                                   cursor="hand2")
+        self.prog_title.pack(side="left", padx=(6, 0))
+        self.prog_time = tk.Label(ph2, text="", bg=card, fg=C["dim"], font=(self.F_TXT, 9), cursor="hand2")
         self.prog_time.pack(side="left", padx=(8, 0), pady=(2, 0))
-        self.sort_bar = tk.Frame(self.prog, bg=C["bg"])
-        self.sort_bar.pack(fill="x", pady=(0, 4))
+        for w in (ph2, self.prog_chev, self.prog_title, self.prog_time):
+            w.bind("<Button-1>", lambda e: self.toggle_prog())
+        self._tipped(self.prog_title, t("lv_tip_prog"))
+        self.prog_body = tk.Frame(self.prog, bg=card, height=P(230))
+        self.prog_body.pack_propagate(False)
+        self.sort_bar = tk.Frame(self.prog_body, bg=card)
+        self.sort_bar.pack(fill="x", pady=(0, P(4)))
         self.sort_metric, self.sort_btns = "CPU", {}
         for m in logdata.Recording.METRICS:
             b = tk.Label(self.sort_bar, text=m, bg=C["track"], fg=C["dim"], font=(self.F_TXT, 8), padx=7, pady=2,
@@ -756,8 +1068,68 @@ class Viewer:
             b.bind("<Button-1>", lambda e, m=m: self.set_sort(m))
             self.sort_btns[m] = b
         self.prog_rows, self.prog_src = [], None
-        self.pglist = VList(self.prog, C, 38, self._draw_prog, bg=C["card"])
+        self.pglist = VList(self.prog_body, C, P(38), self._draw_prog, bg=card)
         self.pglist.pack(fill="both", expand=True)
+        # the series list
+        self.plist = VList(sb, C, P(28), self._draw_pick, self._click_pick, None, bg=card)
+        self.plist.pack(fill="both", expand=True)
+        self.plist.empty = t("lv_no_match")
+        self.ptip = hover_tip(self.plist.cv, self._pick_cell, self._pick_tip)
+        self._tips.append(self.ptip)
+
+        # chart card and the statistics table below it
+        main = tk.Frame(body, bg=C["bg"])
+        main.grid(row=0, column=1, sticky="nsew")
+        main.grid_columnconfigure(0, weight=1)
+        main.grid_rowconfigure(0, weight=1)
+        self.chart_card = FillCard(main, C, fill=card, pad=(P(10), P(10), P(10), P(8)), bg=C["bg"])
+        self.chart_card.grid(row=0, column=0, sticky="nsew")
+        foot = tk.Frame(self.chart_card.body, bg=card)
+        foot.pack(side="bottom", fill="x", pady=(P(6), 0))
+        self.info_l = tk.Label(foot, text="", bg=card, fg=C["name"], font=(self.F_TXT, 9), anchor="w")
+        self.info_l.pack(side="left", padx=(P(4), 0))
+        helptexts.info_icon(foot, "lv_nav", bg=card).pack(side="right")
+        self.cv = tk.Canvas(self.chart_card.body, bg=card, highlightthickness=0, bd=0, cursor="crosshair")
+        self.cv.pack(fill="both", expand=True)
+        self.cv.bind("<Configure>", lambda e: self.request_draw())
+        self.cv.bind("<Motion>", self._motion)
+        self.cv.bind("<Leave>", self._leave)
+        self.cv.bind("<ButtonPress-1>", self._press)
+        self.cv.bind("<B1-Motion>", self._drag)
+        self.cv.bind("<ButtonRelease-1>", self._release)
+        self.cv.bind("<Double-Button-1>", self._double)
+        self.tip = ChartTip(self.cv)
+        self.stats_card = uikit.Card(main, C, fill=card, pad=(P(10), P(10), P(6), P(6)), bg=C["bg"])
+        self.stats_card.grid(row=1, column=0, sticky="ew", pady=(P(12), 0))
+        self.strip = tk.Canvas(self.stats_card.body, height=P(34), bg=card, highlightthickness=0, bd=0)
+        self.strip.pack(fill="x")
+        self.strip.bind("<Configure>", lambda e: self.draw_strip())
+        self.stats_card.grid_remove()
+        self._stats_on = False
+
+    def toggle_adv(self):
+        self.adv_on = not self.adv_on
+        if self.adv_on:
+            self.adv.grid(row=1, column=0, sticky="ew", padx=P(16), pady=(0, P(10)))
+        else:
+            self.adv.grid_remove()
+        self.adv_btn.config(text=t("lv_adv") + ("  ▴" if self.adv_on else "  ▾"))
+
+    def clear_pins(self):
+        self.pins = []
+        self.request_draw()
+
+    def flash(self, text, secs=5.0):
+        """A short note in the info line under the chart."""
+        self.note = text
+        self._cancel(self._note_job)
+        self._note_job = self._after(int(secs * 1000), self._unflash)
+        self._update_info()
+
+    def _unflash(self):
+        self._note_job = None
+        self.note = ""
+        self._update_info()
 
     # ------------------------------------------------------------ wheel routing
     def _wheel_any(self, e):
@@ -771,7 +1143,7 @@ class Viewer:
             if w is self.strip:
                 self.strip_off = max(0, self.strip_off + (-1 if e.delta > 0 else 1))
                 return self.draw_strip()
-            for lst in (self.rlist, self.plist, self.pglist):
+            for lst in (self.plist, self.pglist):
                 if w is lst or w is lst.cv:
                     lst.scroll(e.delta)
                     return
@@ -780,19 +1152,20 @@ class Viewer:
     # ------------------------------------------------------------ recordings list
     def reload_list(self):
         self.paths = logdata.list_recordings(self.folder)
-        self.rec_count.config(text=str(len(self.paths)) if self.paths else "")
         self.probe_gen += 1
         gen = self.probe_gen
         todo = list(self.paths)
+        pq, state = self.pq, self._probe_state                  # (the worker must not hold on to the viewer itself)
 
         def work():
             for p in todo:
-                if gen != self.probe_gen:
+                if gen != state[0]:
                     return
-                self.pq.put((gen, p, logdata.probe(p)))
+                pq.put((gen, p, logdata.probe(p)))
         threading.Thread(target=work, daemon=True).start()
         self.rebuild_rec_rows()
-        self.win.after(60, self._poll_probe)
+        self._cancel(self._probe_job)
+        self._probe_job = self._after(60, self._poll_probe)
         try:
             if self.rec is not None and self.cur_path and os.path.getsize(self.cur_path) != self.rec.size:
                 self.open_path(self.cur_path, keep_view=True)           # the recording is still being written
@@ -800,8 +1173,10 @@ class Viewer:
             pass
         if self.autoload and self.rec is None and self.paths and self.cur_path is None:
             self.open_path(self.paths[0])
+        self.picker.draw()
 
     def _poll_probe(self):
+        self._probe_job = None
         if not self.alive():
             return
         changed = False
@@ -814,12 +1189,14 @@ class Viewer:
         except queue.Empty:
             pass
         if changed:
-            self.rlist.redraw()
+            self.picker.draw()
+            if self.rlist is not None:
+                self.rlist.redraw()
         if any(p not in self.probes for p in self.paths):
-            self.win.after(120, self._poll_probe)
+            self._probe_job = self._after(120, self._poll_probe)
 
     def rebuild_rec_rows(self):
-        q = (self.v_rsearch.get() or "").strip().lower()
+        q = (self.v_rsearch.get() if self.pop is not None else "").strip().lower()
         rows = []
         for p in self.paths:
             if q:
@@ -828,8 +1205,10 @@ class Viewer:
                 if q not in hay:
                     continue
             rows.append(p)
-        self.rlist.empty = t("lv_no_recs")
-        self.rlist.set_rows(rows)
+        self.rec_rows = rows
+        if self.rlist is not None:
+            self.rlist.empty = t("lv_no_recs")
+            self.rlist.set_rows(rows)
 
     def _rec_time(self, p, d):
         if d.get("start"):
@@ -842,20 +1221,58 @@ class Viewer:
             except OSError:
                 return 0.0
 
+    def _badges(self, d):
+        C = self.C
+        out = []
+        if d.get("abrupt"):
+            out.append((t("lv_abrupt"), C["red"]))
+        if d.get("gaps"):
+            n = len(d["gaps"])
+            out.append((t("lv_gap", d=f"{n}x" if n > 1 else crashscan.fmt_dur(d["gaps"][0][1] - d["gaps"][0][0])),
+                        C["yellow"]))
+        if d.get("live"):
+            out.append((t("lv_live"), C["green"]))
+        if d.get("side"):
+            out.append((t("lv_prog"), C["accent_net"]))
+        return out
+
+    def rec_summary(self):
+        """(date, 'length · size', tags) of the open recording for the toolbar picker."""
+        p = self.cur_path
+        if not p:
+            return (t("lv_pick_rec") if self.paths else t("lv_no_rec")), "", []
+        d = self.probes.get(p, {})
+        rec = self.rec if self.rec is not None and self.rec.path == p and len(self.rec) else None
+        title = fmt_clock(self._rec_time(p, d), True)[:16]
+        bits = []
+        if rec is not None:
+            bits.append(crashscan.fmt_dur(rec.end - rec.start))
+        elif d.get("start") and d.get("end"):
+            bits.append(crashscan.fmt_dur(d["end"] - d["start"]))
+        try:
+            bits.append(fmt_size(d.get("size") or os.path.getsize(p)))
+        except OSError:
+            pass
+        badges = self._badges(d)
+        if rec is not None:                                    # the loaded file knows more than the quick probe
+            badges = self._badges({"abrupt": rec.abrupt, "gaps": rec.gaps, "live": rec.live,
+                                   "side": os.path.exists(logdata.side_path(rec.path))})
+        return title, "  ·  ".join(bits), badges
+
     def _draw_rec(self, cv, i, p, y, w, hot):
         C = self.C
         RH = self.rlist.row_h
         d = self.probes.get(p, {})
         if p == self.cur_path:
-            cv.create_rectangle(0, y, w, y + RH, fill=C["select"], width=0)
-            cv.create_rectangle(0, y, 3, y + RH, fill=C["ui"], width=0)
+            cv.create_rectangle(P(4), y + 1, w - P(4), y + RH - 1, fill=C["select"], width=0)
+            cv.create_rectangle(P(4), y + P(6), P(7), y + RH - P(6), fill=C["ui"], width=0)
         elif hot:
-            cv.create_rectangle(0, y, w, y + RH, fill=C["stripe"], width=0)
-        cv.create_line(12, y + RH - 1, w - 12, y + RH - 1, fill=C["border"])
-        cv.create_text(14, y + 12, text=fmt_clock(self._rec_time(p, d), True)[:16], anchor="w", fill=C["fg"],
+            cv.create_rectangle(P(4), y + 1, w - P(4), y + RH - 1, fill=C["stripe"], width=0)
+        cv.create_line(P(12), y + RH - 1, w - P(12), y + RH - 1, fill=C["border"])
+        cv.create_text(P(16), y + P(13), text=fmt_clock(self._rec_time(p, d), True)[:16], anchor="w", fill=C["fg"],
                        font=self.f10b)
         if d.get("start") and d.get("end"):
-            cv.create_text(w - 14, y + 12, text=crashscan.fmt_dur(d["end"] - d["start"]), anchor="e",
+            cv.create_text(w - P(14), y + P(13), text=crashscan.fmt_dur(d["end"] - d["start"]), anchor="e",
                            fill=C["name"], font=self.f9)
         sub = []
         try:
@@ -864,30 +1281,125 @@ class Viewer:
             pass
         if d.get("rows"):
             sub.append(rows_text(d["rows"]))
-        cv.create_text(14, y + 31, text="  ·  ".join(sub) if sub else "...", anchor="w", fill=C["dim"],
+        cv.create_text(P(16), y + P(33), text="  ·  ".join(sub) if sub else "...", anchor="w", fill=C["dim"],
                        font=self.f9)
-        badges = []
-        if d.get("abrupt"):
-            badges.append((t("lv_abrupt"), C["red"]))
-        if d.get("gaps"):
-            n = len(d["gaps"])
-            badges.append((t("lv_gap", d=f"{n}x" if n > 1 else crashscan.fmt_dur(d["gaps"][0][1] - d["gaps"][0][0])),
-                           C["yellow"]))
-        if d.get("live"):
-            badges.append((t("lv_live"), C["green"]))
-        if d.get("side"):
-            badges.append((t("lv_prog"), C["accent_net"]))
-        x = 14
-        for text, col in badges:
-            tw = self.f9.measure(text) + 12
-            if x + tw > w - 10:
+        x = P(16)
+        for text, col in self._badges(d):
+            tw = self.f9.measure(text) + P(12)
+            if x + tw > w - P(10):
                 break
-            cv.create_rectangle(x, y + 42, x + tw, y + 56, fill=themes.mix(C["card"], col, 0.2), width=0)
-            cv.create_text(x + tw / 2, y + 49, text=text, fill=col, font=(self.F_TXT, 8))
-            x += tw + 5
+            cv.create_rectangle(x, y + P(43), x + tw, y + P(57), fill=themes.mix(C["card"], col, 0.2), width=0)
+            cv.create_text(x + tw / 2, y + P(50), text=text, fill=col, font=(self.F_TXT, 8))
+            x += tw + P(5)
 
     def _click_rec(self, i, p, e):
+        self.close_rec_popup()
         self.open_path(p)
+
+    # ---- the popup with the list of recordings
+    def toggle_rec_popup(self):
+        if self.pop is not None:
+            self.close_rec_popup()
+        elif time.time() - self._pop_closed_at > 0.25:
+            self.open_rec_popup()
+
+    def open_rec_popup(self):
+        if self.pop is not None:
+            return
+        C = self.C
+        pk = self.picker
+        W = max(pk.winfo_width(), P(430))
+        rows_vis = max(1, min(6, len(self.paths) or 1))
+        lh = rows_vis * P(62)
+        pop = tk.Toplevel(self.win)
+        self.pop = pop
+        pop.withdraw()
+        pop.overrideredirect(True)
+        pop.configure(bg=C["border"])
+        try:
+            pop.attributes("-topmost", bool(self.win.attributes("-topmost")))
+        except tk.TclError:
+            pass
+        inner = tk.Frame(pop, bg=C["card"])
+        inner.pack(fill="both", expand=True, padx=1, pady=1)
+        self.v_rsearch = tk.StringVar()
+        self._rsearch_trace = self.v_rsearch.trace_add("write", lambda *a: self.rebuild_rec_rows())
+        self._traces.append((self.v_rsearch, self._rsearch_trace))
+        sf = self._search_field(inner, self.v_rsearch, t("lv_search"), C["card"])
+        sf.pack(fill="x", padx=P(10), pady=(P(10), P(6)))
+        self.rlist = VList(inner, C, P(62), self._draw_rec, self._click_rec, None, bg=C["card"])
+        self.rlist.cv.configure(height=lh, width=W - P(30))
+        self.rlist.pack(fill="x", padx=(P(6), P(6)))
+        foot = tk.Frame(inner, bg=C["card"])
+        foot.pack(fill="x", padx=P(10), pady=P(8))
+        self._btn(foot, t("lv_refresh"), self.reload_list, small=True, bg=C["card"]).pack(side="left")
+        self._btn(foot, t("lv_browse"), self._browse_from_popup, small=True, bg=C["card"]).pack(side="left",
+                                                                                                padx=(P(6), 0))
+        helptexts.info_icon(foot, "lv_recs", bg=C["card"]).pack(side="right")
+        tk.Label(foot, text=str(len(self.paths)) if self.paths else "", bg=C["card"], fg=C["dim"],
+                 font=(self.F_TXT, 9)).pack(side="right", padx=(0, 8))
+        pop.bind("<Escape>", lambda e: self.close_rec_popup())
+        pop.bind("<MouseWheel>", lambda e: self.rlist.scroll(e.delta) if self.rlist is not None else None)
+        pop.bind("<FocusOut>", lambda e: self._after(80, self._check_pop_focus))
+        sf.entry.bind("<Return>", lambda e: self._click_rec(0, self.rec_rows[0], e) if self.rec_rows else None)
+        self.rebuild_rec_rows()
+        pop.update_idletasks()
+        H = pop.winfo_reqheight()
+        ml, mt, mr, mb = uikit.monitor_work(pk.winfo_rootx(), pk.winfo_rooty(), pk)
+        x, y = pk.winfo_rootx(), pk.winfo_rooty() + pk.winfo_height() + P(4)
+        if y + H > mb - 8:
+            y = max(mt, pk.winfo_rooty() - H - P(4))
+        x = max(ml, min(x, mr - W))
+        pop.geometry(f"{W}x{H}+{x}+{y}")
+        try:                                                    # Windows 11: rounded corners
+            import ctypes
+            hwnd = ctypes.windll.user32.GetParent(pop.winfo_id()) or pop.winfo_id()
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(ctypes.c_int(2)), 4)
+        except Exception:
+            pass
+        pop.deiconify()
+        pop.lift()
+        pop.focus_force()
+        sf.entry.focus_set()
+        if self.cur_path in self.rec_rows:
+            self.rlist.see(self.rec_rows.index(self.cur_path))
+        pk.draw()
+
+    def _check_pop_focus(self):
+        try:
+            if self.pop is not None and self.pop.focus_displayof() is None:
+                self.close_rec_popup()
+        except tk.TclError:
+            self.pop = self.rlist = None
+
+    def close_rec_popup(self):
+        pop, self.pop, self.rlist = self.pop, None, None
+        self._pop_closed_at = time.time()
+        if pop is not None:
+            try:
+                pop.destroy()
+            except tk.TclError:
+                pass
+            uikit.forget_fonts(pop)                            # its font cache entries are keyed by its name
+            tid = getattr(self, "_rsearch_trace", None)
+            keep = []
+            for var, t_ in self._traces:                       # the popup's search variable is gone with it
+                if t_ == tid:
+                    try:
+                        var.trace_remove("write", t_)
+                    except (tk.TclError, ValueError):
+                        pass
+                else:
+                    keep.append((var, t_))
+            self._traces = keep
+            try:
+                self.picker.draw()
+            except tk.TclError:
+                pass
+
+    def _browse_from_popup(self):
+        self.close_rec_popup()
+        self.browse()
 
     def open_dir(self):
         try:
@@ -913,7 +1425,7 @@ class Viewer:
         self.tip.hide()
         if self._keep is None:
             self.rec = None
-        self.rlist.redraw()
+        self.picker.draw()
         self.request_draw()
         hint = config.csv_format(self.api.cfg)[1] if getattr(self.api, "cfg", None) is not None else None
         box = {}
@@ -932,14 +1444,15 @@ class Viewer:
             if not self.alive() or self.cur_path != path:
                 return
             if th.is_alive():
-                self._load_job = self.win.after(40, poll)
+                self._load_job = self._after(40, poll)
                 return
             if "rec" in box:
                 self.set_recording(box["rec"])
             else:
                 self.msg = t("lv_err", e=box.get("err", "?"))
                 self.request_draw()
-        self._load_job = self.win.after(30, poll)
+        self._cancel(self._load_job)
+        self._load_job = self._after(30, poll)
 
     def set_recording(self, rec):
         if not self._keys and getattr(self.api, "cfg", None) is not None:
@@ -949,18 +1462,17 @@ class Viewer:
         self.rec = rec
         self.msg = ""
         self.sel, self.slot, self.pins = [], {}, []
+        self._all_added, self._preset_added = set(), {}
         self.hover_t = self.hover_i = None
         self._leave()
         self.f0 = rec.start
         self.f1 = rec.end + max(rec.interval, (rec.end - rec.start) * 0.015) if len(rec) else rec.start + 1
         self.v0, self.v1 = self.f0, self.f1
         self.expanded = set()
-        for k, b in self.preset_btns.items():
-            b.config(state="normal" if self.presets[k] else "disabled")
         keep = [i for i in keep if i in rec.by_idx]
         if keep:
+            self._expand_for(keep)
             self.set_selection(keep)
-            self.expanded |= {rec.by_idx[i].cat for i in keep}
         elif len(rec):
             first = next((k for k in (self.last_pick_key,) + PRESET_KEYS if self.presets[k]), None)
             if first:
@@ -974,8 +1486,8 @@ class Viewer:
             self.pins = [p for p in keep_view[2] if rec.start <= p <= rec.end]
         self._update_prog_visibility()
         self.rebuild_pick_rows()
-        if rec.path in self.rlist.rows:
-            self.rlist.see(self.rlist.rows.index(rec.path))
+        self._mark_presets()
+        self.picker.draw()
         self.request_draw()
 
     def focus_time(self, ts, span=300.0, pin=None):
@@ -991,6 +1503,8 @@ class Viewer:
         self.request_draw()
 
     # ------------------------------------------------------------ series selection
+    # A group's tick box only ever touches the series listed in that group; collapsing a group, a quick pick or
+    # "Show all" never drops a series that was chosen somewhere else.
     def set_selection(self, idxs):
         rec = self.rec
         self.sel = list(dict.fromkeys(i for i in idxs if rec and i in rec.by_idx))
@@ -1018,42 +1532,66 @@ class Viewer:
             sel.append(idx)
         self.set_selection(sel)
 
+    def toggle_group(self, members):
+        """Tick box of a group: everything listed in it on, or (when all of it was on) off. Nothing else changes."""
+        idxs = [s.idx for s in members]
+        have = set(self.sel)
+        if idxs and all(i in have for i in idxs):
+            drop = set(idxs)
+            self.set_selection([i for i in self.sel if i not in drop])
+        else:
+            self.set_selection(list(self.sel) + [i for i in idxs if i not in have])
+
+    def _expand_for(self, idxs):
+        by = self.rec.by_idx
+        for i in idxs:
+            s = by.get(i)
+            if s is not None:
+                self.expanded.add(s.comp)
+                self.expanded.add(f"{s.comp}/{s.cat}")
+
+    def _chip(self, key):
+        if key == "all":
+            self.show_all()
+        else:
+            self.apply_preset(key)
+
     def apply_preset(self, key):
-        """Adds the preset's series to the selection (earlier picks stay) and opens its picker groups."""
+        """Quick pick: adds the group's main series. Pressed again (all of them on) it removes only the ones it
+        added itself: a series you had ticked by hand before stays."""
         idxs = self.presets.get(key) if self.rec is not None else None
         if not idxs:
             return
         self.last_pick_key = key
-        cats = {self.rec.by_idx[i].cat for i in idxs}
-        active = getattr(self, "active_presets", set())
-        if key in active:
-            # second click: the preset's whole group is switched off (incl. series added later with Show all)
-            active.discard(key)
-            self.expanded -= cats
-            self.set_selection([i for i in self.sel if self.rec.by_idx[i].cat not in cats])
+        if set(idxs) <= set(self.sel):
+            drop = {i for i in self._preset_added.pop(key, set()) if i in idxs} or set(idxs)
+            self.set_selection([i for i in self.sel if i not in drop])
         else:
-            active.add(key)
-            self.expanded |= cats
-            self.set_selection(list(self.sel) + [i for i in idxs if i not in self.sel])
-        self.active_presets = active
-        self.plist.set_rows(self.plist.rows, keep=False)
+            self._expand_for(idxs)
+            added = [i for i in idxs if i not in self.sel]
+            self._preset_added[key] = set(added)
+            self.set_selection(list(self.sel) + added)
 
     def show_all(self):
-        """Toggle: selects every series of the groups whose preset is switched on and shows the full time range;
-        pressed again while all of them are shown, it switches them off. Does nothing when no preset is on."""
-        if self.rec is None:
+        """Draws every series of the hardware groups you already have series from and shows the whole range;
+        pressed again while those are on, it removes just the series it added."""
+        rec = self.rec
+        if rec is None:
             return
-        groups = {self.rec.by_idx[i].cat for k in getattr(self, "active_presets", set())
-                  for i in (self.presets.get(k) or [])}
-        if not groups:
+        if self._all_added and self._all_added <= set(self.sel):
+            drop, self._all_added = self._all_added, set()
+            self.set_selection([i for i in self.sel if i not in drop])
             return
-        idxs = [s.idx for s in self.rec.series if s.cat in groups]
-        if idxs and set(idxs) <= set(self.sel):
-            off = set(idxs)
-            self.set_selection([i for i in self.sel if i not in off])
-        else:
-            self.set_selection(list(self.sel) + [i for i in idxs if i not in self.sel])
-            self.reset_view()
+        comps = {rec.by_idx[i].comp for i in self.sel if i in rec.by_idx}
+        if not comps:
+            first = next((k for k in (self.last_pick_key,) + PRESET_KEYS if self.presets.get(k)), None)
+            comps = {rec.by_idx[i].comp for i in (self.presets.get(first) or [])}
+        idxs = [s.idx for s in rec.series if s.comp in comps]
+        added = [i for i in idxs if i not in self.sel]
+        self._all_added = set(added)
+        self._expand_for(idxs)
+        self.set_selection(list(self.sel) + added)
+        self.reset_view()
 
     def _save_sel(self):
         cfg = getattr(self.api, "cfg", None)
@@ -1066,22 +1604,19 @@ class Viewer:
             pass
 
     def clear_sel(self):
-        self.active_presets = set()
+        self._all_added = set()
         self.set_selection([])
 
     def _mark_presets(self):
-        if self.rec is None:
-            return
-        C = self.C
-        for k, b in self.preset_btns.items():
-            ser = self.presets.get(k)
-            on = bool(ser) and k in getattr(self, "active_presets", set())
-            base = C["ui"] if on else C["track"]
-            b.base = base
-            b.config(bg=base, fg=C["on_ui"] if on else (C["fg"] if ser else C["faint"]),
-                     activebackground=C["ui_hover"] if on else C["border"])
+        states = {}
+        for k in PRESET_KEYS:
+            ser = self.presets.get(k) if self.rec is not None else None
+            states[k] = "dis" if not ser else ("on" if set(ser) <= set(self.sel) else "off")
+        states["all"] = ("dis" if self.rec is None else
+                         "on" if self._all_added and self._all_added <= set(self.sel) else "off")
+        self.chips.set_states(states)
 
-    # ------------------------------------------------------------ picker
+    # ------------------------------------------------------------ the series list (hardware group > kind > series)
     def rebuild_pick_rows(self):
         rec = self.rec
         rows = []
@@ -1091,90 +1626,169 @@ class Viewer:
             for s in rec.series:
                 if q and q not in (s.key + " " + s.label).lower():
                     continue
-                groups.setdefault(s.cat, []).append(s)
-            for cat in logdata.CATS:
-                lst = groups.get(cat)
-                if not lst:
+                groups.setdefault(s.comp, {}).setdefault(s.cat, []).append(s)
+            have = set(self.sel)
+            for comp in logdata.COMPS:
+                cats = groups.get(comp)
+                if not cats:
                     continue
-                nsel = sum(1 for s in lst if s.idx in self.sel)
-                open_ = cat in self.expanded or bool(q)
-                rows.append(("grp", cat, len(lst), nsel, open_))
-                if open_:
-                    rows += [("ser", s) for s in lst]
+                allser = [s for cat in logdata.CATS for s in cats.get(cat, [])]
+                nsel = sum(1 for s in allser if s.idx in have)
+                open_ = comp in self.expanded or bool(q)
+                rows.append(("grp", 0, comp, t("lv_comp_" + comp), len(allser), nsel, open_, allser))
+                if not open_:
+                    continue
+                if len(cats) > 1 and len(allser) > 10:                   # kinds (temperatures, clocks...) as sub-groups
+                    for cat in logdata.CATS:
+                        lst = cats.get(cat)
+                        if not lst:
+                            continue
+                        key = f"{comp}/{cat}"
+                        o2 = key in self.expanded or bool(q)
+                        rows.append(("grp", 1, key, t("lv_cat_" + cat), len(lst),
+                                     sum(1 for s in lst if s.idx in have), o2, lst))
+                        if o2:
+                            rows += [("ser", s, 2) for s in lst]
+                else:
+                    rows += [("ser", s, 1) for s in allser]
+        self.plist.empty = t("lv_no_match") if rec is not None else ""
         self.plist.set_rows(rows)
         self.sel_count.config(text=t("lv_selected", n=len(self.sel)) if self.sel else "")
 
+    def _box(self, cv, x, cy, state, col):
+        """Tick box: 0 empty, 1 partly (dash), 2 full (check)."""
+        C = self.C
+        b = P(14)
+        y0 = cy - b / 2
+        if state == 2:
+            cv.create_rectangle(x, y0, x + b, y0 + b, fill=col, outline=col)
+            cv.create_line(x + P(3), cy, x + P(6), cy + P(3), x + b - P(3), cy - P(3), fill=C["bg"], width=2)
+        elif state == 1:
+            cv.create_rectangle(x, y0, x + b, y0 + b, fill=C["track"], outline=col)
+            cv.create_rectangle(x + P(3), cy - 1, x + b - P(3), cy + 1, fill=col, outline=col)
+        else:
+            cv.create_rectangle(x, y0, x + b, y0 + b, fill=C["track"], outline=C["faint"])
+
     def _draw_pick(self, cv, i, row, y, w, hot):
         C = self.C
+        RH = self.plist.row_h
+        cy = y + RH / 2
         if hot:
-            cv.create_rectangle(0, y, w, y + 26, fill=C["stripe"], width=0)
+            cv.create_rectangle(P(4), y + 1, w - P(4), y + RH - 1, fill=C["stripe"], width=0)
         if row[0] == "grp":
-            _, cat, n, nsel, open_ = row
-            cx, cy = 14, y + 13
-            pts = [cx - 3, cy - 4, cx + 3, cy, cx - 3, cy + 4] if not open_ else [cx - 4, cy - 2, cx + 4, cy - 2, cx, cy + 3]
+            _, lvl, key, title, n, nsel, open_, members = row
+            if lvl == 0 and i > 0:
+                cv.create_line(P(8), y, w - P(8), y, fill=themes.mix(C["card"], C["border"], 0.7))
+            cx = P(14 + 14 * lvl)
+            pts = ([cx - P(4), cy - P(2), cx + P(4), cy - P(2), cx, cy + P(3)] if open_
+                   else [cx - P(2), cy - P(4), cx + P(3), cy, cx - P(2), cy + P(4)])
             cv.create_polygon(*pts, fill=C["dim"], outline="")
-            cv.create_text(28, cy, text=t("lv_cat_" + cat), anchor="w", fill=C["fg"], font=self.f10b)
-            right = f"{nsel}/{n}" if nsel else str(n)
-            cv.create_text(w - 10, cy, text=right, anchor="e", fill=C["ui"] if nsel else C["faint"], font=self.f9)
+            self._box(cv, cx + P(12), cy, 2 if nsel == n else 1 if nsel else 0, C["ui"])
+            tx = cx + P(34)
+            cv.create_text(tx, cy, text=fit_text(title, self.f10b if lvl == 0 else self.f9b, w - tx - P(54)),
+                           anchor="w", fill=C["fg"] if lvl == 0 else C["name"],
+                           font=self.f10b if lvl == 0 else self.f9b)
+            right = t("lv_sel_of", a=nsel, b=n) if nsel else str(n)
+            cv.create_text(w - P(10), cy, text=right, anchor="e", fill=C["ui"] if nsel else C["faint"], font=self.f9)
             return
-        s = row[1]
+        s, lvl = row[1], row[2]
         on = s.idx in self.sel
-        cy = y + 13
         col = self.color_of(s.idx) if on else None
-        cv.create_rectangle(16, cy - 7, 30, cy + 7, fill=col or C["track"], outline=col or C["faint"], width=1)
-        if on:
-            cv.create_line(19, cy, 22, cy + 3, 27, cy - 3, fill=C["bg"], width=2)
-        maxw = w - 40 - 10
-        name = fit_text(s.label, self.f10, maxw)
-        cv.create_text(40, cy, text=name, anchor="w", fill=C["fg"] if on else C["name"], font=self.f10)
+        bx = P(14 + 14 * lvl)
+        self._box(cv, bx, cy, 2 if on else 0, col)
+        tx = bx + P(22)
+        cv.create_text(tx, cy, text=fit_text(s.label, self.f10, w - tx - P(10)), anchor="w",
+                       fill=C["fg"] if on else C["name"], font=self.f10)
 
-    def _click_pick(self, i, row, e):
+    def _pick_cell(self, x, y):
+        """(row index, 'chk' | 'open' | 'row') under the pointer of the series list."""
+        i = self.plist.index_at(y)
+        if i is None:
+            return None
+        row = self.plist.rows[i]
         if row[0] == "grp":
-            cat = row[1]
-            if cat in self.expanded:
-                self.expanded.discard(cat)
-            else:
-                self.expanded.add(cat)
-            self.rebuild_pick_rows()
-        else:
-            self.toggle_series(row[1].idx)
+            box_x = P(14 + 14 * row[1]) + P(12)
+            return (i, "chk" if box_x - P(4) <= x <= box_x + P(20) else "open")
+        return (i, "row")
 
-    def _hover_pick(self, i):
-        self.ptip._leave()
-        if i is not None:
-            self._tip_row = self.plist.rows[i]
-            try:
-                cv = self.plist.cv
-                self.ptip._enter(types.SimpleNamespace(x_root=cv.winfo_pointerx(), y_root=cv.winfo_pointery()))
-            except tk.TclError:
-                pass
-
-    def _pick_tip(self):
-        row = getattr(self, "_tip_row", None)
-        if not row or row[0] != "ser":
+    def _pick_tip(self, key):
+        i, zone = key
+        try:
+            row = self.plist.rows[i]
+        except IndexError:
             return ""
+        if row[0] == "grp":
+            if zone == "chk":
+                q = (self.v_ssearch.get() or "").strip()
+                return t("lv_tip_check") + (f"\n({t('lv_search').rstrip('.')}: {q})" if q else "")
+            return t("lv_tip_open")
         s = row[1]
         rows = [(s.name, s.unit, "head")]
         if s.section:
             rows.append((s.section, ""))
         return rows
 
-    def toggle_picker(self):
-        self.picker_on = not self.picker_on
-        if self.picker_on:
-            self.right.grid()
+    def _click_pick(self, i, row, e):
+        if row[0] == "grp":
+            cell = self._pick_cell(e.x, e.y)
+            if cell and cell[1] == "chk":
+                self.toggle_group(row[7])
+            else:
+                key = row[2]
+                if key in self.expanded:
+                    self.expanded.discard(key)
+                else:
+                    self.expanded.add(key)
+                self.rebuild_pick_rows()
         else:
-            self.right.grid_remove()
-        self.request_draw()
+            self.toggle_series(row[1].idx)
 
     # ------------------------------------------------------------ programs panel
+    def _on_configure(self, e):
+        if e.widget is self.win and not self._closed:
+            self._cancel(self._adapt_job)
+            self._adapt_job = self._after(120, self._adapt)
+
+    def _adapt(self):
+        """Window size changed: fold the programs list and shorten the statistics table on a small window."""
+        self._adapt_job = None
+        h = self.win.winfo_height()
+        if self._prog_user is None:
+            want = h >= P(760)
+            if want != self.prog_open:
+                self.prog_open = want
+                self._show_prog_body()
+                self._prog_i = None
+                self.update_programs(self.cursor_row())
+        rows = 5 if h >= P(760) else 4 if h >= P(680) else 3
+        if rows != self.strip_rows:
+            self.strip_rows = rows
+            self.draw_strip()
+
+    def toggle_prog(self):
+        self.prog_open = not self.prog_open
+        self._prog_user = self.prog_open
+        self._show_prog_body()
+        self._prog_i = None
+        self.update_programs(self.cursor_row())
+
+    def _show_prog_body(self):
+        if self.prog_open:
+            self.prog_body.pack(fill="x")
+        else:
+            self.prog_body.pack_forget()
+        self.prog_chev.config(text="▾" if self.prog_open else "▸")
+
     def _update_prog_visibility(self):
         has = self.rec is not None and self.rec.has_programs()
-        if has and not self.prog.winfo_ismapped():
+        if has and not self._prog_shown:
             self.prog.pack(fill="x", side="bottom", before=self.plist)
-        elif not has and self.prog.winfo_ismapped():
+            self._prog_shown = True
+        elif not has and self._prog_shown:
             self.prog.pack_forget()
+            self._prog_shown = False
         if has:
+            self._show_prog_body()
             if self.rec.side is None:
                 self.rec.load_side()
             present = set(self.rec.top_cols) | ({"CPU", "RAM", "GPU", "VRAM", "Disk"} if self.rec.side["t"] else set())
@@ -1186,6 +1800,7 @@ class Viewer:
             if self.sort_metric not in present and present:
                 self.sort_metric = next(m for m in logdata.Recording.METRICS if m in present)
             self._style_sort()
+            self._prog_i = None
             self.update_programs(self.cursor_row())
 
     def _style_sort(self):
@@ -1211,7 +1826,7 @@ class Viewer:
 
     def update_programs(self, i):
         rec = self.rec
-        if rec is None or i is None or not self.prog.winfo_ismapped():
+        if rec is None or i is None or not self._prog_shown or not self.prog_open:
             return
         if getattr(self, "_prog_i", None) == (rec.path, i, self.sort_metric):
             return
@@ -1231,15 +1846,49 @@ class Viewer:
         main = vals.get(m)
         top = max((r[1].get(m) or 0 for r in self.pglist.rows), default=0)
         fmt = lambda k, v: (fmt_mb(v) if UNITS[k] == "MB" else fnum(v, UNITS[k]))
-        cv.create_text(12, y + 11, text=fit_text(name, self.f10, w - 100), anchor="w", fill=C["fg"], font=self.f10)
+        cv.create_text(P(6), y + P(11), text=fit_text(name, self.f10, w - P(100)), anchor="w", fill=C["fg"],
+                       font=self.f10)
         if main is not None:
-            cv.create_text(w - 12, y + 11, text=fmt(m, main), anchor="e", fill=C["fg"], font=self.f10b)
+            cv.create_text(w - P(6), y + P(11), text=fmt(m, main), anchor="e", fill=C["fg"], font=self.f10b)
         parts = [f"{k} {fmt(k, v)}" for k, v in vals.items() if k != m and v is not None]
-        cv.create_text(12, y + 26, text=fit_text("   ".join(parts), self.f9, w - 24), anchor="w", fill=C["dim"],
-                       font=self.f9)
+        cv.create_text(P(6), y + P(26), text=fit_text("   ".join(parts), self.f9, w - P(14)), anchor="w",
+                       fill=C["dim"], font=self.f9)
         if main and top > 0:
-            cv.create_rectangle(12, y + 34, 12 + (w - 24) * min(1.0, main / top), y + 36, fill=C["ui"], width=0)
-        cv.create_line(12, y + 37, w - 12, y + 37, fill=C["border"])
+            cv.create_rectangle(P(6), y + P(34), P(6) + (w - P(14)) * min(1.0, main / top), y + P(36), fill=C["ui"],
+                                width=0)
+        cv.create_line(P(6), y + P(37), w - P(6), y + P(37), fill=C["border"])
+
+    # ------------------------------------------------------------ export
+    def export_csv(self):
+        """Selected series of the visible time range as a CSV file (same separators as the recording)."""
+        rec = self.rec
+        if rec is None or not len(rec):
+            return
+        if not self.sel:
+            self.flash(t("lv_export_none"))
+            return
+        j0, j1 = bisect_left(rec.t, self.v0), bisect_right(rec.t, self.v1)
+        if j1 <= j0:
+            self.flash(t("lv_no_data"))
+            return
+        start = os.path.splitext(rec.name)[0]
+        p = filedialog.asksaveasfilename(parent=self.win, title=t("lv_export_title"), defaultextension=".csv",
+                                         initialfile=f"{start}_export.csv",
+                                         initialdir=os.path.dirname(rec.path),
+                                         filetypes=[(t("lv_pick_file"), "*.csv")])
+        if not p:
+            return
+        cols = [0] + [i for i in self.sel if i in rec.by_idx]
+        try:
+            with open(p, "w", encoding="utf-8-sig", newline="") as f:
+                w = csv.writer(f, delimiter=rec.delim, lineterminator="\r\n")
+                w.writerow([rec.header[i] for i in cols])
+                for k in range(j0, j1):
+                    parts = logdata._split(rec.lines[k], rec.delim)
+                    w.writerow([parts[i] if i < len(parts) else "" for i in cols])
+            self.flash(t("lv_exported", s=len(cols) - 1, n=fmt_count(j1 - j0)))
+        except OSError as e:
+            self.flash(t("lv_export_err", e=e))
 
     # ------------------------------------------------------------ view
     def reset_view(self):
@@ -1364,7 +2013,7 @@ class Viewer:
     # ------------------------------------------------------------ drawing: scheduling
     def request_draw(self):
         if self._draw_job is None:
-            self._draw_job = self.win.after_idle(self.draw)
+            self._draw_job = self._idle(self.draw)
 
     def start_ensure(self, missing):
         rec = self.rec
@@ -1389,8 +2038,8 @@ class Viewer:
                 self._ens_job = None
                 self.request_draw()
             else:
-                self._ens_job = self.win.after(40, poll)
-        self._ens_job = self.win.after(40, poll)
+                self._ens_job = self._after(40, poll)
+        self._ens_job = self._after(40, poll)
         return False
 
     # ------------------------------------------------------------ drawing: the chart
@@ -1405,11 +2054,12 @@ class Viewer:
             return
         rec = self.rec
         if rec is None or not len(rec):
-            cv.create_rectangle(0, 0, W, H, fill=C["card"], outline=C["border"])
             text = self.msg or (t("lv_empty") if rec is None else t("lv_no_data"))
             cv.create_text(W / 2, H / 2, text=text, fill=C["dim"], font=(self.F_TXT, 11))
             self.box = None
-            self.draw_strip()
+            self._update_stats_visibility()
+            self._sync_range()
+            self._update_info()
             return
         sel = [rec.by_idx[i] for i in self.sel if i in rec.by_idx]
         missing = [s.idx for s in sel if s.idx not in rec.cols]
@@ -1419,6 +2069,8 @@ class Viewer:
         else:
             loading = False
         self._sel_drawn = sel
+        self._update_stats_visibility()
+        LH = P(20)                                                      # legend row height
 
         # ---- legend layout (rows of chips above the plot)
         legend, ly = [], 0
@@ -1426,7 +2078,7 @@ class Viewer:
         avail = W - 4
         for s in sel:
             label = s.label
-            tw = self.f9.measure(fit_text(label, self.f9, 220)) + 28
+            tw = self.f9.measure(fit_text(label, self.f9, P(220))) + P(28)
             if x + tw > avail and x > 0:
                 row += 1
                 x = 0
@@ -1436,7 +2088,7 @@ class Viewer:
             x += tw + 6
         shown = len(legend)
         leg_rows = (legend[-1][2] + 1) if legend else 0
-        top = 8 + leg_rows * 20 + (18 if sel else 0)
+        top = P(8) + leg_rows * LH + (P(18) if sel else 0)
 
         # ---- units / axes
         units = []
@@ -1465,22 +2117,24 @@ class Viewer:
             if lo is not None:
                 ranges[u] = unit_range(lo, hi, u, pb - pt)
 
+        outer, inner = C["card"], C["bg"]                                # the chart sits on a card, the plot is inset
         if gfx.AVAILABLE and Image is not None:
-            pw = PilPainter(cv, W, H, C["bg"])
+            pw = PilPainter(cv, W, H, outer)
         else:
-            pw = CanvasPainter(cv, W, H, C["bg"], C["card"])
-        pw.rect(0, 0, W, H, C["bg"])
-        pw.rect(pl, pt, pr, pb, C["card"])
+            pw = CanvasPainter(cv, W, H, outer, inner)
+        pw.rect(0, 0, W, H, outer)
+        pw.rect(pl, pt, pr, pb, inner)
 
         # gaps / abrupt end
         x_of = lambda ts: pl + (ts - v0) / (v1 - v0) * (pr - pl)
         marks = []
-        for a, b in rec.gaps:
+        show_marks = bool(self.v_marks.get())
+        for a, b in (rec.gaps if show_marks else ()):
             if b >= v0 and a <= v1:
                 xa, xb = max(pl, x_of(a)), min(pr, x_of(b))
                 pw.rect(xa, pt, max(xb, xa + 1), pb, C["red"], 44)
                 marks.append(("gap", xa, xb, b - a))
-        if rec.abrupt and v1 > rec.end:
+        if rec.abrupt and v1 > rec.end and show_marks:
             xe = max(pl, x_of(rec.end))
             pw.rect(xe, pt, pr, pb, C["red"], 50)
             pw.vline(int(xe), pt, pb, C["red"])
@@ -1511,8 +2165,8 @@ class Viewer:
                 self._paint_dense(pw, rec, s, edges, col, ymap, pl, pt, pb)
             else:
                 self._paint_sparse(pw, rec, s, i0, i1, col, ymap, x_of)
-        pw.rect(0, pt - 2, pl, pb + 2, C["bg"])                       # lines of the neighbouring rows end at the frame
-        pw.rect(pr + 1, pt - 2, W, pb + 2, C["bg"])
+        pw.rect(0, pt - 2, pl, pb + 2, outer)                         # lines of the neighbouring rows end at the frame
+        pw.rect(pr + 1, pt - 2, W, pb + 2, outer)
         pw.hline(pl - 1, pr + 1, pb, C["faint"], 130)
         pw.hline(pl - 1, pr + 1, pt - 1, C["border"])
         pw.vline(pl - 1, pt - 1, pb + 1, C["border"])
@@ -1574,17 +2228,18 @@ class Viewer:
                                font=(self.F_TXT, 8, "bold"))
         # legend
         for s, lx, row, tw in legend:
-            y = 8 + row * 20 + 9
+            y = P(8) + row * LH + P(9)
             col = self.color_of(s.idx)
             tag = f"lg{s.idx}"
-            cv.create_rectangle(pl - 52 + lx, y - 5, pl - 52 + lx + 10, y + 5, fill=col, width=0, tags=tag)
-            cv.create_text(pl - 52 + lx + 16, y, text=fit_text(s.label, self.f9, 220), anchor="w", fill=C["name"],
-                           font=self.f9, tags=tag)
+            cv.create_rectangle(pl - P(52) + lx, y - P(5), pl - P(52) + lx + P(10), y + P(5), fill=col, width=0,
+                                tags=tag)
+            cv.create_text(pl - P(52) + lx + P(16), y, text=fit_text(s.label, self.f9, P(220)), anchor="w",
+                           fill=C["name"], font=self.f9, tags=tag)
             cv.tag_bind(tag, "<Button-1>", lambda e, i=s.idx: self.toggle_series(i))
             cv.tag_bind(tag, "<Enter>", lambda e: cv.config(cursor="hand2"))
             cv.tag_bind(tag, "<Leave>", lambda e: cv.config(cursor="crosshair"))
         if len(sel) > shown:
-            cv.create_text(W - 6, 8 + (leg_rows - 1) * 20 + 9, text=t("lv_more", n=len(sel) - shown), anchor="e",
+            cv.create_text(W - 6, P(8) + (leg_rows - 1) * LH + P(9), text=t("lv_more", n=len(sel) - shown), anchor="e",
                            fill=C["dim"], font=self.f9)
         # empty / loading hints
         if loading:
@@ -1597,6 +2252,7 @@ class Viewer:
         self.draw_pins()
         self._ranges, self._units = ranges, units
         self._update_info()
+        self._sync_range()
         if self.hover_i is not None and self.hover_i < len(rec):
             self.draw_cursor(None, None)                               # also refreshes the strip and the programs
         else:
@@ -1664,7 +2320,7 @@ class Viewer:
             if len(sg) >= 2:
                 upper = [(x, ymap(e[3])) for x, e in zip(xs, sg)]
                 lower = [(x, ymap(e[1])) for x, e in zip(xs, sg)]
-                for a, b in zip(upper, lower):                    # min..max band: one translucent bar per pixel column
+                for a, b in zip(upper, lower) if self.v_band.get() else ():   # min..max band: one translucent bar per pixel column
                     if b[1] - a[1] > 0.8:
                         pw.rect(a[0] - 0.5, a[1], a[0] + 0.5, b[1], col, 70)
                 pw.polyline(mean, col, 1.7)
@@ -1716,7 +2372,7 @@ class Viewer:
             if v is not None and rg is not None:
                 y = self._ymap(v, rg, b[1], b[3])
                 col = self.color_of(s.idx)
-                cv.create_oval(x - 4, y - 4, x + 4, y + 4, fill=col, outline=C["card"], width=2, tags="cross")
+                cv.create_oval(x - 4, y - 4, x + 4, y + 4, fill=col, outline=C["bg"], width=2, tags="cross")
             lines.append((self.color_of(s.idx), s.label, fnum(v, s.unit)))
         lab = fmt_clock(ts, full=(self.v1 - self.v0) > 86400)
         w = self.f9b.measure(lab) + 14
@@ -1744,9 +2400,45 @@ class Viewer:
         self.draw_strip()
         self.update_programs(i)
 
+    # ------------------------------------------------------------ time range control (toolbar)
+    def _range_pick(self, i):
+        rec = self.rec
+        if rec is None or not len(rec):
+            return
+        span = RANGE_SPANS[i]
+        if span is None:
+            self.reset_view()
+        else:
+            self._set_view(self.f1 - span, self.f1)
+
+    def _sync_range(self):
+        """Highlight the toolbar range button that matches the visible range (none when it is a custom zoom)."""
+        rec = self.rec
+        idx = -1
+        if rec is not None and len(rec):
+            full, span = self.f1 - self.f0, self.v1 - self.v0
+            if span >= full - 0.5:
+                idx = 0
+            elif abs(self.v1 - self.f1) < 0.5:
+                idx = next((k for k, s in enumerate(RANGE_SPANS) if s and abs(span - s) < 0.5), -1)
+        if idx != self.range_seg.index:
+            self.range_seg.set(idx)
+
+    def _update_stats_visibility(self):
+        on = bool(self.v_stats.get()) and self.rec is not None and len(self.rec) > 0 and bool(self.sel)
+        if on != self._stats_on:
+            self._stats_on = on
+            if on:
+                self.stats_card.grid()
+            else:
+                self.stats_card.grid_remove()
+
     # ------------------------------------------------------------ info line and stats strip
     def _update_info(self):
         rec = self.rec
+        if self.note:
+            self.info_l.config(text=self.note)
+            return
         if rec is None or not len(rec):
             self.info_l.config(text="")
             return
@@ -1769,45 +2461,42 @@ class Viewer:
         rec = self.rec
         sel = getattr(self, "_sel_drawn", [])
         if rec is None or not len(rec) or not sel:
-            st.config(height=34)
-            st.create_text(12, 17, text=t("lv_nosel") if rec is not None else t("lv_empty"), anchor="w",
-                           fill=C["faint"], font=self.f9)
-            return
-        RH, HH = 20, 24
+            return                                                      # the card is hidden then
+        RH, HH = P(22), P(26)
         nrows = len(sel)
-        vis = min(nrows, 6)
-        want = HH + vis * RH + 4
+        vis = min(nrows, self.strip_rows)
+        want = HH + vis * RH + P(2)
         if int(st.cget("height")) != want:
             st.config(height=want)
         self.strip_off = max(0, min(self.strip_off, nrows - vis))
         j0, j1 = bisect_left(rec.t, self.v0), bisect_right(rec.t, self.v1)
         ci = self.hover_i if self.hover_i is not None else (rec.nearest(self.pins[-1]) if self.pins else None)
-        cw = 96
+        cw = P(96)
         heads = [t("lv_col_min"), t("lv_col_avg"), t("lv_col_max"),
                  t("lv_col_cursor") if self.hover_i is not None or not self.pins else t("lv_col_pin")]
         for k, h in enumerate(heads):
-            st.create_text(W - 12 - cw * (3 - k), HH / 2 + 1, text=h, anchor="e", fill=C["dim"], font=self.f9b)
-        st.create_line(10, HH, W - 10, HH, fill=C["border"])
+            st.create_text(W - P(10) - cw * (3 - k), HH / 2, text=h, anchor="e", fill=C["dim"], font=self.f9b)
+        st.create_line(P(4), HH, W - P(4), HH, fill=C["border"])
         for r in range(vis):
             s = sel[self.strip_off + r]
-            y = HH + r * RH + RH / 2 + 2
+            y = HH + r * RH + RH / 2 + 1
             if r % 2:
-                st.create_rectangle(1, y - RH / 2, W, y + RH / 2, fill=C["stripe"], width=0)
+                st.create_rectangle(0, y - RH / 2, W, y + RH / 2, fill=C["stripe"], width=0)
             col = self.color_of(s.idx)
-            st.create_rectangle(14, y - 4, 22, y + 4, fill=col, width=0)
-            st.create_text(30, y, text=fit_text(s.label, self.f9, W - 30 - cw * 4 - 10), anchor="w", fill=C["fg"],
-                           font=self.f9)
+            st.create_rectangle(P(8), y - P(4), P(16), y + P(4), fill=col, width=0)
+            st.create_text(P(24), y, text=fit_text(s.label, self.f9, W - P(24) - cw * 4 - P(10)), anchor="w",
+                           fill=C["fg"], font=self.f9)
             stat = rec.stats(s.idx, j0, j1) if s.idx in rec.cols else None
             vals = [stat[0], stat[1], stat[2]] if stat else [None] * 3
             vals.append(rec.value(s.idx, ci) if ci is not None else None)
             for k, v in enumerate(vals):
-                st.create_text(W - 12 - cw * (3 - k), y, text=fnum(v, s.unit) if v is not None else "-", anchor="e",
-                               fill=C["fg"] if k == 3 else C["name"], font=self.fnum9)
+                st.create_text(W - P(10) - cw * (3 - k), y, text=fnum(v, s.unit) if v is not None else "-",
+                               anchor="e", fill=C["fg"] if k == 3 else C["name"], font=self.fnum9)
         if nrows > vis:                                                # thin scroll bar
             span = vis * RH
             h = max(14, span * vis / nrows)
             y0 = HH + 2 + (span - h) * (self.strip_off / (nrows - vis))
-            st.create_rectangle(W - 5, y0, W - 2, y0 + h, fill=C["border"], width=0)
+            st.create_rectangle(W - 4, y0, W - 1, y0 + h, fill=C["border"], width=0)
 
 
 # ====================================================================== entry points

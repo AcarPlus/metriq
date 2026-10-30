@@ -1,7 +1,9 @@
 """Settings-window tab for the crash detective (logic: crashscan.py)."""
 import os
+import re
 import threading
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk
 
 import config
@@ -11,6 +13,21 @@ import logview
 import tooltip
 import uikit
 from i18n import t
+
+
+def compact_usage(text):
+    """'CPU 5 · RAM 5 · GPU 5 · VRAM 3 · Disk 1' -> 'CPU·RAM·GPU ×5 · VRAM ×3 · Disk ×1' (groups with the same count
+    share one multiplier; anything that does not look like that is returned unchanged)."""
+    parts = re.findall(r"([A-Za-z]+) (\d+)(?: · |$)", text or "")
+    if not parts:
+        return text or ""
+    out = []
+    for name, n in parts:
+        if out and out[-1][1] == n:
+            out[-1][0].append(name)
+        else:
+            out.append(([name], n))
+    return " · ".join("·".join(names) + " ×" + n for names, n in out)
 
 
 def add_tab(sw):
@@ -24,6 +41,7 @@ class DiagTab:
     def __init__(self, sw, p):
         self.sw, self.C, self.p = sw, sw.C, p
         self.events, self.winlog, self.result, self.busy = [], True, None, False
+        self._tdata = {}
         C, F = self.C, sw.F_TXT
         # ---- normal recordings (above the error detection)
         rcard = sw.card(p, t("cr_rec_title"))
@@ -40,10 +58,10 @@ class DiagTab:
         self.status.pack(side="left", padx=(12, 0))
         self.normal = []
         self.rtree = self._tree(rcard, ("start", "last", "rows", "data", "side", "usage"),
-                                t("cr_rec_cols").split("|"), (128, 128, 45, 90, 105, 120), 5,
+                                t("cr_rec_cols").split("|"), (110, 70, 40, 70, 70, 110), 5,
                                 lambda e: self._rec_sel())
         self.rtree.column("rows", anchor="e")
-        self.rtip = tooltip.Tooltip(self.rtree, self._rec_tip)
+        self.rtree.heading("rows", anchor="e")
         rrow = tk.Frame(rcard.body, bg=rbg)
         sw.full(rcard, rrow, pady=(0, 2), divider=False, sticky="w")
         self.rec_btn = sw.button(rrow, t("lv_open_at"), self.open_recording)
@@ -58,7 +76,7 @@ class DiagTab:
         sw.row(card, t("cr_err_show"), sw.switch(card.body, self.v_err, self._toggle_err))
         n0 = len(card.body.winfo_children())
         self.tree = self._tree(card, ("date", "type", "sum"), [t("cr_col_date"), t("cr_col_type"), t("cr_col_sum")],
-                               (150, 120, 360), 6, lambda e: self.show())
+                               (120, 90, 200), 6, lambda e: self.show())
         box2 = uikit.Card(card.body, C, fill=C["bg"], pad=(12, 12, 10, 10), radius=8, bg=bg)
         sw.full(card, box2, pady=(0, 8), divider=False)
         self.txt = tk.Text(box2.body, height=12, wrap="word", bg=C["bg"], fg=C["fg"], relief="flat", bd=0,
@@ -98,31 +116,125 @@ class DiagTab:
         tree = ttk.Treeview(box.body, columns=cols, show="headings", height=height, style="HP.Treeview",
                             selectmode="browse")
         for col, head, w in zip(cols, heads, widths):
-            tree.heading(col, text=head)
-            tree.column(col, width=w, minwidth=w, anchor="w", stretch=(col == cols[-1]))
+            tree.heading(col, text=head, anchor="w")
+            tree.column(col, width=uikit.px(w), minwidth=uikit.px(w), anchor="w", stretch=False)
         sb = uikit.Scrollbar(box.body, C, tree.yview, bg=C["bg"])
         hb = uikit.HScrollbar(box.body, C, tree.xview, bg=C["bg"])
+        sb.configure(height=1)            # a bare canvas asks for ~270 px: that left an empty band above the header
+        hb.configure(width=1)
         tree.configure(yscrollcommand=sb.set, xscrollcommand=hb.set)
         hb.pack(side="bottom", fill="x", pady=(4, 0))
-        tree.pack(side="left", fill="x", expand=True)
+        tree.pack(side="left", fill="both", expand=True)
         sb.pack(side="left", fill="y", padx=(4, 0))
         tree.bind("<<TreeviewSelect>>", on_select)
         tree.bind("<MouseWheel>", lambda e: (tree.yview_scroll(-1 if e.delta > 0 else 1, "units"), "break")[1])
         tree.bind("<Shift-MouseWheel>", lambda e: (tree.xview_scroll(-3 if e.delta > 0 else 3, "units"), "break")[1])
+        # content-fitted columns: the last one takes the remaining width (ellipsis + tooltip with the full text)
+        self._tdata[tree] = {"cols": list(cols), "heads": dict(zip(cols, heads)), "min": dict(zip(cols, widths)),
+                             "need": {}, "disp": {}, "tip": {}, "job": None, "key": None, "cell": None,
+                             "font": tkfont.Font(root=tree, font=(sw.F_TXT, 10)),
+                             "fontb": tkfont.Font(root=tree, font=(sw.F_TXT, 9, "bold"))}
+        tree.bind("<Configure>", lambda e, tr=tree: self._later(tr), add="+")
+        tip = tooltip.Tooltip(tree, lambda tr=tree: self._cell_tip(tr), _bind=False)
+        tree.bind("<Enter>", tip._enter, add="+")
+        tree.bind("<Leave>", tip._leave, add="+")
+        tree.bind("<ButtonPress>", tip._leave, add="+")
+        tree.bind("<Motion>", lambda e, tr=tree, tp=tip: self._tip_motion(tr, tp, e), add="+")
         return tree
 
-    def _rec_tip(self):
-        """Full text of the cell under the mouse (cells can be truncated)."""
-        tree = self.rtree
-        x, y = self.rtip._xy
-        row = tree.identify_row(y - tree.winfo_rooty())
-        col = tree.identify_column(x - tree.winfo_rootx())
-        if not row or not col:
-            return ""
+    # ------------------------------------------------------------ list sizing / cell tooltips
+    def _later(self, tree):
+        st = self._tdata[tree]
+        if st["job"] is None:
+            st["job"] = tree.after_idle(lambda: self._fit(tree))
+
+    def _put(self, tree, iid, vals, tips=None):
+        """Insert a row; the last cell may be shortened later, tips = {column: full text} for cells shown shortened."""
+        st = self._tdata[tree]
+        tree.insert("", "end", iid=iid, values=vals)
+        st["disp"][iid] = str(vals[-1])
+        for col, txt in (tips or {}).items():
+            st["tip"][(iid, col)] = txt
+
+    def _clear(self, tree):
+        st = self._tdata[tree]
+        tree.delete(*tree.get_children())
+        st["disp"].clear()
+        st["tip"].clear()
+        st["key"] = None
+
+    def _measure(self, tree):
+        """Width each column wants: its widest cell (or heading) plus padding; then fit them to the window."""
+        st = self._tdata[tree]
+        last = st["cols"][-1]
+        pad = uikit.px(14)
+        for col in st["cols"]:
+            w = st["fontb"].measure(st["heads"][col]) + uikit.px(18)
+            for iid in tree.get_children():
+                txt = st["disp"][iid] if col == last else str(tree.set(iid, col))
+                w = max(w, st["font"].measure(txt) + pad)
+            if tree.column(col, "anchor") == "e":
+                w += uikit.px(10)                               # right-aligned numbers: air towards the next column
+            st["need"][col] = max(w, uikit.px(st["min"][col]))
+        self._fit(tree)
+
+    def _fit(self, tree):
+        st = self._tdata[tree]
+        st["job"] = None
         try:
-            return str(tree.set(row, tree["columns"][int(col[1:]) - 1]))
+            avail = tree.winfo_width() - 2
+            if avail < 60 or not st["need"]:
+                return
+            cols, need = st["cols"], st["need"]
+            last = cols[-1]
+            others = sum(need[c] for c in cols[:-1])
+            lw = max(min(need[last], uikit.px(170)), avail - others)     # too narrow even so: the scroll bar takes over
+            for c in cols[:-1]:
+                tree.column(c, width=need[c], minwidth=need[c], stretch=False)
+            tree.column(last, width=lw, minwidth=lw, stretch=False)
+            key = (lw, len(st["disp"]))
+            if key != st["key"]:
+                st["key"] = key
+                for iid, txt in st["disp"].items():
+                    tree.set(iid, last, logview.fit_text(txt, st["font"], lw - uikit.px(16)))
+        except tk.TclError:
+            pass
+
+    @staticmethod
+    def _cell_at(tree, xroot, yroot):
+        row = tree.identify_row(yroot - tree.winfo_rooty())
+        col = tree.identify_column(xroot - tree.winfo_rootx())
+        if not row or not col:
+            return None
+        try:
+            return row, tree["columns"][int(col[1:]) - 1]
         except (tk.TclError, ValueError, IndexError):
+            return None
+
+    def _tip_motion(self, tree, tip, e):
+        cell = self._cell_at(tree, e.x_root, e.y_root)
+        st = self._tdata[tree]
+        if cell != st["cell"]:                              # another cell: re-arm so the balloon shows its text
+            st["cell"] = cell
+            tip._leave()
+            tip._enter(e)
+
+    def _cell_tip(self, tree):
+        """Full text of the cell under the pointer, when the list shows it shortened."""
+        st = self._tdata[tree]
+        x, y = tree.winfo_pointerxy()
+        cell = self._cell_at(tree, x, y)
+        if not cell:
             return ""
+        iid, col = cell
+        full = st["tip"].get((iid, col))
+        if full is None and col == st["cols"][-1]:
+            full = st["disp"].get(iid)
+        try:
+            shown = str(tree.set(iid, col))
+        except tk.TclError:
+            return ""
+        return full if full and full != shown else ""
 
     def _rec_sel(self):
         self.rec_btn.config(state="normal" if self.rtree.selection() else "disabled")
@@ -195,17 +307,20 @@ class DiagTab:
                 return
             self.events, self.winlog = r["events"], r["winlog"]
             self.normal = r.get("normal", [])
-            self.rtree.delete(*self.rtree.get_children())
+            self._clear(self.rtree)
             for i, rec in enumerate(self.normal):
-                self.rtree.insert("", "end", iid=str(i), values=(
-                    rec["start"], rec["last"], rec["rows"],
-                    t("cr_data_" + rec.get("data", "panel")), t("cr_yes" if rec.get("side") else "cr_no"),
-                    rec.get("usage", "—")))
+                usage = rec.get("usage", "—")
+                last = rec["last"][11:] if rec["last"][:10] == rec["start"][:10] else rec["last"][5:]   # shorter: time, or month-day + time
+                self._put(self.rtree, str(i), (rec["start"], last, rec["rows"],
+                                               t("cr_data_" + rec.get("data", "panel")),
+                                               t("cr_yes" if rec.get("side") else "cr_no"), compact_usage(usage)),
+                          {"last": rec["last"], "usage": usage})
+            self._measure(self.rtree)
             self._rec_sel()
-            self.tree.delete(*self.tree.get_children())
+            self._clear(self.tree)
             for i, ev in enumerate(self.events):
-                self.tree.insert("", "end", iid=str(i), values=(
-                    ev["last"], t("cr_type_" + ev["type"]), crashscan.short_summary(ev)))
+                self._put(self.tree, str(i), (ev["last"], t("cr_type_" + ev["type"]), crashscan.short_summary(ev)))
+            self._measure(self.tree)
             self.status.config(text=t("cr_found", n=len(self.events), f=r["files"]) if self.events
                                else t("cr_none"), fg=self.C["dim"])
             self.set_text(t("cr_select") if self.events else t("cr_none"))
