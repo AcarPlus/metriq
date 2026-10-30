@@ -39,6 +39,11 @@ Türkçe açıklama için aşağıya bakın: [Türkçe](#türkçe).
   usage / power / temperatures, GPU NVIDIA / AMD / Intel, RAM / VRAM, motherboard VRM / PCH temps, all motherboard
   fans, drive temperatures, network of the busiest adapter, disk read/write, PresentMon FPS). Rows that do not exist
   on your PC are simply left out.
+- **Laptops**: a *Battery* section (charge level, state, charge / discharge power in W, time remaining, wear level,
+  voltage) appears only when the PC has a system battery; every source works (the built-in one reads Windows' battery
+  interface, HWiNFO / LibreHardwareMonitor sensors are used where they exist). With HWiNFO a *Throttling* row shows
+  whether the CPU / GPU is held back (thermal, power, PROCHOT). Fan control is only offered where a Super I/O fan
+  controller exists; laptop fans stay with the embedded controller.
 - Fully **configurable** (`config.json`): sections, rows, regex matching on the *original English* sensor names,
   number formats, units, colour limits, bars. Each data source keeps its own layout.
 - 256-step green to red colour gradient per row from its limits (reversed limits for FPS: low = red).
@@ -83,6 +88,8 @@ Türkçe açıklama için aşağıya bakın: [Türkçe](#türkçe).
 | GPU hot spot / memory junction | ✓ | ✓ (most GPUs) | ✗ |
 | Drive temperatures | ✓ | ✓ | ✗ |
 | Network, disk throughput | ✓ | ✓ | ✓ |
+| Laptop battery (level, state, power, time, wear, voltage) | ✓ (+ built-in for state / time) | ✓ (+ built-in for state / time) | ✓ |
+| CPU / GPU throttling reasons | ✓ | ✗ | ✗ |
 | FPS | ✓ (HWiNFO's PresentMon) | optional, PresentMon (experimental) | optional, PresentMon (experimental) |
 | Panel starts / stops it, interval sync, auto restart | ✓ (with `scripts\install.ps1`) | – | – |
 
@@ -335,6 +342,9 @@ Until signing is in place, releases are unsigned (see the SmartScreen note above
 * Wrong monitor: `python tools\list_monitors.py`, then set `"monitor"`.
 * Python icon instead of the panel icon in the taskbar when started with `python src\panel.py`: use the Start Menu shortcut.
 * Crash on start: see `%LOCALAPPDATA%\metriQ\panel.log`.
+* Something is missing on your hardware (a laptop, say)? Settings > Diagnostics > *Export sensor report…* writes a text
+  file with every sensor the data source reports and which panel rows found nothing (no user name, computer name or
+  serial numbers); attach it to an issue.
 
 ## Development
 
@@ -369,6 +379,8 @@ CSV dosyasına kaydeder. HWiNFO / REALiX veya LibreHardwareMonitor projesiyle ba
 | GPU sıcaklık, saat, yük, güç, fan, VRAM | ✓ | ✓ | NVIDIA: ✓ (NVML) · AMD: ✓ (ADL, Overdrive 8 kartlar) · Intel: yalnızca yük ve VRAM |
 | Disk sıcaklıkları | ✓ | ✓ | ✗ |
 | Ağ, disk hızı | ✓ | ✓ | ✓ |
+| Dizüstü bataryası (düzey, durum, güç, süre, aşınma, voltaj) | ✓ (+ durum / süre yerleşik) | ✓ (+ durum / süre yerleşik) | ✓ |
+| CPU / GPU kısılma nedenleri | ✓ | ✗ | ✗ |
 | FPS | ✓ (HWiNFO'nun PresentMon'u) | isteğe bağlı, PresentMon (deneysel) | isteğe bağlı, PresentMon (deneysel) |
 | Panelin açıp kapatması, aralık eşitleme, otomatik yeniden başlatma | ✓ (`scripts\install.ps1` ile) | – | – |
 

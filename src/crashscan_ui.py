@@ -2,15 +2,17 @@
 import os
 import re
 import threading
+import time
 from datetime import datetime
 import tkinter as tk
 import tkinter.font as tkfont
-from tkinter import ttk
+from tkinter import filedialog, messagebox, ttk
 
 import config
 import crashscan
 import helptexts
 import logview
+import sensreport
 import tooltip
 import uikit
 from i18n import t
@@ -72,6 +74,18 @@ class DiagTab:
         self.rec_btn.config(state="disabled")
         sw.button(rrow, t("cr_open_dir"), self.open_dir).pack(side="left", padx=(8, 0))
 
+        # ---- sensor report (for support on hardware the developer cannot test)
+        scard = sw.card(p, t("sr_title"))
+        sbg = scard.fillc
+        sintro = sw.label(scard.body, t("sr_intro"), dim=True, size=9, bg=sbg)
+        uikit.autowrap(sintro)
+        sw.full(scard, sintro, pady=(0, 8), divider=False)
+        srow = tk.Frame(scard.body, bg=sbg)
+        sw.full(scard, srow, pady=(0, 2), divider=False, sticky="w")
+        sw.button(srow, t("sr_btn"), self.export_report, bg=sbg).pack(side="left")
+        self.sr_status = sw.label(srow, "", dim=True, size=9, bg=sbg)
+        self.sr_status.pack(side="left", padx=(12, 0))
+
         # ---- suspicious recordings: error detection
         card = sw.card(p, t("cr_err_title"))
         bg = card.fillc
@@ -99,6 +113,29 @@ class DiagTab:
         self.err_widgets = [w for w in card.body.winfo_children()[n0:] if w.winfo_manager() == "grid"]
         self._toggle_err(save=False)
         self.start()                                                 # scan as soon as the tab opens
+
+    def export_report(self):
+        """Asks where to save, then writes the sensor report (no personal data, see sensreport.py)."""
+        api = self.sw.api
+        try:
+            rd = api.readings()
+        except Exception:
+            rd = []
+        if not rd:
+            self.sr_status.config(text=t("sr_nodata"))
+            return
+        name = "metriQ-sensors-%s.txt" % time.strftime("%Y-%m-%d")
+        path = filedialog.asksaveasfilename(parent=self.sw.win, title=t("sr_btn"), defaultextension=".txt",
+                                            initialfile=name, filetypes=[("Text", "*.txt")])
+        if not path:
+            return
+        try:
+            text = sensreport.build(rd, api.source, api.layout(), api.cfg)
+            with open(path, "w", encoding="utf-8", newline="\r\n") as f:
+                f.write(text)
+            self.sr_status.config(text=t("sr_saved", f=os.path.basename(path)))
+        except Exception as ex:
+            messagebox.showerror(config.APP_NAME, t("sr_err", e=ex), parent=self.sw.win)
 
     def _toggle_err(self, save=True):
         on = bool(self.v_err.get())

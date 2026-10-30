@@ -12,9 +12,11 @@ import os
 import threading
 import time
 
+import battery
 import config
 import hwctl
 import hwsm
+import throttle
 from i18n import t
 
 BACKENDS = ("auto", "hwinfo", "lhm", "builtin")
@@ -206,6 +208,12 @@ class Manager:
         self.down_since = None
         if self.pm:
             self.pm.read(rd.append)
+        try:
+            rd = battery.augment(rd, battery.current())        # laptop battery: what the source lacks (nothing on a desktop)
+            if self.active == "hwinfo":
+                rd.extend(throttle.derive(rd))                 # CPU / GPU throttling from HWiNFO's yes/no sensors
+        except Exception:
+            pass                                               # extra readings never break the real ones
         for i, r in enumerate(rd):
             r["id"] = i
         return rd

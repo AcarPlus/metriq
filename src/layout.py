@@ -7,7 +7,9 @@ case-insensitive regular expressions (re.search). Label alternatives below: HWiN
 import re
 import sys
 
+import battery
 import themes
+import throttle
 from i18n import t
 
 # default section colours as stored in config files (the dark theme's accents); a section that still carries
@@ -33,13 +35,21 @@ def format_decimals(fmt, unit):
     return int(m.group(1)) if m else decimals_for(unit)
 
 
+# "format" values starting with "@" are not Python formats but named text formatters (value -> text)
+SPECIAL = {"@bstate": battery.fmt_state, "@hm": battery.fmt_hm, "@throttle": throttle.fmt}
+TEXTUAL = ("@bstate", "@throttle")          # the value is a code: Min / Max / Avg make no sense for these rows
+
+
 class Row:
     """One panel row. Build with Row.from_cfg(dict)."""
 
-    def __init__(self, name, sensor, label, rtype, fmt, unit, limits, bar, visible=True):
+    def __init__(self, name, sensor, label, rtype, fmt, unit, limits, bar, visible=True, help=None):
         self.name, self.sensor, self.label, self.rtype = name, sensor, label, rtype
         self.fmt, self.unit, self.limits, self.bar = fmt, unit, limits, bar
         self.visible = visible
+        self.help = help or None          # i18n key "hp_<help>": balloon on the row name in the panel
+        self.special = fmt in SPECIAL
+        self.textual = fmt in TEXTUAL
         self.sre = re.compile(sensor, re.I) if sensor else None
         self.lre = re.compile(label, re.I)
         self.key = f"{name}|{sensor or ''}|{label}|{'' if rtype is None else rtype}"
@@ -64,7 +74,7 @@ class Row:
         visible = d.get("visible", True)
         visible = not (visible is False or visible in (0, "false", "False", "no"))
         return cls(name, d.get("sensor") or None, label, rtype, d.get("format") or None, d.get("unit") or "",
-                   limits, bar, visible)
+                   limits, bar, visible, d.get("help"))
 
     def match(self, rd):
         i = self._idx
@@ -77,13 +87,18 @@ class Row:
                 continue
             if self.lre.search(r["label"]):
                 self._idx, self._ms, self._ml = i, r["sensor"], r["label"]
-                if not self.unit:
+                if not self.unit and not self.special:
                     self.unit_eff = r["unit"]
                 return r
         self._idx = None
         return None
 
     def fmt_value(self, v):
+        if self.special:
+            try:
+                return SPECIAL[self.fmt](v)
+            except Exception:
+                return f"{v:.0f}"
         f = self.fmt or default_format(self.unit_eff)
         try:
             return f.format(v)
@@ -91,7 +106,7 @@ class Row:
             return f"{v:.1f}"
 
     def csv_decimals(self):
-        return format_decimals(self.fmt, self.unit_eff)
+        return 0 if self.special else format_decimals(self.fmt, self.unit_eff)
 
 
 class Section:
@@ -310,13 +325,13 @@ def value_color(row, v, default):
 
 # ================================================================== auto-detection
 _NON_MB = re.compile(r"^(CPU \[|dGPU|iGPU|GPU \[|Drive:|S\.M\.A\.R\.T\.:|Network:|System:|Memory Timings|PresentMon|"
-                     r"DDR\d|DIMM|Windows Hardware|Battery|Enhanced)", re.I)
+                     r"DDR\d|DIMM|Windows Hardware|Battery|Smart Battery|metriQ|Enhanced)", re.I)
 _VIRTUAL = re.compile(r"virtual|vpn|loopback|hyper-v|vmware|vbox|tap-|tap |tun|bluetooth|vethernet|wsl|npcap|"
                       r"miniport|pseudo|teredo|isatap|wan |ndis|zerotier|tailscale|wireguard", re.I)
 MAX_CORE_ROWS = 16
 
 
-def _R(name, sensor, label, rtype=None, unit=None, limits=None, fmt=None):
+def _R(name, sensor, label, rtype=None, unit=None, limits=None, fmt=None, bar=None, help=None):
     d = {"name": name, "label": label}
     if sensor:
         d["sensor"] = sensor
@@ -328,6 +343,10 @@ def _R(name, sensor, label, rtype=None, unit=None, limits=None, fmt=None):
         d["unit"] = unit
     if limits:
         d["limits"] = list(limits)
+    if bar is not None:
+        d["bar"] = bar
+    if help:
+        d["help"] = help
     return d
 
 
@@ -364,6 +383,29 @@ class _Index:
 def _row_if(ix, name, sensor_re, label_res, rtype=None, limits=None, unit=None, fmt=None):
     lp, r = ix.first(sensor_re, label_res, rtype)
     return _R(name, sensor_re, lp, rtype, unit, limits, fmt) if lp else None
+
+
+def _throttle_row(ix, name_key, label):
+    """CPU / GPU throttling (HWiNFO yes/no sensors, combined by throttle.derive); no row without them."""
+    sre, lre = "^" + re.escape(throttle.SENSOR) + "$", "^" + re.escape(label) + "$"
+    if not ix.readings(sre, lre):
+        return None
+    return _R(t(name_key), sre, lre, 8, None, (0, 1), "@throttle", bar=False, help="throttle")
+
+
+def _battery_rows(ix):
+    """Battery section rows (laptops). Sensors: HWiNFO / LHM "Battery: ..." or the built-in "Battery: System";
+    state and remaining time always come from the built-in reader (the time reading only exists while discharging,
+    so its row stays and shows a dash otherwise)."""
+    sre = r"^(Smart )?Battery"
+    if not ix.sensors_like(sre):
+        return []
+    rows = []
+    for key, name_key, unit, limits, fmt, bar, hlp in battery.ROWS:
+        probe = "state" if key == "time" else key
+        if ix.first(sre, battery.LABELS[probe])[0]:
+            rows.append(_R(t(name_key), sre, battery.LABELS[key], None, unit, limits, fmt, bar, hlp))
+    return rows
 
 
 def _scaled(unit, lo, hi):
@@ -412,10 +454,12 @@ def autodetect(rd):
         rows.append(_row_if(ix, t("cpu_usage"), cpu, [r"^Total CPU Usage", r"^CPU Total$"], 7, (0, 100)))
         rows.append(_row_if(ix, t("cpu_maxthread"), cpu, [r"^Max CPU/Thread Usage", r"^CPU Core Max$"], 7,
                             (0, 100)))
+        rows.append(_throttle_row(ix, "cpu_throttle", throttle.CPU_LABEL))
     if gpu:
         rows.append(_row_if(ix, t("gpu_clock"), gpu, [r"^GPU Clock$", r"^GPU Core$"], 6, (200, 3200)))
         rows.append(_row_if(ix, t("gpu_load"), gpu, [r"^GPU Core Load", r"^GPU Utili[sz]ation", r"^GPU Load",
                                                      r"^GPU Core$"], 7, (0, 100)))
+        rows.append(_throttle_row(ix, "gpu_throttle", throttle.GPU_LABEL))
         lp, used = ix.first(gpu, [r"^GPU D3D Memory Dedicated$", r"^GPU Memory Allocated$", r"^GPU Memory Used$"], 8)
         if lp:
             _, alloc = ix.first(gpu, [r"^GPU Memory Allocated$", r"^GPU Memory Used$"], 8)
@@ -552,6 +596,9 @@ def autodetect(rd):
         rows.append(_row_if(ix, t("disk_read"), sre, r"^Read Rate$", 8, (0, 3000)))
         rows.append(_row_if(ix, t("disk_write"), sre, r"^Write Rate$", 8, (0, 3000)))
     add("sec_net", "net", rows)
+
+    # ---------------- battery (only with a system battery)
+    add("sec_battery", "bolt", _battery_rows(ix))
 
     # ---------------- fps
     pm = r"^PresentMon"

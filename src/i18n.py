@@ -133,6 +133,9 @@ _STR = {
         "fn_chip_none": "Empty header", "fn_chip_nofan": "No fan detected", "fn_show": "Show", "fn_hide": "Hide",
         "fn_sub_on": "metriQ is driving the fans", "fn_sub_off": "The BIOS is driving the fans",
         "fn_no_headers": "No fan headers found.",
+        "fn_unsupported": "Fan control is not supported on this device (laptop fans are controlled by the embedded "
+                          "controller). No controllable fan chip was found, so metriQ changes nothing and the fans "
+                          "keep running as the maker designed.",
         "fn_role": "Role", "fn_mode": "Mode",
         "fn_role_unknown": "Unknown", "fn_role_case": "Case fan", "fn_role_cpu": "CPU fan", "fn_role_pump": "Pump",
         "fn_role_gpu": "GPU", "fn_role_none": "Empty header",
@@ -319,6 +322,9 @@ _STR = {
         "fn_chip_none": "Boş başlık", "fn_chip_nofan": "Fan algılanmadı", "fn_show": "Göster", "fn_hide": "Gizle",
         "fn_sub_on": "Fanları metriQ yönetiyor", "fn_sub_off": "Fanları BIOS yönetiyor",
         "fn_no_headers": "Fan başlığı bulunamadı.",
+        "fn_unsupported": "Fan kontrolü bu cihazda desteklenmiyor (dizüstü bilgisayar fanlarını gömülü denetleyici "
+                          "yönetir). Kontrol edilebilir bir fan çipi bulunamadı; metriQ hiçbir şeyi değiştirmez, "
+                          "fanlar üreticinin tasarladığı gibi çalışır.",
         "fn_role": "Rol", "fn_mode": "Mod",
         "fn_role_unknown": "Bilinmiyor", "fn_role_case": "Kasa fanı", "fn_role_cpu": "CPU fanı",
         "fn_role_pump": "Pompa", "fn_role_gpu": "GPU", "fn_role_none": "Boş başlık",

@@ -29,6 +29,7 @@ import perf_core
 import procwin
 import settings_ui
 import themes
+import throttle
 import tray
 import updater
 from tooltip import Tooltip
@@ -492,6 +493,8 @@ def main():
                     nm_id = cv.create_text(col_name, my, text=fit_text(fnt_name, row.name, name_avail), anchor="w",
                                            font=f_name, fill=C["name"])
                     procs.tag_row(cv, nm_id, row, cx0 + name_right)   # CPU / RAM / GPU / VRAM / disk rows open the process window (+ (i) balloon)
+                    if row.help:                                        # e.g. throttling: what it is, which source it needs
+                        Tooltip.for_canvas(cv, nm_id, lambda k=row.help: t("hp_" + k))
                     it = {"accent": accent}
                     if row.bar and p.with_bar:
                         bh = max(4, rh * 0.22)
@@ -689,6 +692,7 @@ def main():
         timed(t("st_write_err"), C["red"], st.get("err_note", 0), TOAST_ERR_S)
         timed(t("log_err"), C["red"], st.get("log_err", 0), TOAST_ERR_S)
         timed(st.get("hk_msg", ""), C["yellow"], st.get("hk_note", 0), TOAST_ERR_S)
+        timed(st.get("thr_msg", ""), C["yellow"], st.get("thr_note", 0), TOAST_ERR_S)
         ap = st.get("applying")
         hint = current_hint()
         if ap and now - ap[0] < 12:
@@ -1241,6 +1245,12 @@ def main():
             st["last"].clear()                  # restored: the canvas content is stale, redraw everything once
         st["mini"] = mini
         rows = layout.all_rows(st["sections"])
+        if ok and not frozen and not st.get("thr_seen"):
+            hot = throttle.active(rd)                    # HWiNFO only: the first time this session the CPU / GPU is held back
+            if hot:
+                st["thr_seen"] = True
+                st["thr_msg"] = " · ".join(t("thr_toast", who=w, what=x) for w, x in hot)
+                st["thr_note"] = now
         mm.update(rows, rd if ok else [], ok and not frozen)
         # HWiNFO has not polled since the last tick: nothing new to show (the values are identical)
         poll = hwsm.last_poll if (ok and src.active == "hwinfo") else None
@@ -1274,6 +1284,9 @@ def main():
                 set_text(it["unit"], row.unit_eff)
                 set_text(it["now"], row.fmt_value(v), col)
                 for k, val in (("min", s[0]), ("max", s[1]), ("avg", avg)):
+                    if row.textual:
+                        set_text(it[k], "")                  # a state / reason code: no min / max / average
+                        continue
                     set_text(it[k], row.fmt_value(val), mix(layout.value_color(row, val, C["fg"]), C["card"], 0.18))
                 if "bar" in it:
                     x0, x1, y0, y1 = it["bargeo"]

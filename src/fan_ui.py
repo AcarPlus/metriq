@@ -15,6 +15,7 @@ import tkinter as tk
 import traceback
 import webbrowser
 
+import battery
 import config
 import fanctl
 import gfx
@@ -1642,6 +1643,8 @@ class FanTab:
         self._update_banner(st)
         groups = self._groups(st.get("headers") or [])
         order = tuple((g["key"], tuple(g["ids"])) for g in groups)
+        if not groups:                       # no fan control found: the text depends on the hardware state
+            order = (None, st.get("state"), bool(st.get("pawnio", True)))
         if order != self.order:
             self._build_cards(groups)
             self.order = order
@@ -1683,6 +1686,8 @@ class FanTab:
         self.cards = {}
         if not groups:
             msg = t("fn_hw_idle") if (self.st or {}).get("state") != "error" else t("fn_no_headers")
+            if (self.st or {}).get("state") == "open":           # hardware is open and offers no fan control at all
+                msg = t("fn_unsupported") if self._laptop() or (self.st or {}).get("pawnio", True)                     else t("fn_no_headers")
             self.sw.label(self.hdr_host, msg, dim=True, bg=self.bgc).pack(anchor="w", pady=4)
         else:
             self.win.update_idletasks()
@@ -1713,8 +1718,18 @@ class FanTab:
                 else:
                     lb.pack_forget()
 
+    @staticmethod
+    def _laptop():
+        """True on a PC with a system battery (its fans belong to the embedded controller)."""
+        try:
+            return battery.exists()
+        except Exception:
+            return False
+
     def _update_banner(self, st):
-        need = not st.get("pawnio", True)
+        # PawnIO only helps Super I/O fans: pointless on a laptop that offers no fan control at all
+        need = not st.get("pawnio", True) and not (st.get("state") == "open" and not st.get("headers")
+                                                    and self._laptop())
         if need == self.pawn_shown:
             return
         self.pawn_shown = need
