@@ -44,6 +44,7 @@ DEFAULTS = {
     "manage_hwinfo": True,           # start HWiNFO with the panel, stop it on close (needs install.ps1)
     "hwinfo_path": "auto",           # "auto" or full path of HWiNFO64.EXE
     "lhm_url": "auto",               # LibreHardwareMonitor web server; "auto" = http://127.0.0.1:8085/data.json
+    "bench_ssd_drive": "auto",       # SSD benchmark: "auto" (the Temp folder's drive) or a drive letter like "D:"
     "presentmon_path": "",           # optional: PresentMon console exe for FPS with the lhm / builtin source
     "sections": "auto",              # "auto" (detected from your hardware) or a list, see README
                                      # (the lhm / builtin sources use "sections_lhm" / "sections_builtin")

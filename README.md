@@ -77,7 +77,7 @@ Türkçe açıklama için aşağıya bakın: [Türkçe](#türkçe).
 | CPU usage, per-core clocks, RAM | ✓ | ✓ | ✓ (clocks as estimated by Windows) |
 | CPU temperatures, CPU power, voltages | ✓ | ✓ | ✗ |
 | Motherboard VRM / PCH temperatures, fans | ✓ | ✓ (most Super I/O chips) | ✗ |
-| GPU temperature, clock, load, power, fan, VRAM | ✓ | ✓ | NVIDIA: ✓ (NVML) · AMD / Intel: load and VRAM only |
+| GPU temperature, clock, load, power, fan, VRAM | ✓ | ✓ | NVIDIA: ✓ (NVML) · AMD: ✓ (ADL, Overdrive 8 cards) · Intel: load and VRAM only |
 | GPU hot spot / memory junction | ✓ | ✓ (most GPUs) | ✗ |
 | Drive temperatures | ✓ | ✓ | ✗ |
 | Network, disk throughput | ✓ | ✓ | ✓ |
@@ -102,7 +102,8 @@ is implemented and tested against LHM's documented `data.json` / WMI formats wit
 running LibreHardwareMonitor; please report problems.*
 
 **Built-in:** Windows performance counters (English counter names, any Windows language), `GlobalMemoryStatusEx`,
-and NVML (`nvml.dll`, installed with every NVIDIA driver) through `ctypes`: no package and no admin rights needed.
+NVML (`nvml.dll`, installed with every NVIDIA driver) and ADL (`atiadlxx.dll`, installed with the AMD driver) through
+`ctypes`: no package and no admin rights needed.
 Optional (source installs): `pip install psutil` is used only if the Windows performance counters are broken (then repair them with
 `lodctr /r` as administrator, or install psutil for CPU / network / disk data).
 
@@ -204,6 +205,7 @@ v1.2.0, still works).
 | `hwinfo_path` | `"auto"` or path | location of `HWiNFO64.EXE` (auto: registry, then `%ProgramFiles%\HWiNFO64`) |
 | `lhm_url` | `"auto"` or URL | LibreHardwareMonitor web server (`auto` = `http://127.0.0.1:8085/data.json`) |
 | `presentmon_path` | `""` or path | PresentMon console exe for FPS with the LHM / built-in source (`""` = off) |
+| `bench_ssd_drive` | `"auto"` or `"D:"` | drive of the SSD benchmark file (`"auto"` = the Temp folder's drive) |
 | `sections` | `"auto"` or a list | the layout of the HWiNFO source, see below |
 | `sections_lhm`, `sections_builtin` | `"auto"` or a list | the layouts of the other sources (missing = `auto`) |
 
@@ -331,7 +333,7 @@ CSV dosyasına kaydeder. HWiNFO / REALiX veya LibreHardwareMonitor projesiyle ba
 | CPU kullanımı, çekirdek saatleri, RAM | ✓ | ✓ | ✓ (saatler Windows tahmini) |
 | CPU sıcaklıkları, CPU gücü, voltajlar | ✓ | ✓ | ✗ |
 | Anakart VRM / PCH sıcaklığı, fanlar | ✓ | ✓ (çoğu Super I/O) | ✗ |
-| GPU sıcaklık, saat, yük, güç, fan, VRAM | ✓ | ✓ | NVIDIA: ✓ (NVML) · AMD / Intel: yalnızca yük ve VRAM |
+| GPU sıcaklık, saat, yük, güç, fan, VRAM | ✓ | ✓ | NVIDIA: ✓ (NVML) · AMD: ✓ (ADL, Overdrive 8 kartlar) · Intel: yalnızca yük ve VRAM |
 | Disk sıcaklıkları | ✓ | ✓ | ✗ |
 | Ağ, disk hızı | ✓ | ✓ | ✓ |
 | FPS | ✓ (HWiNFO'nun PresentMon'u) | isteğe bağlı, PresentMon (deneysel) | isteğe bağlı, PresentMon (deneysel) |
@@ -344,7 +346,8 @@ erişilebiliyorsa LibreHardwareMonitor, yoksa yerleşik; HWiNFO / LHM sonradan a
 **LibreHardwareMonitor:** yönetici olarak açın ve **Options > Remote Web Server > Run** seçin (port 8085); panel
 `http://127.0.0.1:8085/data.json` adresini okur (yedek: WMI `root\LibreHardwareMonitor`). *Durum: LHM kaynağı
 sentetik veriyle test edildi, çalışan bir LHM ile henüz denenmedi.* **Yerleşik:** Windows performans sayaçları,
-`GlobalMemoryStatusEx` ve NVML (`nvml.dll`, NVIDIA sürücüsüyle gelir) `ctypes` ile; paket gerekmez. İsteğe bağlı (kaynaktan
+`GlobalMemoryStatusEx`, NVML (`nvml.dll`, NVIDIA sürücüsüyle gelir) ve ADL (`atiadlxx.dll`, AMD sürücüsüyle gelir) `ctypes`
+ile; paket gerekmez. İsteğe bağlı (kaynaktan
 çalıştırırken) `pip install psutil` yalnızca Windows performans sayaçları bozuksa kullanılır. **HWiNFO'suz FPS (isteğe bağlı,
 deneysel):** Intel [PresentMon](https://github.com/GameTechDev/PresentMon/releases) konsol uygulamasının yolunu
 Ayarlar > Veri kaynağı'nda girin (`presentmon_path`); yönetici hakkı veya *Performance Log Users* grubu gerekir.

@@ -45,6 +45,25 @@ def lhm_url(cfg):
     return sens_lhm.DEFAULT_URL if not u or u.lower() == "auto" else u
 
 
+_exe_cache = {}
+
+
+def why_no_hwinfo(cfg):
+    """i18n key that says why HWiNFO does not deliver data (for the built-in source), "" when it does."""
+    if hwinfo_available():
+        return ""
+    now = time.time()
+    if now - _exe_cache.get("t", 0) > 60:                  # a registry scan: not every probe
+        _exe_cache.update(t=now, exe=hwctl.detect_hwinfo(cfg.get("hwinfo_path", "auto")))
+    if not os.path.isfile(_exe_cache["exe"] or ""):
+        return "why_hw_none"
+    if hwctl.proc_running():
+        return "why_hw_noshm"
+    if not hwctl.tasks_installed():
+        return "why_hw_notasks"
+    return "why_hw_manage_off" if not cfg.get("manage_hwinfo", True) else ""
+
+
 def lhm_available(cfg, timeout=0.35):
     import sens_lhm
     return sens_lhm.web_reachable(lhm_url(cfg), timeout) or hwctl.proc_running(LHM_EXE)
@@ -91,6 +110,7 @@ class Manager:
         self.pm = None
         self.pm_path = None
         self.avail = {"hwinfo": False, "lhm": False}       # auto: filled by the probe thread
+        self.why = ""                # i18n key: why HWiNFO is not the source while the built-in one is (probe thread)
         self.closed = threading.Event()
         self.select()
         threading.Thread(target=self._probe_loop, daemon=True).start()
@@ -109,6 +129,10 @@ class Manager:
                     slow = healthy
                 except Exception:
                     pass
+            try:
+                self.why = why_no_hwinfo(self.cfg) if self.active == "builtin" else ""
+            except Exception:
+                self.why = ""
             self.closed.wait(PROBE_S * 3 if slow else PROBE_S)
 
     def setting(self):
@@ -200,6 +224,8 @@ class Manager:
     def notes(self):
         """Localised lines: which data the active source cannot provide, and why."""
         out = []
+        if self.why and self.active == "builtin":
+            out.append(t(self.why))
         if self.err:
             out.append(self.err)
         try:

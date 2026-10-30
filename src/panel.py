@@ -690,6 +690,10 @@ def main():
                          C["red"] if not st["ok"] else C["yellow"], None))
         elif not st["ok"] and not st["empty"]:          # (with no rows at all the hint is shown mid-window)
             msgs.append((hint or wait_text(), C["red"], None))
+        elif src.why and src.active == "builtin" and src.setting() == "auto":
+            # fell back to the built-in source: say why there are no temperatures / power (gone once HWiNFO delivers)
+            # (the first sentence; what to do is in Settings > Data source)
+            msgs.append((t(src.why).split(". ")[0], C["yellow"], None))
         note = st.get("note")
         if note and note != "created":
             timed(note, C["yellow"], st["t0"], TOAST_ERR_S)
