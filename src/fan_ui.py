@@ -6,6 +6,7 @@ prepared in PAGES.
 Threads: every fanctl call blocks for a moment, so they all run on one worker thread (_Gen). The worker never touches
 Tk: results go into a queue that the page drains with an `after` job. The worker and the drain job only exist while
 the page is on screen (Map / Unmap of the page frame) and are stopped when the page or the window goes away."""
+import collections
 import copy
 import queue
 import threading
@@ -18,6 +19,7 @@ import config
 import fanctl
 import gfx
 import helptexts
+import themes
 import uikit
 from i18n import t
 from uikit import px
@@ -27,7 +29,14 @@ POLL_S = 1.0                              # status poll while the page is visibl
                                           # again when nobody asked for 60 s)
 DRAIN_MS = 120                            # worker -> Tk hand-over
 SAVE_MS = 600                             # debounce of set_config
-DIAG_PCT, DIAG_SECS = 100, 8
+DIAG_PCT = 100                            # identify: duty ...
+DIAG_SECS = 30                            # ... for at most this long per request (the service caps one override at 30 s)
+RENEW_S = 10                              # while identify is on the worker renews the override this often
+HIST = 60                                 # RPM history per fan: one sample per poll = the last minute
+RPM_FLOOR = 1000                          # the sparkline scale is never smaller than this
+FOLD_POLLS = 3                            # polls without a spinning fan before a BIOS header collapses
+ROLE_ACCENT = {"cpu": "accent_power", "case": "accent_fan", "pump": "accent_clock", "gpu": "accent_net"}
+ROLE_ICON = {"cpu": "chip", "case": "fan", "pump": "drop", "gpu": "gpu", "unknown": "fan", "none": "header"}
 PAWNIO_URL = "https://pawnio.eu/"
 T_MIN, T_MAX = 20, 100                    # temperature axis of the curve editor
 MAX_POINTS, MIN_POINTS = 8, 2
@@ -89,6 +98,34 @@ def source_temp(src, st):
     return None
 
 
+def role_color(C, role):
+    """Colour of a role: its own theme accent; unknown = neutral grey, empty header = dimmed grey."""
+    if role in ROLE_ACCENT:
+        return C[ROLE_ACCENT[role]]
+    if role == "none":
+        return uikit.mix(C["faint"], C["card"], 0.35)
+    return C["dim"]
+
+
+def on_color(fill):
+    """Text colour that reads on `fill`."""
+    r, g, b = themes.rgb(fill)
+    return "#10151b" if 0.299 * r + 0.587 * g + 0.114 * b > 150 else "#ffffff"
+
+
+def group_key(h):
+    """Cards group the controls of one GPU (/gpu-nvidia/0/control/1 ... -> /gpu-nvidia/0); every other header is
+    its own card."""
+    hid = h.get("id") or ""
+    if h.get("kind") == "gpu" and "/control/" in hid:
+        return hid.rsplit("/control/", 1)[0]
+    return hid
+
+
+def _ok(r):
+    return isinstance(r, dict) and bool(r.get("ok"))
+
+
 def _probe():
     """Worker job: is there a service, does it answer, what is its configuration."""
     svc = fanctl.service_state()
@@ -102,34 +139,76 @@ def _probe():
 # ====================================================================== worker thread
 class _Gen:
     """One worker thread with its own queues (a new one is made every time the page is shown). `stop` lets it finish
-    the jobs already queued, then end; `poll` switches the 1 s status polling on."""
+    the jobs already queued, then end; `poll` switches the 1 s status polling on. Identify ("diag") is a switch kept
+    here: while a card is in `diag` the worker renews its override every RENEW_S seconds (the service lets one
+    override live for 30 s at most, so it ends by itself when this thread or the panel dies)."""
 
     def __init__(self):
         self.stop = threading.Event()
         self.poll = threading.Event()
         self.jobs = queue.Queue()
         self.out = queue.Queue()
+        self.diag = {}                                  # worker thread only: card key -> {ids, due, fails}
+        self.nxt = 0.0
         self.thread = threading.Thread(target=self._run, name="fan-ui", daemon=True)
         self.thread.start()
 
     def send(self, kind, fn, *args, ctx=None):
         self.jobs.put((kind, fn, args, ctx))
 
+    def send_diag(self, key, ids, on):
+        self.send("diag", self._diag_job, key, tuple(ids), on, ctx=(key, on))
+
+    def _diag_job(self, key, ids, on):
+        """Identify on / off for all control ids of one card."""
+        if on:
+            ok = all([_ok(fanctl.override(i, DIAG_PCT, DIAG_SECS)) for i in ids])
+            if ok:
+                self.diag[key] = {"ids": ids, "due": time.monotonic() + RENEW_S, "fails": 0}
+            else:
+                for i in ids:                          # undo a partly started identify
+                    fanctl.override(i, -1)
+            return ok
+        self.diag.pop(key, None)
+        ok = True
+        for i in ids:
+            ok = _ok(fanctl.override(i, -1)) and ok
+        return ok
+
+    def _tick(self):
+        now = time.monotonic()
+        if self.poll.is_set() and now >= self.nxt:
+            try:
+                st = fanctl.status()
+            except Exception:
+                st = None
+            self.out.put(("status", st, None))
+            self.nxt = time.monotonic() + POLL_S
+        for key, d in list(self.diag.items()):
+            if time.monotonic() < d["due"]:
+                continue
+            try:
+                ok = all([_ok(fanctl.override(i, DIAG_PCT, DIAG_SECS)) for i in d["ids"]])
+            except Exception:
+                ok = False
+            if ok:
+                d["due"], d["fails"] = time.monotonic() + RENEW_S, 0
+                continue
+            d["fails"] += 1
+            d["due"] = time.monotonic() + 2.0          # retry soon: the old override still has ~20 s left
+            if d["fails"] >= 3:
+                self.diag.pop(key, None)
+                self.out.put(("diag_lost", None, key))
+
     def _run(self):
-        nxt = 0.0
         while True:
             if self.stop.is_set() and self.jobs.empty():
                 return
             try:
                 kind, fn, args, ctx = self.jobs.get(timeout=0.25)
             except queue.Empty:
-                if self.poll.is_set() and not self.stop.is_set() and time.monotonic() >= nxt:
-                    try:
-                        st = fanctl.status()
-                    except Exception:
-                        st = None
-                    self.out.put(("status", st, None))
-                    nxt = time.monotonic() + POLL_S
+                if not self.stop.is_set():
+                    self._tick()
                 continue
             try:
                 res = fn(*args)
@@ -160,6 +239,169 @@ class StopButton(uikit.Button):
         self.create_text(self.w / 2, self.h / 2, text=self.text, fill="#ffffff", font=self.font)
 
 
+class DiagButton(uikit.Button):
+    """The identify switch: a plain small button while off, a filled role-coloured one with a dot while on."""
+
+    def __init__(self, parent, C, text, command, font, bg, wide_text):
+        self.on, self.col = False, C["ui"]
+        wide = uikit.font_obj(parent, font).measure(wide_text) + px(48)
+        super().__init__(parent, C, text, command, font, small=True, bg=bg)
+        self.h = px(30)
+        self.w = max(self.w, wide)
+        tk.Canvas.configure(self, width=self.w, height=self.h)
+        self.draw()
+
+    def set_on(self, on, text, col):
+        if (on, text, col) != (self.on, self.text, self.col):
+            self.on, self.text, self.col = on, text, col
+            self.draw()
+
+    def draw(self):
+        if not self.on:
+            return super().draw()
+        C = self.C
+        self.delete("all")
+        self._refs = []
+        fill = self.col
+        if self.down:
+            fill = uikit.mix(fill, "#000000", 0.22)
+        elif self.hot:
+            fill = uikit.mix(fill, "#ffffff", 0.16)
+        fg = on_color(fill)
+        self.put_rr(0, 0, self.w, self.h, px(8), fill, C["fg"] if self.focused else None, 2)
+        r = px(3.5)
+        self.create_oval(px(13) - r, self.h / 2 - r, px(13) + r, self.h / 2 + r, fill=fg, outline="")
+        self.create_text(px(24), self.h / 2, text=self.text, fill=fg, font=self.font, anchor="w")
+
+
+class FanCard(uikit.Card):
+    """Settings card whose accent stripe follows the fan's role, with an optional glow ring (identify is on) and
+    a padding that can shrink (collapsed header)."""
+    glow = None
+
+    def set_look(self, accent, glow):
+        if (accent, glow) != (self.accent, self.glow):
+            self.accent, self.glow = accent, glow
+            self.draw()
+
+    def set_pad(self, pt, pb):
+        if (pt, pb) != (self.pt, self.pb):
+            self.pt, self.pb = pt, pb
+            self.coords("inner", self.pl, pt)
+            self._inner_cfg()
+
+    def draw(self):
+        if not self.glow:
+            return super().draw()
+        self.delete("bg")
+        self._refs = []
+        w, h = self._cw, self._ch
+        if w < 4 or h < 4:
+            return
+        C, glow = self.C, self.glow
+        if gfx.AVAILABLE:
+            r = self.r
+            key = ("fancard", w, h, r, self.fillc, glow, self.accent)
+
+            def paint(d, k):
+                gfx.rrect(d, k, 0, 0, w, h, r, fill=self.fillc, outline=glow, w=2)
+                if self.accent and h > 2 * r:
+                    d.rectangle([0, r * k, 3 * k - 1, (h - r) * k], fill=self.accent)
+            im = uikit._cached(key, w, h, paint)
+            self.create_image(0, 0, image=self.keep(im), anchor="nw", tags="bg")
+        else:
+            uikit._poly_rr(self, 0, 0, w - 1, h - 1, self.r, self.fillc, glow, "bg")
+            if self.accent:
+                self.create_line(2, self.r, 2, h - self.r, fill=self.accent, width=3, tags="bg")
+        self.tag_lower("bg")
+
+
+class Badge(uikit._Cv):
+    """Solid role-coloured number badge ("#3")."""
+
+    def __init__(self, parent, C, text, bg, col, font):
+        self.text, self.col, self.font, self.C = text, col, font, C
+        self.w, self.h = uikit.font_obj(parent, font).measure(text) + px(14), px(22)
+        super().__init__(parent, bg=bg, width=self.w, height=self.h)
+        self.draw()
+
+    def set_color(self, col):
+        if col != self.col:
+            self.col = col
+            self.draw()
+
+    def draw(self):
+        self.delete("all")
+        self._refs = []
+        self.put_rr(0, 0, self.w, self.h, px(7), self.col)
+        self.create_text(self.w / 2, self.h / 2, text=self.text, fill=on_color(self.col), font=self.font)
+
+
+class Pill(uikit._Cv):
+    """Small rounded read-out: dim label on the left, bold value on the right."""
+
+    def __init__(self, parent, C, label, bg, fonts, value="-"):
+        self.C, self.label, self.val, self.fonts = C, label, value, fonts
+        fl, fv = uikit.font_obj(parent, fonts[0]), uikit.font_obj(parent, fonts[1])
+        self.lw = fl.measure(label)
+        self.w = self.lw + fv.measure("100 °C") + px(40)
+        self.h = px(30)
+        self.pbg = bg
+        super().__init__(parent, bg=bg, width=self.w, height=self.h)
+        self.draw()
+
+    def set(self, value):
+        if value != self.val:
+            self.val = value
+            self.draw()
+
+    def draw(self):
+        C = self.C
+        self.delete("all")
+        self._refs = []
+        self.put_rr(0, 0, self.w, self.h, px(9), uikit.mix(self.pbg, C["fg"], 0.06), C["border"], 1)
+        self.create_text(px(12), self.h / 2, text=self.label, fill=C["dim"], font=self.fonts[0], anchor="w")
+        self.create_text(self.w - px(12), self.h / 2, text=self.val, fill=C["fg"], font=self.fonts[1], anchor="e")
+
+
+class Spark(uikit._Cv):
+    """RPM history of one fan (last HIST polls): filled line on a faint track, scaled to `peak`."""
+
+    def __init__(self, parent, C, bg, w, h):
+        self.C, self.pbg = C, bg
+        self.W, self.H = px(w), px(h)
+        super().__init__(parent, bg=bg, width=self.W, height=self.H)
+        self.sig = None
+        self.set([], RPM_FLOOR, C["faint"])
+
+    def set(self, vals, peak, col):
+        sig = (tuple(vals), peak, col)
+        if sig == self.sig:
+            return
+        self.sig = sig
+        C, W, H = self.C, self.W, self.H
+        self.delete("all")
+        self._refs = []
+        track = uikit.mix(self.pbg, C["fg"], 0.05)
+        self.put_rr(0, 0, W, H, px(6), track)
+        vs = list(vals)
+        if not vs:
+            return
+        pad = px(3)
+        step = (W - 2 * pad) / (HIST - 1)
+        base = H - pad
+        pts = []
+        for i, v in enumerate(vs):
+            pts.append((W - pad - (len(vs) - 1 - i) * step, base - min(1.0, v / peak) * (H - 2 * pad)))
+        if len(pts) >= 2:
+            flat = [c for p in pts for c in p]
+            self.create_polygon(pts[0][0], base, *flat, pts[-1][0], base, fill=uikit.mix(track, col, 0.30), outline="")
+            self.create_line(*flat, fill=col, width=2, joinstyle="round")
+        x, y = pts[-1]
+        r = px(2.5)
+        self.create_oval(x - r, y - r, x + r, y + r, fill=col, outline="")
+
+
 class CurveEditor(uikit._Cv):
     """Fan curve: x = temperature (20-100 °C), y = duty (0-100 %). Drag the points, double-click to add / remove.
     Shows the role minimum (red area), the current source temperature (vertical line) and the current duty (dot)."""
@@ -170,6 +412,7 @@ class CurveEditor(uikit._Cv):
         self.C, self.font, self.cb = C, font, on_change
         self.pts = [[40, 30], [80, 100]]
         self.floor = 0
+        self.col = C["ui"]
         self.live = (None, None)
         self.drag = self.hot = -1
         self.W = 0
@@ -212,6 +455,11 @@ class CurveEditor(uikit._Cv):
     def set_floor(self, v):
         if v != self.floor:
             self.floor = v
+            self.redraw()
+
+    def set_color(self, col):
+        if col != self.col:
+            self.col = col
             self.redraw()
 
     def set_live(self, temp, duty):
@@ -268,11 +516,11 @@ class CurveEditor(uikit._Cv):
         for tc, pc in pts:
             line += [self._x(tc), self._y(pc)]
         line += [x1, self._y(pts[-1][1])]
-        self.create_line(*line, fill=C["ui"], width=2, joinstyle="round")
+        self.create_line(*line, fill=self.col, width=2, joinstyle="round")
         for i, (tc, pc) in enumerate(pts):
             r = px(6 if i in (self.drag, self.hot) else 5)
             x, y = self._x(tc), self._y(pc)
-            self.create_oval(x - r, y - r, x + r, y + r, fill="#ffffff", outline=C["ui"], width=2)
+            self.create_oval(x - r, y - r, x + r, y + r, fill="#ffffff", outline=self.col, width=2)
         if self.drag >= 0 and self.drag < len(pts):
             tc, pc = pts[self.drag]
             x, y = self._x(tc), self._y(pc)
@@ -365,59 +613,115 @@ class CurveEditor(uikit._Cv):
         self.cb([list(p) for p in pts])
 
 
-# ====================================================================== one fan header
+# ====================================================================== one fan header / one GPU
 class HeaderCard:
-    def __init__(self, tab, parent, h):
-        self.tab, self.id = tab, h["id"]
-        self.kind = h.get("kind") or "other"
-        self.lhm = h.get("name") or ""
-        self.hw = h.get("hw") or ""
+    """One card: a board / other header, or all fans of one GPU (`g["ids"]`: several control ids that share one
+    configuration; the card edits the first entry and copies it to the others)."""
+
+    def __init__(self, tab, parent, g):
+        self.tab = tab
+        self.key, self.ids, self.kind = g["key"], list(g["ids"]), g["kind"]
+        self.id = self.ids[0]
+        self.group = self.kind == "gpu"
+        self.lhm = "" if self.group else (g.get("name") or "")
+        self.hw = g.get("hw") or ""
+        self.num = g.get("num")
+        self.hist = {cid: collections.deque(maxlen=HIST) for cid in self.ids}
+        self.peak = RPM_FLOOR
+        self.expanded = None                      # None = automatic, True = the user opened a collapsed header
+        self.empty_n = 0
+        self.collapsed = self.can_fold = False
         self.loading = True
         self.last = {}
+        self.ikey = None
         sw, C = tab.sw, tab.C
         F = sw.F_TXT
-        acc = C["accent_fan"]
-        self.card = card = sw.card(parent, None, "fan", acc=acc, pady=(0, 10))
-        bg = card.fillc
-        self.bg = bg
+        self._normalise()
+        self.col = role_color(C, self.role())
+        self.card = card = FanCard(parent, C, None, accent=self.col, bg=tab.bgc)
+        card.pack(fill="x", pady=(0, 10))
+        bg = self.bg = card.fillc
 
-        # -- row A: icon, name, hardware, RPM
+        # -- header row: icon, number badge, name (GPU: its name), hardware | history, RPM, show / hide
         ra = tk.Frame(card.body, bg=bg)
-        sw.full(card, ra, pady=(0, 8), divider=False)
-        if gfx.AVAILABLE:
-            bub = uikit.mix(bg, acc, 0.16)
-            im = gfx.icon("fan", 5.0, acc, bub, bub)
-            ic = tk.Label(ra, image=im, bg=bg, bd=0)
-            ic.image = im
-            ic.pack(side="left", padx=(0, px(10)))
-        self.v_name = tk.StringVar(value=self.lhm)
-        self.ent_name = uikit.entry(ra, C, self.v_name, 16, (F, 11, "bold"), bg=bg)
-        self.ent_name.pack(side="left")
-        self.v_name.trace_add("write", lambda *a: self._on_name())
-        sw.label(ra, self.hw, dim=True, size=8, bg=bg).pack(side="left", padx=(10, 0))
-        self.lbl_rpm = tk.Label(ra, text=t("fn_no_rpm"), bg=bg, fg=C["fg"], font=(sw.F_NUM, 15, "bold"), anchor="e")
-        self.lbl_rpm.pack(side="right")
+        sw.full(card, ra, pady=(0, 0), divider=False)
+        self.ic = tk.Label(ra, bg=bg, bd=0)
+        self.ic.pack(side="left", padx=(0, px(10)))
+        self.badge = self.v_name = self.ent_name = self.cb_role = None
+        if self.group:
+            tk.Label(ra, text=self.hw or t("fn_gpu"), bg=bg, fg=C["fg"], font=(F, 11, "bold")).pack(side="left")
+            sw.label(ra, t("fn_gpu_fans", n=len(self.ids)), dim=True, size=9, bg=bg).pack(side="left", padx=(10, 0))
+        else:
+            if self.num:
+                self.badge = Badge(ra, C, f"#{self.num}", bg, self.col, (F, 9, "bold"))
+                self.badge.pack(side="left", padx=(0, 8))
+            self.v_name = tk.StringVar(value=self.lhm)
+            self.ent_name = uikit.entry(ra, C, self.v_name, 16, (F, 11, "bold"), bg=bg)
+            self.ent_name.pack(side="left")
+            self.v_name.trace_add("write", lambda *a: self._on_name())
+            sw.label(ra, self.hw, dim=True, size=8, bg=bg).pack(side="left", padx=(10, 0))
+        rr = tk.Frame(ra, bg=bg)
+        rr.pack(side="right")
+        self.fr_fold = tk.Frame(rr, bg=bg)
+        self.fr_fold.pack(side="left", padx=(8, 0))
+        self.fr_live = tk.Frame(rr, bg=bg)
+        self.fr_live.pack(side="left", before=self.fr_fold)
+        self.lbl_chip = sw.label(rr, "", dim=True, size=9, bg=bg)
+        self.btn_fold = sw.small_btn(self.fr_fold, max(t("fn_show"), t("fn_hide"), key=len), self._on_fold, bg=bg)
+        if not self.group:
+            self.spark = Spark(self.fr_live, C, bg, 150, 30)
+            self.spark.pack(side="left", padx=(0, 12))
+            self.lbl_rpm = tk.Label(self.fr_live, text=t("fn_no_rpm"), bg=bg, fg=C["faint"],
+                                    font=(sw.F_NUM, 15, "bold"), width=9, anchor="e")
+            self.lbl_rpm.pack(side="left")
+
+        # -- everything below the header row (hidden while the header is collapsed)
+        self.fr_full = fl = tk.Frame(card.body, bg=bg)
+        sw.full(card, fl, pady=(8, 0), divider=False)
+        self.rows = {}
+        if self.group:                                  # compact row per fan: history, RPM, duty
+            fans = tk.Frame(fl, bg=bg)
+            fans.pack(fill="x", pady=(0, 6))
+            for i, cid in enumerate(self.ids):
+                r = tk.Frame(fans, bg=bg)
+                r.pack(fill="x", pady=2)
+                tk.Label(r, text=t("fn_fan_n", n=i + 1), bg=bg, fg=C["dim"], font=(F, 9), width=7,
+                         anchor="w").pack(side="left")
+                sp = Spark(r, C, bg, 150, 22)
+                sp.pack(side="left", padx=(6, 12))
+                lr = tk.Label(r, text=t("fn_no_rpm"), bg=bg, fg=C["faint"], font=(sw.F_NUM, 11, "bold"), width=9,
+                              anchor="e")
+                lr.pack(side="left")
+                ld = tk.Label(r, text="", bg=bg, fg=C["dim"], font=(F, 9), width=6, anchor="w")
+                ld.pack(side="left", padx=(8, 0))
+                self.rows[cid] = (sp, lr, ld)
 
         # -- row B: role, mode, identify
-        rb = tk.Frame(card.body, bg=bg)
-        sw.full(card, rb, pady=(0, 6), divider=False)
-        sw.label(rb, t("fn_role"), dim=True, size=9, bg=bg).pack(side="left")
-        self.cb_role = sw.combo(rb, [t("fn_role_" + r) for r in ROLES], 0, 11)
-        self.cb_role.pack(side="left", padx=(6, 4))
-        self.cb_role.bind("<<ComboboxSelected>>", lambda e: self._on_role())
-        helptexts.info_icon(rb, "fan_role", bg=bg).pack(side="left", padx=(0, 16))
+        rb = tk.Frame(fl, bg=bg)
+        rb.pack(fill="x", pady=(0, 6))
+        if not self.group:
+            sw.label(rb, t("fn_role"), dim=True, size=9, bg=bg).pack(side="left")
+            self.cb_role = sw.combo(rb, [t("fn_role_" + r) for r in ROLES], 0, 11)
+            self.cb_role.pack(side="left", padx=(6, 4))
+            self.cb_role.bind("<<ComboboxSelected>>", lambda e: self._on_role())
+            helptexts.info_icon(rb, "fan_role", bg=bg).pack(side="left", padx=(0, 16))
         sw.label(rb, t("fn_mode"), dim=True, size=9, bg=bg).pack(side="left")
         self.seg = uikit.Segmented(rb, C, [t("fn_mode_" + m) for m in MODES], 0, self._on_mode, (F, 10), bg=bg)
         self.seg.pack(side="left", padx=(6, 0))
         helptexts.info_icon(rb, "fan_diag", bg=bg).pack(side="right")
-        self.btn_diag = sw.small_btn(rb, t("fn_diag"), lambda: tab.diagnose(self.id), bg=bg)
+        self.btn_diag = DiagButton(rb, C, t("fn_diag"), lambda: tab.toggle_diag(self), (F, 9), bg,
+                                   t("fn_diag_on", t="99:59"))
         self.btn_diag.pack(side="right", padx=(0, 6))
         self.lbl_diag = sw.label(rb, "", dim=True, size=9, bg=bg)
+        self.lbl_diag.config(fg=C["red"])
         self.lbl_diag.pack(side="right", padx=(0, 8))
+        if self.group:
+            lb = sw.label(fl, t("fn_gpu_all"), dim=True, size=8, bg=bg)
+            lb.pack(anchor="w", pady=(0, 4))
 
         # -- row C: live state
-        rc = tk.Frame(card.body, bg=bg)
-        sw.full(card, rc, pady=(0, 4), divider=False)
+        rc = tk.Frame(fl, bg=bg)
+        rc.pack(fill="x", pady=(0, 4))
         self.lbl_state = sw.label(rc, "", dim=True, size=9, bg=bg)
         self.lbl_state.pack(side="left")
         self.lbl_alarm = sw.label(rc, t("fn_stall"), bold=True, size=9, bg=bg)
@@ -427,8 +731,8 @@ class HeaderCard:
         self.lbl_min.pack(side="right")
 
         # -- row D: what the mode needs
-        self.host = tk.Frame(card.body, bg=bg)
-        sw.full(card, self.host, pady=(2, 0), divider=False)
+        self.host = tk.Frame(fl, bg=bg)
+        self.host.pack(fill="x", pady=(2, 0))
         self.fr_note = tk.Frame(self.host, bg=bg)
         self.lbl_note = sw.label(self.fr_note, "", dim=True, size=9, bg=bg)
         self.lbl_note.pack(anchor="w")
@@ -457,17 +761,56 @@ class HeaderCard:
         self.set_sources((tab.st or {}).get("temps") or [])
         self.load()
         self.loading = False
+        self._refresh_diag()
+        self._fold(self.role() == "none", self.role() == "none")
 
     # ---- config access
     def hc(self, create=False):
         return self.tab.hcfg(self.id, self.kind, create)
 
     def role(self):
+        if self.group:
+            return "gpu"
         r = self.hc().get("role")
         return r if r in ROLES else default_role(self.kind)
 
+    def mode(self):
+        hc = self.hc()
+        return "bios" if self.role() == "none" or hc.get("mode") not in MODES else hc.get("mode")
+
     def minimum(self):
         return min_duty(self.role(), self.kind)
+
+    def sync(self):
+        """GPU card: every control of the GPU gets the same entry (role, mode, fixed speed, curve) as the first."""
+        if not self.group:
+            return
+        src = self.hc(create=True)
+        src["role"] = "gpu"
+        for cid in self.ids[1:]:
+            h = self.tab.hcfg(cid, self.kind, create=True)
+            for k in ("role", "mode", "fixed", "curve"):
+                h[k] = copy.deepcopy(src[k])
+
+    def _normalise(self):
+        """Old configurations may hold different entries for the fans of one GPU: the first stored one wins."""
+        if not self.group or len(self.ids) < 2:
+            return
+        hs = (self.tab.cfg or {}).get("headers") or {}
+        ref = next((c for c in self.ids if c in hs), None)
+        if ref is None:
+            return
+        src = self.tab.hcfg(ref, self.kind)
+        same = all(c in hs and all(self.tab.hcfg(c, self.kind).get(k) == src.get(k) for k in ("mode", "fixed", "curve"))
+                   and hs[c].get("role") == "gpu" for c in self.ids)
+        if same:
+            return
+        first = self.tab.hcfg(self.id, self.kind, create=True)
+        if ref != self.id:
+            for k in ("mode", "fixed", "curve"):
+                first[k] = copy.deepcopy(src[k])
+        self.sync()
+        self.tab.changed()
 
     # ---- config -> widgets
     def load(self):
@@ -476,14 +819,13 @@ class HeaderCard:
         self.loading = True
         try:
             hc = self.hc()
-            role, mode = self.role(), hc.get("mode")
-            mode = mode if mode in MODES else "bios"
-            if role == "none":
-                mode = "bios"
-            name = hc.get("name") or self.lhm
-            if self.v_name.get() != name and self.tab.focus_widget() is not self.ent_name.entry:
-                self.v_name.set(name)
-            self.cb_role.current(ROLES.index(role))
+            role, mode = self.role(), self.mode()
+            if self.v_name is not None:
+                name = hc.get("name") or self.lhm
+                if self.v_name.get() != name and self.tab.focus_widget() is not self.ent_name.entry:
+                    self.v_name.set(name)
+            if self.cb_role is not None:
+                self.cb_role.current(ROLES.index(role))
             self.seg.set(MODES.index(mode))
             mn = self.minimum()
             self.slider.set(max(mn, _int(hc.get("fixed"), 50)))
@@ -493,16 +835,33 @@ class HeaderCard:
             self.editor.set_floor(mn)
             self._pick_source(cv.get("source") or default_source(role, self.kind))
             self._layout()
+            self._recolor()
         finally:
             self.loading = was
 
+    def _recolor(self):
+        """Role colour: accent stripe, icon bubble, badge, identify button; glow ring while identify is on."""
+        role = self.role()
+        col = role_color(self.tab.C, role)
+        self.col = col
+        d = self.tab.diag.get(self.key)
+        self.card.set_look(col, col if d else None)
+        self.editor.set_color(self.tab.C["ui"] if role in ("unknown", "none") else col)
+        if self.badge is not None:
+            self.badge.set_color(col)
+        ik = (ROLE_ICON.get(role, "fan"), col)
+        if ik != self.ikey:
+            self.ikey = ik
+            if gfx.AVAILABLE:
+                bub = uikit.mix(self.bg, col, 0.10 if role == "none" else 0.18)
+                im = gfx.icon(ik[0], 6.0, col, bub, bub)
+                self.ic.configure(image=im)
+                self.ic.image = im
+        self._refresh_diag()
+
     def _layout(self):
         """Mode panel, minimum note and fixed value for the stored role / mode."""
-        hc = self.hc()
-        role = self.role()
-        mode = hc.get("mode") if hc.get("mode") in MODES else "bios"
-        if role == "none":
-            mode = "bios"
+        role, mode = self.role(), self.mode()
         mn = self.minimum()
         self.lbl_min.config(text=t("fn_min", n=mn) if mn > 0 else t("fn_min0"))
         self.lbl_fixed.config(text=f"{int(round(self.slider.get()))} %")
@@ -519,6 +878,41 @@ class HeaderCard:
         else:
             self.fr_curve.pack(fill="x")
             self.editor.set_floor(mn)
+
+    # ---- collapsing (empty headers)
+    def _fold(self, collapsed, can_fold):
+        if can_fold != self.can_fold:
+            self.can_fold = can_fold
+            if can_fold:
+                self.btn_fold.pack(side="left")
+            else:
+                self.btn_fold.pack_forget()
+        if can_fold:
+            self.btn_fold.configure(text=t("fn_show") if collapsed else t("fn_hide"))
+        if collapsed == self.collapsed:
+            return
+        self.collapsed = collapsed
+        if collapsed:
+            self.fr_live.pack_forget()
+            self.lbl_chip.config(text=t("fn_chip_none") if self.role() == "none" else t("fn_chip_nofan"))
+            self.lbl_chip.pack(side="left", before=self.fr_fold)
+            self.fr_full.grid_remove()
+            self.card.set_pad(px(8), px(8))
+            self.card.pack_configure(pady=(0, 6))
+        else:
+            self.lbl_chip.pack_forget()
+            self.fr_live.pack(side="left", before=self.fr_fold)
+            self.fr_full.grid()
+            self.card.set_pad(px(14), px(14))
+            self.card.pack_configure(pady=(0, 10))
+
+    def _on_fold(self):
+        self.expanded = bool(self.collapsed)             # collapsed -> open it; open -> collapse it
+        self._auto_fold(self.empty_n >= FOLD_POLLS or self.role() == "none")
+
+    def _auto_fold(self, stable):
+        busy = bool(self.tab.diag.get(self.key))
+        self._fold(stable and self.expanded is not True and not busy, stable)
 
     # ---- sources
     def set_sources(self, temps):
@@ -545,6 +939,10 @@ class HeaderCard:
         """The stored header entry to change (created on the first edit); None while the widgets are being loaded."""
         return None if self.loading else self.hc(create=True)
 
+    def _commit(self):
+        self.sync()
+        self.tab.changed()
+
     def _on_name(self):
         h = self._edit()
         if h is not None:
@@ -561,11 +959,13 @@ class HeaderCard:
         if role == "none":
             h["mode"] = "bios"
             self.seg.set(0)
+            self.expanded = True                         # keep it open: the user is working on it
         mn = self.minimum()
         h["fixed"] = max(mn, _int(h.get("fixed"), 50))
         self.slider.set(h["fixed"])
         self._layout()
-        self.tab.changed()
+        self._recolor()
+        self._commit()
 
     def _on_mode(self, i):
         h = self._edit()
@@ -581,7 +981,7 @@ class HeaderCard:
             h["fixed"] = max(self.minimum(), int(round(d)) if _num(d) else _int(h.get("fixed"), 50))
             self.slider.set(h["fixed"])
         self._layout()
-        self.tab.changed()
+        self._commit()
 
     def _on_fixed(self, v):
         h = self._edit()
@@ -594,14 +994,14 @@ class HeaderCard:
             self.slider.set(v)
         h["fixed"] = v
         self.lbl_fixed.config(text=f"{v} %")
-        self.tab.changed()
+        self._commit()
 
     def _on_source(self):
         h = self._edit()
         if h is None or not self.src_vals:
             return
         h.setdefault("curve", {})["source"] = self.src_vals[max(0, self.cb_src.current())]
-        self.tab.changed()
+        self._commit()
 
     def _on_points(self, pts):
         h = self._edit()
@@ -609,21 +1009,45 @@ class HeaderCard:
             return
         h.setdefault("curve", {})["points"] = pts
         h["curve"].setdefault("source", default_source(self.role(), self.kind))
-        self.tab.changed()
+        self._commit()
 
     # ---- live status
-    def update(self, h, st):
-        rpm, duty, tgt = h.get("rpm"), h.get("duty"), h.get("target")
-        self._set(self.lbl_rpm, "rpm", t("fn_rpm", v=int(round(rpm))) if _num(rpm) else t("fn_no_rpm"))
-        stall = h.get("alarm") == "stall"
-        self.lbl_rpm.config(fg=self.tab.C["red"] if stall else self.tab.C["fg"])
+    def update(self, hs, st):
+        C = self.tab.C
+        by = {h.get("id"): h for h in hs}
+        stall = False
+        for cid in self.ids:
+            h = by.get(cid) or {}
+            rpm = h.get("rpm")
+            self.hist[cid].append(float(rpm) if _num(rpm) else 0.0)
+            stall = stall or h.get("alarm") == "stall"
+        self.peak = max([self.peak] + [max(d) for d in self.hist.values()])
+
+        def paint(cid, spark, lbl):
+            h = by.get(cid) or {}
+            rpm = h.get("rpm")
+            run = _num(rpm) and rpm > 0
+            col = C["red"] if h.get("alarm") == "stall" else (self.col if run else C["faint"])
+            self._set(lbl, "rpm" + cid, t("fn_rpm", v=int(round(rpm))) if _num(rpm) else t("fn_no_rpm"))
+            lbl.config(fg=col)
+            spark.set(self.hist[cid], self.peak, col)
+        if self.group:
+            for i, cid in enumerate(self.ids):
+                sp, lr, ld = self.rows[cid]
+                paint(cid, sp, lr)
+                d = (by.get(cid) or {}).get("duty")
+                self._set(ld, "duty" + cid, t("fn_pct", d=int(round(d))) if _num(d) else "")
+        else:
+            paint(self.id, self.spark, self.lbl_rpm)
+        h0 = by.get(self.id) or {}
+        duty, tgt = h0.get("duty"), h0.get("target")
         parts = []
         if _num(duty):
             s = t("fn_duty", d=int(round(duty)))
             if _num(tgt) and abs(tgt - duty) >= 1:
                 s += t("fn_target", g=int(round(tgt)))
             parts.append(s)
-        key = REASONS.get(h.get("reason") or "")
+        key = REASONS.get(h0.get("reason") or "")
         if key:
             parts.append(t(key))
         self._set(self.lbl_state, "state", "  ·  ".join(parts))
@@ -633,20 +1057,39 @@ class HeaderCard:
                 self.lbl_alarm.pack(side="left", padx=(12, 0))
             else:
                 self.lbl_alarm.pack_forget()
-        ov = h.get("override") or 0
-        self._set(self.lbl_diag, "diag", t("fn_diag_on", n=int(round(ov))) if _num(ov) and ov > 0 else "")
+        self._refresh_diag()
         i = self.cb_src.current()
         temp = source_temp(self.src_vals[i], st) if 0 <= i < len(self.src_vals) else None
         self.editor.set_live(temp, duty if _num(duty) else (tgt if _num(tgt) else None))
+        if not self.group:                               # an empty header collapses after a few quiet polls
+            rpm0 = h0.get("rpm")
+            role = self.role()
+            cand = role == "none" or (self.mode() == "bios" and not stall and not (_num(rpm0) and rpm0 > 0))
+            self.empty_n = self.empty_n + 1 if cand else 0
+            if not cand:
+                self.expanded = None
+            self._auto_fold(cand and (role == "none" or self.empty_n >= FOLD_POLLS))
+
+    def _refresh_diag(self):
+        d = self.tab.diag.get(self.key)
+        if d:
+            el = int(max(0, time.monotonic() - d["t0"]))
+            self.btn_diag.set_on(True, t("fn_diag_on", t=f"{el // 60}:{el % 60:02d}"), self.col)
+        else:
+            self.btn_diag.set_on(False, t("fn_diag"), self.col)
 
     def _set(self, lbl, key, text):
         if self.last.get(key) != text:
             self.last[key] = text
             lbl.config(text=text)
 
-    def diag_failed(self):
-        self.last["diag"] = None
-        self.lbl_diag.config(text=t("fn_diag_fail"))
+    def diag_changed(self, failed=None):
+        """Identify was switched (by the user, or it ended): glow, button and message follow."""
+        self.lbl_diag.config(text=failed or "")
+        if self.tab.diag.get(self.key):
+            self.expanded = True if self.collapsed else self.expanded
+            self._fold(False, self.can_fold)
+        self._recolor()
 
 
 def _int(v, default):
@@ -683,6 +1126,7 @@ class FanTab:
         self.notes = {}                                 # transient problems shown under the top bar
         self.cards, self.order, self.temps_sig = {}, (), None
         self.defaults = {}
+        self.diag = {}                                  # card key -> {"ids", "t0"} for every identify that is on
         self.bar = None
         self.holder = tk.Frame(p, bg=self.bgc)
         self.holder.pack(fill="x")
@@ -728,10 +1172,13 @@ class FanTab:
         self.drain_job = self.save_job = None
         gen, self.gen = self.gen, None
         if gen is not None:
+            for key, d in list(self.diag.items()):             # identify never outlives the page
+                gen.send_diag(key, d["ids"], False)
             if self.dirty and self.cfg is not None:           # do not lose an edit made just before leaving
                 self.dirty = False
                 gen.send("save", fanctl.set_config, copy.deepcopy(self.cfg))
             gen.stop.set()
+        self.diag = {}
 
     def _send(self, kind, fn, *args, ctx=None):
         if self.gen is not None:
@@ -775,8 +1222,12 @@ class FanTab:
             self._on_enabled(res, ctx)
         elif kind == "stop":
             self._on_stopped(res)
-        elif kind == "override":
-            self._on_override(res, ctx)
+        elif kind == "diag":
+            key, on = ctx
+            if on and not res and key in self.diag:        # did not start
+                self._diag_end(key, t("fn_diag_fail"))
+        elif kind == "diag_lost":
+            self._diag_end(ctx, t("fn_diag_lost"))
 
     # ------------------------------------------------------------ views
     def _clear(self):
@@ -891,6 +1342,18 @@ class FanTab:
         lb = sw.label(title, t("fn_headers_hint"), dim=True, size=9, bg=self.bgc)
         uikit.autowrap(lb)
         lb.pack(fill="x", pady=(2, 0))
+        leg = tk.Frame(title, bg=self.bgc)                  # role colours at a glance
+        leg.pack(fill="x", pady=(6, 0))
+        for role in ("cpu", "case", "pump", "gpu", "unknown", "none"):
+            col = role_color(C, role)
+            item = tk.Frame(leg, bg=self.bgc)
+            item.pack(side="left", padx=(0, 16))
+            if gfx.AVAILABLE:
+                im = gfx.icon(ROLE_ICON[role], 4.2, col, self.bgc, None)
+                ic = tk.Label(item, image=im, bg=self.bgc, bd=0)
+                ic.image = im
+                ic.pack(side="left", padx=(0, 5))
+            sw.label(item, t("fn_role_" + role), dim=True, size=9, bg=self.bgc).pack(side="left")
         self.hdr_host = tk.Frame(self.holder, bg=self.bgc)
         self.hdr_host.pack(fill="x")
         self.win.configure(cursor="watch")
@@ -916,33 +1379,42 @@ class FanTab:
         left = tk.Frame(row, bg=bg)
         left.pack(side="left")
         sw.switch(left, self.v_enable, self._on_enable).pack(side="left")
-        tk.Label(left, text=t("fn_master"), bg=bg, fg=C["fg"], font=(sw.F_HEAD, 12, "bold")).pack(side="left", padx=(10, 6))
+        ttl = tk.Frame(left, bg=bg)
+        ttl.pack(side="left", padx=(10, 6))
+        tk.Label(ttl, text=t("fn_master"), bg=bg, fg=C["fg"], font=(sw.F_HEAD, 12, "bold"), anchor="w").pack(anchor="w")
+        self.lbl_sub = tk.Label(ttl, text="", bg=bg, fg=C["dim"], font=(sw.F_TXT, 9), anchor="w")
+        self.lbl_sub.pack(anchor="w")
         helptexts.info_icon(left, "fan_master", bg=bg).pack(side="left")
         stop = StopButton(row, C, t("fn_stop"), self.stop_all, (sw.F_TXT, 13, "bold"), bg=bg)
         stop.pack(side="right")
         helptexts.info_icon(row, "fan_stop", bg=bg).pack(side="right", padx=(0, 8))
-        temps = tk.Frame(row, bg=bg)
-        temps.pack(side="right", padx=(0, 24))
+        # second row: live temperatures on the left, problems / hints next to them
+        row2 = tk.Frame(card.body, bg=bg)
+        sw.full(card, row2, pady=(10, 0), divider=False)
         self.lbl_t = {}
         for key in ("cpu", "gpu"):
-            fr = tk.Frame(temps, bg=bg)
-            fr.pack(side="left", padx=(0, 16))
-            tk.Label(fr, text=t("fn_" + key), bg=bg, fg=C["dim"], font=(sw.F_TXT, 9)).pack(side="left", padx=(0, 6))
-            lb = tk.Label(fr, text="-", bg=bg, fg=C["fg"], font=(sw.F_NUM, 13, "bold"), width=6, anchor="w")
-            lb.pack(side="left")
-            self.lbl_t[key] = lb
-        msg = tk.Frame(card.body, bg=bg, height=px(38))
+            pill = Pill(row2, C, t("fn_" + key), bg, ((sw.F_TXT, 9), (sw.F_NUM, 12, "bold")))
+            pill.pack(side="left", padx=(0, 8))
+            self.lbl_t[key] = pill
+        msg = tk.Frame(row2, bg=bg, height=px(34))
         msg.pack_propagate(False)
-        sw.full(card, msg, pady=(2, 0), divider=False)
+        msg.pack(side="left", fill="x", expand=True, padx=(8, 0))
         self.msg_lbl = []
         for col in ("red", "orange"):
             lb = tk.Label(msg, text="", bg=bg, fg=C[col], font=(sw.F_TXT, 9), anchor="w", justify="left")
             uikit.autowrap(lb)
             lb.pack(fill="x")
             self.msg_lbl.append(lb)
+        self._refresh_sub()
         card.inner.update_idletasks()
         sf.reserve = card.inner.winfo_reqheight() + card.pt + card.pb + px(6)
         sw._size_scrolls()
+
+    def _refresh_sub(self):
+        """Sub-title of the master switch: who drives the fans."""
+        txt = t("fn_sub_on") if self.v_enable.get() else t("fn_sub_off")
+        if self.lbl_sub.cget("text") != txt:
+            self.lbl_sub.config(text=txt)
 
     def _build_profiles(self):
         sw = self.sw
@@ -1063,8 +1535,8 @@ class FanTab:
     def apply_profile(self, pts):
         if self.cfg is None:
             return
-        for hid, c in self.cards.items():
-            h = self.hcfg(hid, c.kind, create=True)
+        for c in self.cards.values():
+            h = c.hc(create=True)
             role = c.role()
             if role == "none":
                 continue
@@ -1073,6 +1545,7 @@ class FanTab:
             else:
                 h["mode"] = "curve"
                 h["curve"] = {"source": default_source(role, c.kind), "points": copy.deepcopy(pts)}
+            c.sync()
         for c in self.cards.values():
             c.load()
         self.changed()
@@ -1084,6 +1557,7 @@ class FanTab:
         self.enable_busy = True
         self.cfg["enabled"] = on
         self._send("enable", fanctl.enable, on, ctx=on)
+        self._refresh_sub()
 
     def _on_enabled(self, ok, on):
         self.enable_busy = False
@@ -1093,16 +1567,19 @@ class FanTab:
             self.v_enable.set(not on)
             self.cfg["enabled"] = not on
             self.notes["enable"] = t("fn_enable_err")
+        self._refresh_sub()
         self._refresh_msg()
 
     def stop_all(self):
         """STOP: everything back to the BIOS, at once (the switch shows off straight away)."""
         self._flush()
+        self.diag_all_off()
         self.v_enable.set(False)
         if self.cfg is not None:
             self.cfg["enabled"] = False
         self.enable_busy = True
         self._send("stop", fanctl.stop)
+        self._refresh_sub()
 
     def _on_stopped(self, ok):
         self.enable_busy = False
@@ -1112,13 +1589,35 @@ class FanTab:
             self.notes["stop"] = t("fn_stop_err")
         self._refresh_msg()
 
-    def diagnose(self, hid):
-        self._send("override", fanctl.override, hid, DIAG_PCT, DIAG_SECS, ctx=hid)
+    def toggle_diag(self, card):
+        """Identify is a switch: on = every control of the card at 100 % (renewed by the worker every RENEW_S s),
+        off = back to normal."""
+        if self.gen is None:
+            return
+        key = card.key
+        if key in self.diag:
+            d = self.diag.pop(key)
+            self.gen.send_diag(key, d["ids"], False)
+        else:
+            self.diag[key] = {"ids": tuple(card.ids), "t0": time.monotonic()}
+            self.gen.send_diag(key, card.ids, True)
+        card.diag_changed()
 
-    def _on_override(self, res, hid):
-        c = self.cards.get(hid)
-        if c is not None and not (isinstance(res, dict) and res.get("ok")):
-            c.diag_failed()
+    def _diag_end(self, key, msg=None):
+        self.diag.pop(key, None)
+        c = self.cards.get(key)
+        if c is not None:
+            c.diag_changed(msg)
+
+    def diag_all_off(self):
+        """Identify off everywhere (STOP)."""
+        for key, d in list(self.diag.items()):
+            self.diag.pop(key, None)
+            if self.gen is not None:
+                self.gen.send_diag(key, d["ids"], False)
+            c = self.cards.get(key)
+            if c is not None:
+                c.diag_changed()
 
     # ------------------------------------------------------------ status -> widgets
     def _apply_status(self, st):
@@ -1136,16 +1635,14 @@ class FanTab:
             self.cfg["enabled"] = bool(st.get("enabled"))
         for key in ("cpu", "gpu"):
             v = st.get(key)
-            txt = f"{v:.0f} °C" if _num(v) else "-"
-            if self.lbl_t[key].cget("text") != txt:
-                self.lbl_t[key].config(text=txt)
+            self.lbl_t[key].set(f"{v:.0f} °C" if _num(v) else "-")
+        self._refresh_sub()
         self._refresh_msg()
         self._update_banner(st)
-        headers = sorted(st.get("headers") or [], key=lambda h: (KIND_ORDER.get(h.get("kind"), 1), h.get("hw") or "",
-                                                                  h.get("index") or 0, h.get("id") or ""))
-        order = tuple(h.get("id") for h in headers)
+        groups = self._groups(st.get("headers") or [])
+        order = tuple((g["key"], tuple(g["ids"])) for g in groups)
         if order != self.order:
-            self._build_cards(headers)
+            self._build_cards(groups)
             self.order = order
             self.temps_sig = None
         sig = tuple(x.get("id") for x in st.get("temps") or [])
@@ -1153,22 +1650,47 @@ class FanTab:
             self.temps_sig = sig
             for c in self.cards.values():
                 c.set_sources(st.get("temps") or [])
-        for h in headers:
-            c = self.cards.get(h.get("id"))
+        for g in groups:
+            c = self.cards.get(g["key"])
             if c is not None:
-                c.update(h, st)
+                c.update(g["hs"], st)
 
-    def _build_cards(self, headers):
+    @staticmethod
+    def _groups(headers):
+        """Status headers -> one entry per card: every board / other header alone, all controls of a GPU together."""
+        heads = sorted(headers, key=lambda h: (KIND_ORDER.get(h.get("kind"), 1), h.get("hw") or "", group_key(h),
+                                               h.get("index") or 0, h.get("id") or ""))
+        groups, by_key, n = [], {}, 0
+        for h in heads:
+            key = group_key(h)
+            g = by_key.get(key)
+            if g is None:
+                kind = h.get("kind") or "other"
+                g = by_key[key] = {"key": key, "kind": kind, "ids": [], "hs": [], "hw": h.get("hw") or "",
+                                   "name": h.get("name") or "", "num": None}
+                if kind != "gpu":
+                    n += 1
+                    g["num"] = int(h["index"]) + 1 if _num(h.get("index")) else n
+                groups.append(g)
+            g["ids"].append(h.get("id"))
+            g["hs"].append(h)
+        return groups
+
+    def _build_cards(self, groups):
         for w in self.hdr_host.winfo_children():
             w.destroy()
         self.cards = {}
-        if not headers:
+        if not groups:
             msg = t("fn_hw_idle") if (self.st or {}).get("state") != "error" else t("fn_no_headers")
             self.sw.label(self.hdr_host, msg, dim=True, bg=self.bgc).pack(anchor="w", pady=4)
-            return
-        self.win.update_idletasks()
-        for h in headers:
-            self.cards[h["id"]] = HeaderCard(self, self.hdr_host, h)
+        else:
+            self.win.update_idletasks()
+            for g in groups:
+                self.cards[g["key"]] = HeaderCard(self, self.hdr_host, g)
+        for key in [k for k in self.diag if k not in self.cards]:      # its card is gone: do not leave it spinning
+            d = self.diag.pop(key)
+            if self.gen is not None:
+                self.gen.send_diag(key, d["ids"], False)
 
     def _refresh_msg(self):
         st = self.st or {}

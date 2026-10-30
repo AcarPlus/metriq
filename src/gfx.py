@@ -126,6 +126,37 @@ def _paint_icon(d, k, kind, cx, cy, s, col, bg):
             base = y1 - sg * s * 0.55
             _line(d, k, xx, y0, xx, base, lw, col)
             _poly(d, k, [(xx, y1), (xx - s * 0.38, base), (xx + s * 0.38, base)], col)
+    elif kind == "chip":                          # CPU: package with pins on every side
+        b = s * 0.62
+        d.rounded_rectangle([(cx - b) * k, (cy - b) * k, (cx + b) * k, (cy + b) * k], radius=s * 0.14 * k, fill=col)
+        h = b * 0.42
+        d.rounded_rectangle([(cx - h) * k, (cy - h) * k, (cx + h) * k, (cy + h) * k], radius=s * 0.06 * k, fill=bg)
+        pw = max(1.0, lw * 0.55)
+        for off in (-0.3 * s, 0.3 * s):
+            _line(d, k, cx + off, cy - b, cx + off, cy - s, pw, col)
+            _line(d, k, cx + off, cy + b, cx + off, cy + s, pw, col)
+            _line(d, k, cx - b, cy + off, cx - s, cy + off, pw, col)
+            _line(d, k, cx + b, cy + off, cx + s, cy + off, pw, col)
+    elif kind == "drop":                          # pump / coolant: water drop with a highlight
+        r, c0 = 0.66 * s, cy + 0.28 * s
+        beta = math.acos(r / (c0 - (cy - s)))
+        _poly(d, k, [(cx, cy - s), (cx + r * math.sin(beta), c0 - r * math.cos(beta)),
+                     (cx - r * math.sin(beta), c0 - r * math.cos(beta))], col)
+        _disc(d, k, cx, c0, r, col)
+        _arc(d, k, cx, c0, r * 0.58, 100, 170, max(1.0, lw * 0.6), bg)
+    elif kind == "gpu":                           # graphics card: body with two fans and a connector foot
+        d.rounded_rectangle([(cx - s) * k, (cy - 0.62 * s) * k, (cx + s) * k, (cy + 0.42 * s) * k],
+                            radius=s * 0.16 * k, fill=col)
+        for dx in (-0.45, 0.42):
+            _disc(d, k, cx + dx * s, cy - 0.1 * s, 0.31 * s, bg)
+            _disc(d, k, cx + dx * s, cy - 0.1 * s, 0.09 * s, col)
+        _line(d, k, cx - 0.8 * s, cy + 0.72 * s, cx - 0.05 * s, cy + 0.72 * s, max(1.0, lw * 0.8), col)
+    elif kind == "header":                        # empty fan header: socket outline with four pins
+        o = max(1.0, lw * 0.4)
+        d.rounded_rectangle([(cx - s) * k, (cy - 0.55 * s) * k, (cx + s) * k, (cy + 0.55 * s) * k],
+                            radius=s * 0.2 * k, outline=col, width=max(1, int(round(o * k))))
+        for dx in (-0.6, -0.2, 0.2, 0.6):
+            _line(d, k, cx + dx * s, cy - 0.22 * s, cx + dx * s, cy + 0.22 * s, max(1.0, lw * 0.55), col)
     elif kind == "fps":
         o = lw / 2
         d.rounded_rectangle([(cx - s - o) * k, (cy - s * 0.75 - o) * k, (cx + s + o) * k, (cy + s * 0.5 + o) * k],

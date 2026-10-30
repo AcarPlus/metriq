@@ -126,7 +126,12 @@ _STR = {
         "fn_limits": "Temperature limits", "fn_cpu_limit": "CPU limit (°C)", "fn_gpu_limit": "GPU limit (°C)",
         "fn_limit_hint": "At this temperature all fans go to 100 % (CPU 60-95 °C, GPU 60-90 °C).",
         "fn_headers": "Fan headers",
-        "fn_headers_hint": "Each card is one fan header. Press Identify to find out which fan in the case it is.",
+        "fn_headers_hint": "Each card is one fan header; all fans of a GPU share one card. Switch Identify on to "
+                           "find out which fan in the case it is.",
+        "fn_gpu_fans": "{n} fans", "fn_fan_n": "Fan {n}", "fn_pct": "{d} %",
+        "fn_gpu_all": "Mode and curve apply to all fans of this GPU together.",
+        "fn_chip_none": "Empty header", "fn_chip_nofan": "No fan detected", "fn_show": "Show", "fn_hide": "Hide",
+        "fn_sub_on": "metriQ is driving the fans", "fn_sub_off": "The BIOS is driving the fans",
         "fn_no_headers": "No fan headers found.",
         "fn_role": "Role", "fn_mode": "Mode",
         "fn_role_unknown": "Unknown", "fn_role_case": "Case fan", "fn_role_cpu": "CPU fan", "fn_role_pump": "Pump",
@@ -138,7 +143,8 @@ _STR = {
         "fn_r_safe": "safe curve", "fn_r_limit": "temperature limit: 100 %", "fn_r_override": "identify",
         "fn_r_nosensor": "sensor lost: 100 %", "fn_r_waiting": "waiting for the sensor",
         "fn_stall": "Fan is not spinning!",
-        "fn_diag": "Identify", "fn_diag_on": "100 % · {n} s", "fn_diag_fail": "Could not start.",
+        "fn_diag": "Identify", "fn_diag_on": "Identify on · {t}", "fn_diag_fail": "Could not start.",
+        "fn_diag_lost": "Identify stopped: the fan service did not answer.",
         "fn_fixed": "Fixed speed", "fn_source": "Temperature source", "fn_src_cpu": "CPU", "fn_src_gpu": "GPU",
         "fn_src_max": "Highest (CPU / GPU)",
         "fn_curve_hint": "Drag the points. Double-click empty space to add a point, double-click a point to remove "
@@ -157,8 +163,10 @@ _STR = {
                         "double-click a point to remove it (2-8 points). The red area is below the role's minimum: "
                         "the fan never goes lower. The vertical line is the current temperature, the dot the "
                         "current speed.",
-        "hp_fan_diag": "Spins the fan on this header at 100 % for 8 seconds, so you can look into the case and see "
-                       "which fan it is.",
+        "hp_fan_diag": "A switch: while on, the fan runs at 100 % with no time limit, so you can look into the case "
+                       "and see which fan it is (on a GPU card, all fans of that GPU). The service accepts only 30 "
+                       "seconds at a time, so metriQ renews it every 10 seconds. It turns off when you press it "
+                       "again, leave this page, close Settings or press STOP.",
     },
     "tr": {
         "col_now": "ŞİMDİ", "col_min": "MİN", "col_max": "MAKS", "col_avg": "ORT",
@@ -281,7 +289,12 @@ _STR = {
         "fn_limits": "Sıcaklık sınırları", "fn_cpu_limit": "CPU sınırı (°C)", "fn_gpu_limit": "GPU sınırı (°C)",
         "fn_limit_hint": "Bu sıcaklıkta tüm fanlar %100'e çıkar (CPU 60-95 °C, GPU 60-90 °C).",
         "fn_headers": "Fan başlıkları",
-        "fn_headers_hint": "Her kart bir fan başlığıdır. Kasadaki hangi fan olduğunu anlamak için Tanı'ya bas.",
+        "fn_headers_hint": "Her kart bir fan başlığıdır; bir GPU'nun fanları tek kartta toplanır. Kasadaki hangi "
+                           "fan olduğunu anlamak için Tanı'yı aç.",
+        "fn_gpu_fans": "{n} fan", "fn_fan_n": "Fan {n}", "fn_pct": "%{d}",
+        "fn_gpu_all": "Mod ve eğri bu GPU'nun tüm fanlarına birlikte uygulanır.",
+        "fn_chip_none": "Boş başlık", "fn_chip_nofan": "Fan algılanmadı", "fn_show": "Göster", "fn_hide": "Gizle",
+        "fn_sub_on": "Fanları metriQ yönetiyor", "fn_sub_off": "Fanları BIOS yönetiyor",
         "fn_no_headers": "Fan başlığı bulunamadı.",
         "fn_role": "Rol", "fn_mode": "Mod",
         "fn_role_unknown": "Bilinmiyor", "fn_role_case": "Kasa fanı", "fn_role_cpu": "CPU fanı",
@@ -293,7 +306,8 @@ _STR = {
         "fn_r_safe": "güvenli eğri", "fn_r_limit": "sıcaklık sınırı: %100", "fn_r_override": "tanı",
         "fn_r_nosensor": "sensör kayıp: %100", "fn_r_waiting": "sensör bekleniyor",
         "fn_stall": "Fan dönmüyor!",
-        "fn_diag": "Tanı", "fn_diag_on": "%100 · {n} sn", "fn_diag_fail": "Başlatılamadı.",
+        "fn_diag": "Tanı", "fn_diag_on": "Tanı açık · {t}", "fn_diag_fail": "Başlatılamadı.",
+        "fn_diag_lost": "Tanı durdu: fan hizmeti yanıt vermedi.",
         "fn_fixed": "Sabit hız", "fn_source": "Sıcaklık kaynağı", "fn_src_cpu": "CPU", "fn_src_gpu": "GPU",
         "fn_src_max": "En yüksek (CPU / GPU)",
         "fn_curve_hint": "Noktaları sürükle. Boş yere çift tıklayınca nokta eklenir, noktaya çift tıklayınca "
@@ -313,8 +327,10 @@ _STR = {
                         "eklenir, noktaya çift tıklayınca silinir (2-8 nokta). Kırmızı alan rolün alt sınırının "
                         "altıdır: fan bunun altına inmez. Dikey çizgi şimdiki sıcaklığı, nokta şimdiki hızı "
                         "gösterir.",
-        "hp_fan_diag": "Bu başlıktaki fanı 8 saniye boyunca %100 hızla döndürür; kasaya bakıp hangi fan "
-                       "olduğunu görebilirsin.",
+        "hp_fan_diag": "Bir anahtar: açıkken fan süre sınırı olmadan %100 hızla döner; kasaya bakıp hangi fan "
+                       "olduğunu görebilirsin (GPU kartında o GPU'nun tüm fanları döner). Hizmet her seferinde en "
+                       "çok 30 saniyeye izin verdiği için metriQ bunu 10 saniyede bir yeniler. Tekrar basınca, bu "
+                       "sayfadan çıkınca, Ayarlar'ı kapatınca ya da DURDUR'a basınca kapanır.",
     },
 }
 
