@@ -50,6 +50,9 @@ en.InstallHwinfoTask=Also install HWiNFO64 (free, recommended: CPU / GPU tempera
 en.InstallingHwinfo=Installing HWiNFO64 (winget)...
 en.HwinfoInstallFailed=HWiNFO64 could not be installed automatically. The download page will open; install it and run this Setup again so the panel can start / stop HWiNFO.
 en.TasksFailed=The scheduled tasks for HWiNFO control could not be created. The panel still works in read-only mode.%n%nDetails: C:\ProgramData\metriQ\install_tasks.log
+en.FanNoticeTitle=Fan control service
+en.FanNoticeSub=Setup installs a Windows service for metriQ's fan control.
+en.FanNoticeText=Setup registers the Windows service "metriQ Fan Control" (metriQFan, runs as LocalSystem, starts with Windows).%n%n  •  It does nothing until you turn fan control on in metriQ (Settings > Fan) and accept the warning there.%n  •  Stopping the service, pressing STOP or turning fan control off hands every fan back to BIOS / the graphics driver.%n  •  Motherboard fans need the PawnIO driver (optional task on the previous page); it is installed only if you tick it.%n%nUninstalling metriQ stops and removes the service. No data is sent anywhere.
 en.InstallPawnioTask=Install the PawnIO driver (free, signed: needed for motherboard fan control)
 en.InstallingPawnio=Installing PawnIO (winget)...
 en.PawnioInstallFailed=PawnIO could not be installed automatically. Motherboard fan control needs it; the download page will open. Everything else works without it.
@@ -62,6 +65,9 @@ tr.InstallHwinfoTask=HWiNFO64'ü de kur (ücretsiz, önerilir: CPU / GPU sıcakl
 tr.InstallingHwinfo=HWiNFO64 kuruluyor (winget)...
 tr.HwinfoInstallFailed=HWiNFO64 otomatik kurulamadı. İndirme sayfası açılacak; HWiNFO'yu kurup bu kurulumu yeniden çalıştırırsanız panel HWiNFO'yu açıp kapatabilir.
 tr.TasksFailed=HWiNFO denetimi için zamanlanmış görevler oluşturulamadı. Panel yine de salt okunur modda çalışır.%n%nAyrıntı: C:\ProgramData\metriQ\install_tasks.log
+tr.FanNoticeTitle=Fan kontrol hizmeti
+tr.FanNoticeSub=Kurulum, metriQ'in fan kontrolü için bir Windows hizmeti ekler.
+tr.FanNoticeText=Kurulum "metriQ Fan Control" adlı bir Windows hizmeti kaydeder (metriQFan, LocalSystem olarak çalışır, Windows ile başlar).%n%n  •  metriQ'te fan kontrolünü açıp (Ayarlar > Fan) oradaki uyarıyı onaylamadıkça hiçbir şey yapmaz.%n  •  Hizmeti durdurmak, DURDUR'a basmak ya da fan kontrolünü kapatmak bütün fanları BIOS'a / ekran kartı sürücüsüne geri verir.%n  •  Anakart fanları için PawnIO sürücüsü gerekir (önceki sayfadaki isteğe bağlı görev); yalnızca işaretlerseniz kurulur.%n%nmetriQ kaldırılınca hizmet durdurulur ve silinir. Hiçbir veri bir yere gönderilmez.
 tr.InstallPawnioTask=PawnIO sürücüsünü kur (ücretsiz, imzalı: anakart fan kontrolü için gerekli)
 tr.InstallingPawnio=PawnIO kuruluyor (winget)...
 tr.PawnioInstallFailed=PawnIO otomatik kurulamadı. Anakart fan kontrolü için gerekli; indirme sayfası açılacak. Diğer her şey onsuz da çalışır.
@@ -311,13 +317,16 @@ begin
 end;
 
 var
-  HwNoticePage: TOutputMsgWizardPage;
+  HwNoticePage, FanNoticePage: TOutputMsgWizardPage;
 
 procedure InitializeWizard();
 begin
   // informational only (no question): shown after the tasks page
   HwNoticePage := CreateOutputMsgPage(wpSelectTasks, CustomMessage('HwNoticeTitle'),
     CustomMessage('HwNoticeSub'), CustomMessage('HwNoticeText'));
+  // the system change the Setup makes for fan control, announced before it happens
+  FanNoticePage := CreateOutputMsgPage(HwNoticePage.ID, CustomMessage('FanNoticeTitle'),
+    CustomMessage('FanNoticeSub'), CustomMessage('FanNoticeText'));
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;

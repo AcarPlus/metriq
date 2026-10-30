@@ -172,11 +172,23 @@ $fw = 'C:\WINDOWS\Microsoft.NET\Framework64\v4.0.30319'
 $refs = @($FwRefs | ForEach-Object { Join-Path $fw $_ }) + @($copied | ForEach-Object { $_ })
 $netstd = Join-Path $fw 'netstandard.dll'
 if (Test-Path $netstd) { $refs += $netstd }
+# product name / version metadata (code signing requires it): from src\version.py
+$ver = ([regex]::Match((Get-Content -LiteralPath (Join-Path $Here '..\src\version.py') -Raw), '__version__\s*=\s*"([^"]+)"')).Groups[1].Value
+$num = ([regex]::Match($ver, '^\d+(\.\d+){0,3}')).Value
 foreach ($t in $Targets) {
     $src = Join-Path $Here $t
-    $exe = Join-Path $OutDir ([IO.Path]::GetFileNameWithoutExtension($t) + '.exe')
+    $name = [IO.Path]::GetFileNameWithoutExtension($t)
+    $exe = Join-Path $OutDir ($name + '.exe')
+    $info = Join-Path $BuildDir ($name + '.AssemblyInfo.cs')
+    Set-Content -LiteralPath $info -Encoding Ascii -Value @(
+        "[assembly: System.Reflection.AssemblyTitle(`"metriQ $name`")]",
+        '[assembly: System.Reflection.AssemblyProduct("metriQ")]',
+        '[assembly: System.Reflection.AssemblyCompany("AcarPlus")]',
+        "[assembly: System.Reflection.AssemblyVersion(`"$num`")]",
+        "[assembly: System.Reflection.AssemblyFileVersion(`"$num`")]",
+        "[assembly: System.Reflection.AssemblyInformationalVersion(`"$ver`")]")
     $cscArgs = @('/nologo','/target:exe','/platform:x64','/optimize+','/debug-','/warn:4',"/out:$exe") +
-               ($refs | ForEach-Object { "/reference:$_" }) + @($src)
+               ($refs | ForEach-Object { "/reference:$_" }) + @($src, $info)
     Write-Host "Compiling $t ..."
     & $Csc @cscArgs
     if ($LASTEXITCODE -ne 0) { throw "csc failed with exit code $LASTEXITCODE ($t)" }
