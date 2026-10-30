@@ -239,6 +239,7 @@ class SettingsWindow:
         self.initial = {}
         self.pages = []
         self._closing = False            # Save / Cancel in progress: nothing may be rebuilt any more
+        self._stopping = False           # a running benchmark is being stopped so that the window can close
         self._rebuild_job = None
         self._src_gen = 0                # update_sources: only the newest background probe may write its result
         self._built = False
@@ -422,7 +423,7 @@ class SettingsWindow:
 
         # the first three pages hold the plain settings (cheap); layout, theme, diagnostics and performance are built
         # on the first visit (the layout page alone takes ~0.6 s)
-        self.lay_sf = self.layout_tool = self.lbl_lay = self.theme_tab = self.mini_tab = None
+        self.lay_sf = self.layout_tool = self.lbl_lay = self.theme_tab = self.mini_tab = self.perf_tab = None
         self.lay, self.lay_mode, self.lay_is_auto = [], "keep", None
         self._lazy = {}
         self._theme0 = ThemeTab.initial_values(cfg)
@@ -584,6 +585,13 @@ class SettingsWindow:
 
         self.v_top = tk.BooleanVar(value=bool(cfg.get("topmost", True)))
         self.row(card, t("st_topmost"), self.switch(card.body, self.v_top), help="topmost")
+
+        card = self.card(p, t("st_card_bg"), "temp")
+        self.row(card, t("st_bg_keep"), None, help="bg")
+        self.v_bg_log = tk.BooleanVar(value=bool(cfg.get("bg_keep_logging")))
+        self.row(card, t("st_bg_logging"), self.switch(card.body, self.v_bg_log))
+        self.v_bg_mini = tk.BooleanVar(value=bool(cfg.get("bg_keep_mini")))
+        self.row(card, t("st_bg_mini"), self.switch(card.body, self.v_bg_mini))
 
         card = self.card(p, t("st_card_display"), "gauge")
         langs = [("auto", t("st_auto")), ("tr", "Türkçe"), ("en", "English")]
@@ -1261,6 +1269,8 @@ class SettingsWindow:
             "window_mode": self.wm_vals[max(0, self.cb_wm.current())],
             "topmost": bool(self.v_top.get()),
             "check_updates": bool(self.v_upd.get()),
+            "bg_keep_logging": bool(self.v_bg_log.get()),
+            "bg_keep_mini": bool(self.v_bg_mini.get()),
             "interval": num(self.v_interval.get(), lambda v: round(v, 1), self.v_interval.get()),
             "logging": bool(self.v_logging.get()),
             "log_all": bool(self.v_logall.get()),
@@ -1360,13 +1370,45 @@ class SettingsWindow:
         return ok
 
     def save(self):
-        if self._closing:
+        if self._closing or self._stopping:
             return
         if self.apply(closing=True):
-            self.close()
+            self.guard_close(self.close)
 
     def cancel(self):
-        self.close()
+        self.guard_close(self.close)
+
+    # ---------------- a benchmark / load test is running
+    def bench_busy(self):
+        """True while the performance page has a benchmark or load / stability test running."""
+        pt = self.perf_tab
+        return pt is not None and pt.busy()
+
+    def confirm_stop(self, done):
+        """Ask whether to stop the running test; on Yes stop it the normal way (the Cancel / Stop button of the page)
+        and call done() once its process has ended. No: nothing happens."""
+        if self._closing or self._stopping:
+            return
+        if not messagebox.askyesno(t("st_title"), t("pf_close_q"), parent=self.win):
+            return
+        self._stopping = True
+
+        def finished():
+            self._stopping = False
+            done()
+        if self.bench_busy():
+            self.perf_tab.stop_then(finished)
+        else:
+            finished()                  # it ended while the question was open
+
+    def guard_close(self, fn):
+        """Run fn (a close) right away, or after the question when a test is running (X / Cancel / Esc / Save)."""
+        if self._closing or self._stopping:
+            return
+        if self.bench_busy():
+            self.confirm_stop(fn)
+        else:
+            fn()
 
     def close(self):
         """Hide at once, destroy after the running event: the window is never torn down inside its own callback."""

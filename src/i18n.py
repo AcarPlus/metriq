@@ -182,6 +182,14 @@ _STR = {
         "mini_max": "At most {n} metrics.", "mini_no_rows": "No rows yet: waiting for sensor data.",
         "mini_empty": "no metrics chosen",
         "mini_hk_taken": "Mini mode hotkey {combo} is used by another program: choose another in Settings > Mini mode",
+        # ---- background running (system tray icon, Settings > Appearance)
+        "st_card_bg": "Background", "st_bg_keep": "When the panel is closed, keep running in the background",
+        "st_bg_logging": "While logging", "st_bg_mini": "While mini mode is on",
+        "tray_tip": "metriQ — running in background", "tray_tip_log": "logging",
+        "tray_show": "Show panel", "tray_mini": "Mini mode", "tray_stoplog": "Stop logging", "tray_exit": "Exit",
+        "tray_balloon_title": "metriQ is still running",
+        "tray_balloon": "The panel was closed, but metriQ keeps running in the background. Click the tray icon to "
+                        "show the panel again; right-click it for more options.",
     },
     "tr": {
         "col_now": "ŞİMDİ", "col_min": "MİN", "col_max": "MAKS", "col_avg": "ORT",
@@ -361,6 +369,14 @@ _STR = {
         "mini_max": "En çok {n} ölçüm seçilebilir.", "mini_no_rows": "Henüz satır yok: sensör verisi bekleniyor.",
         "mini_empty": "ölçüm seçilmedi",
         "mini_hk_taken": "Mini mod kısayolu {combo} başka bir program tarafından kullanılıyor: Ayarlar > Mini mod'dan başkasını seçin",
+        # ---- arka planda çalışma (sistem tepsisi simgesi, Ayarlar > Görünüm)
+        "st_card_bg": "Arka plan", "st_bg_keep": "Panel kapatılınca arka planda çalışmaya devam et",
+        "st_bg_logging": "Kayıt sürerken", "st_bg_mini": "Mini mod açıkken",
+        "tray_tip": "metriQ — arka planda çalışıyor", "tray_tip_log": "kayıt açık",
+        "tray_show": "Paneli göster", "tray_mini": "Mini mod", "tray_stoplog": "Kaydı durdur", "tray_exit": "Çıkış",
+        "tray_balloon_title": "metriQ çalışmaya devam ediyor",
+        "tray_balloon": "Panel kapatıldı ama metriQ arka planda çalışıyor. Paneli yeniden açmak için tepsi simgesine "
+                        "tıklayın; diğer seçenekler için sağ tıklayın.",
     },
 }
 

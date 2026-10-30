@@ -130,6 +130,20 @@ or a transparent background, the metric list, and "show when metriQ starts" (off
 - It is an ordinary window of the metriQ process: nothing is injected into any game (no DLLs, no hooks), so it is
   safe with anti-cheat systems. The values are the panel's own, read with the same interval.
 
+## Keep running in the background
+
+Settings > Appearance > **Background**: "When the panel is closed, keep running in the background", with two switches,
+*while logging* and *while mini mode is on* (both off by default: closing the panel then ends metriQ as before). When
+one of the ticked situations is active, the close button only hides the window: recording, the mini mode strip and its
+hotkey keep running, and a metriQ icon appears in the notification area (the first time a notice tells you so).
+
+- Click the icon to show the panel again; right-click it for *Show panel*, *Mini mode*, *Stop logging* (while
+  recording) and *Exit*. *Exit* is the normal full close: the recording is closed cleanly, and HWiNFO is stopped if
+  metriQ started it.
+- metriQ runs once per user: starting it again (shortcut, Setup, update) shows the hidden panel instead of opening a
+  second program. If the notification area is not available, the window is minimised to the taskbar instead.
+- While a benchmark or load test is running, closing the Settings window or the panel asks first and stops the test.
+
 ## Install
 
 **Option 1 - Setup (recommended, no Python needed).** Download `metriQ-Setup-<version>.exe` from the
@@ -223,6 +237,7 @@ v1.2.0, still works).
 | `lhm_url` | `"auto"` or URL | LibreHardwareMonitor web server (`auto` = `http://127.0.0.1:8085/data.json`) |
 | `presentmon_path` | `""` or path | PresentMon console exe for FPS with the LHM / built-in source (`""` = off) |
 | `bench_ssd_drive` | `"auto"` or `"D:"` | drive of the SSD benchmark file (`"auto"` = the Temp folder's drive) |
+| `bg_keep_logging`, `bg_keep_mini` | `true` / `false` | closing the panel only hides it (tray icon) while a recording runs / mini mode is shown; `bg_hint_shown` remembers the one-time notice |
 | `minimode` | object | the in-game strip, see [Mini mode](#mini-mode-in-game-overlay): `enabled`, `hotkey` (`"ctrl+shift+m"`, `"ctrl+alt+m"`, `"ctrl+shift+f10"`, `"off"`), `corner` (`tl` `tr` `bl` `br`), `x`, `y`, `monitor` (`"primary"` or index), `orientation`, `opacity`, `font_size`, `labels`, `background` (`"plate"` / `"none"`), `metrics` (`"auto"` or a list). Missing keys use the defaults |
 | `sections` | `"auto"` or a list | the layout of the HWiNFO source, see below |
 | `sections_lhm`, `sections_builtin` | `"auto"` or a list | the layouts of the other sources (missing = `auto`) |
@@ -405,6 +420,11 @@ işareti varsayılan olarak Windows bölge ayarlarından alınır (Türkçe Exce
 **Mini mod:** oyunun üstünde duran, birkaç değeri gösteren küçük yarı saydam şerit (Ayarlar > *Mini mod*; kısayol varsayılan
 `Ctrl+Shift+M`, panelde `M`). Yalnızca **pencereli veya kenarlıksız (borderless) çalışan oyunlarda** görünür; özel tam ekran
 (exclusive fullscreen) oyunlarda gizlenir. Oyuna hiçbir şey enjekte edilmez, anti-cheat ile uyumludur.
+**Arka planda çalışma:** Ayarlar > Görünüm > *Arka plan*: panel kapatılınca *kayıt sürerken* ve / veya *mini mod açıkken*
+metriQ arka planda çalışmaya devam eder (ikisi de varsayılan olarak kapalı). Bu durumda kapatma düğmesi yalnızca pencereyi
+gizler; kayıt ve mini mod sürer, bildirim alanında bir metriQ simgesi belirir (ilk seferde bir bildirim gösterilir).
+Simgeye tıklayınca panel açılır; sağ tık: *Paneli göster*, *Mini mod*, *Kaydı durdur*, *Çıkış*. metriQ kullanıcı başına bir
+kez çalışır: yeniden başlatmak gizli paneli açar. Bir test çalışırken Ayarlar'ı ya da paneli kapatmak önce sorar.
 **Gizlilik:** veriler bilgisayarınızdan çıkmaz; tek ağ bağlantısı (LHM kaynağında) bu bilgisayardaki
 LibreHardwareMonitor web sunucusunadır (`127.0.0.1`). Kurulumda "HWiNFO64'ü de kur" seçilirse HWiNFO winget ile indirilir.
 Güncelleme denetimi: panel açılışta ve sonra her 24 saatte bir GitHub'a (`api.github.com`) yeni sürüm olup

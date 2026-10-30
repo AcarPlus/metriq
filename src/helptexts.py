@@ -95,6 +95,10 @@ i18n.register({
         "hp_viewbtn": "Opens the recording viewer (or press V).",
         "hp_gearbtn": "Opens the settings (or press S).",
         "hp_interval_lbl": "Seconds between readings and CSV lines. You can also change it in Settings > Logging.",
+        "hp_bg": "Normally closing the panel (X) ends metriQ. Tick a situation here and, while it is active, closing "
+                 "the panel only hides the window: recording and mini mode keep going, and a metriQ icon appears "
+                 "next to the clock. Click it to bring the panel back; right-click it for Exit. Launching metriQ "
+                 "again also shows the hidden panel.",
         # ---- settings: Mini mode
         "hp_mini": "A small see-through strip with a few readings that stays on top of your game. It works only "
                    "over games in windowed or borderless (fullscreen windowed) mode: a game in exclusive "
@@ -180,6 +184,10 @@ i18n.register({
         "hp_viewbtn": "Kayıt görüntüleyiciyi açar (veya V'ye basın).",
         "hp_gearbtn": "Ayarları açar (veya S'ye basın).",
         "hp_interval_lbl": "Okumalar ve CSV satırları arasındaki saniye. Ayarlar > Kayıt'tan da değiştirebilirsiniz.",
+        "hp_bg": "Normalde paneli kapatmak (X) metriQ'yu sonlandırır. Buradan bir durum işaretlerseniz, o durum "
+                 "sürerken paneli kapatmak yalnızca pencereyi gizler: kayıt ve mini mod devam eder, saatin yanında "
+                 "bir metriQ simgesi belirir. Paneli geri getirmek için simgeye tıklayın; Çıkış için sağ tıklayın. "
+                 "metriQ'yu yeniden başlatmak da gizli paneli açar.",
         "hp_mini": "Oyunun üstünde duran, birkaç değer gösteren küçük, yarı saydam bir şerit. Yalnızca pencereli "
                    "ya da kenarlıksız (tam ekran pencere) çalışan oyunların üstünde görünür: özel tam ekran "
                    "(exclusive fullscreen) oyunlar şeridi gizler. Şerit tıklanamaz; fare ve tuşlar hep oyuna "

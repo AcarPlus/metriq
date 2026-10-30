@@ -90,6 +90,7 @@ i18n.register({
                          "longer GPU run. History entries remember the mode.",
         "pf_running": "Running {name}", "pf_idle": "Ready", "pf_done": "Finished", "pf_cancelled": "Cancelled",
         "pf_cancelling": "Cancelling...",
+        "pf_close_q": "A benchmark is running. Stop it and close?",
         "pf_no_result": "No result yet.", "pf_skipped": "Skipped: {why}", "pf_error": "Failed: {why}",
         "pf_single": "Single thread", "pf_multi": "All threads",
         "pf_m_single_int": "Integer, 1 thread", "pf_m_single_float": "Float, 1 thread",
@@ -194,6 +195,7 @@ i18n.register({
                          "kayıtları modu hatırlar.",
         "pf_running": "{name} çalışıyor", "pf_idle": "Hazır", "pf_done": "Bitti", "pf_cancelled": "İptal edildi",
         "pf_cancelling": "İptal ediliyor...",
+        "pf_close_q": "Bir test çalışıyor. Durdurulup kapatılsın mı?",
         "pf_no_result": "Henüz sonuç yok.", "pf_skipped": "Atlandı: {why}", "pf_error": "Başarısız: {why}",
         "pf_single": "Tek iş parçacığı", "pf_multi": "Tüm iş parçacıkları",
         "pf_m_single_int": "Tam sayı, 1 iş parçacığı", "pf_m_single_float": "Kayan nokta, 1 iş parçacığı",
@@ -241,7 +243,7 @@ i18n.register({
 def add_tab(sw):
     """Fill the performance page of the SettingsWindow `sw`."""
     tab = sw.add_page(PAGE)
-    PerfTab(sw, tab)
+    sw.perf_tab = PerfTab(sw, tab)
     return tab
 
 
@@ -825,6 +827,25 @@ class PerfTab:
         self.btn_cancel.config(state="disabled")
         self.status.config(text=t("pf_cancelling"))
         self.job.cancel()
+
+    def stop_then(self, done, limit=20.0):
+        """Stop the running test the normal way (the Cancel button, or the Stop button of the load test) and call
+        done() once its process has ended (the poll loop kills a process that ignores the request after 12 / 15 s)."""
+        if not self.job:
+            done()
+            return
+        if self.job_kind == "stress":
+            self.stress.stop()
+        else:
+            self.cancel()
+        t0 = time.time()
+
+        def wait():
+            if self.job is None or time.time() - t0 > limit:
+                done()
+            else:
+                self.sw.win.after(POLL_MS, wait)
+        wait()
 
     def _live_text(self, test, s):
         """One line of live sensor values for the test that is running."""

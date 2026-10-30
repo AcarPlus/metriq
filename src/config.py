@@ -32,6 +32,9 @@ DEFAULTS = {
     "topmost": True,
     "diag_errors": True,             # diagnostics tab: show the error-detection section
     "fan_risk_ok": False,            # fan page: the risk notice was accepted once
+    "bg_keep_logging": False,        # closing the panel (X) keeps metriQ running in the tray while a recording runs
+    "bg_keep_mini": False,           # ... or while mini mode is shown (otherwise closing the panel ends the program)
+    "bg_hint_shown": False,          # the one-time "metriQ moved to the tray" notice was shown
     "check_updates": True,           # look for a newer release on GitHub at start and every 24 h (README: Privacy)
     "interval": 5.0,                 # CSV logging interval, seconds (0.5 - 30)
     "logging": False,                # CSV logging on/off
@@ -272,6 +275,9 @@ def load_config():
     cfg.pop("ui_scale", None)        # removed feature: ignore old values
     cfg["backend"] = norm_backend(cfg.get("backend"))
     cfg["minimode"] = norm_minimode(cfg.get("minimode"))
+    for k in ("bg_keep_logging", "bg_keep_mini", "bg_hint_shown"):      # older / hand-edited files: anything but a boolean = default
+        if not isinstance(cfg.get(k), bool):
+            cfg[k] = DEFAULTS[k]
     return cfg, note
 
 

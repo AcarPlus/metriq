@@ -29,6 +29,7 @@ import perf_core
 import procwin
 import settings_ui
 import themes
+import tray
 import updater
 from tooltip import Tooltip
 from i18n import t
@@ -238,6 +239,11 @@ def _arm_hard_exit(seconds):
 
 
 def main():
+    if not tray.acquire_instance():              # one panel per data folder: ask the running one to show itself
+        if tray.signal_existing():
+            sys.exit(0)
+    # tray thread + hidden message window: also answers the "show yourself" of a second launch, so it starts first
+    tr = tray.Tray(ICO)
     cfg, note = config.load_config()
     i18n.set_language(cfg["language"])
     themes.configure(cfg)
@@ -1148,7 +1154,7 @@ def main():
                     except Exception:
                         pass
                     if ok:
-                        on_close()                      # the Setup replaces the files: leave cleanly
+                        full_exit()                     # the Setup replaces the files: leave cleanly (never just hide)
                         return
                     st["upd_err"] = time.time()
                 elif kind == "dl_err":
@@ -1228,7 +1234,7 @@ def main():
                 else:
                     hwctl.run_task(hwctl.TASK_START)
         try:
-            mini = root.state() == "iconic"
+            mini = root.state() in ("iconic", "withdrawn")       # minimised, or hidden to the tray: nothing to draw
         except tk.TclError:
             mini = False
         if st.get("mini") and not mini:
@@ -1295,16 +1301,123 @@ def main():
         slow = (mini and not cfg["logging"] and not mm.visible) or (src.active != "hwinfo" and not (cfg["logging"] and cfg["interval"] < 1))
         root.after(1000 if slow else 500, tick)
 
+    # ------------------------------------------------------------ closing / running in the background
+    def bg_wanted():
+        """True when a situation ticked in Settings > Background is active: closing the panel then only hides it."""
+        return bool(tr.ok) and ((bool(cfg.get("bg_keep_logging")) and bool(cfg["logging"]))
+                                or (bool(cfg.get("bg_keep_mini")) and bool(mm.visible)))
+
+    def tray_state():
+        """(tooltip, menu items) for the icon: the menu follows what is running."""
+        tip = t("tray_tip") + (" · " + t("tray_tip_log") if cfg["logging"] else "")
+        items = [("show", t("tray_show"), False), ("mini", t("tray_mini"), bool(mm.visible))]
+        if cfg["logging"]:
+            items.append(("stoplog", t("tray_stoplog"), False))
+        items += [("-", "", False), ("exit", t("tray_exit"), False)]
+        return tip, items
+
+    def hide_panel():
+        """Close button with something still running: the window goes away, everything else keeps running."""
+        tip, items = tray_state()
+        st["tray_key"] = (tip, tuple(items))
+        if not tr.set_visible(True, tip, items):
+            root.iconify()                       # no icon possible (Explorer not running?): never lose the window
+            return
+        try:
+            st["shown_state"] = root.state()                      # a maximised window must come back maximised
+        except tk.TclError:
+            st["shown_state"] = "normal"
+        root.withdraw()
+        st["hidden"] = True
+        if not cfg.get("bg_hint_shown"):         # the first time: tell the user where it went
+            cfg["bg_hint_shown"] = True
+            save_cfg("bg_hint_shown")
+            tr.balloon(t("tray_balloon_title"), t("tray_balloon"))
+
+    def show_panel():
+        if st["closing"]:
+            return
+        st["hidden"] = False
+        try:
+            root.deiconify()
+            if st.get("shown_state") == "zoomed" and root.state() != "zoomed":
+                root.state("zoomed")
+            root.lift()
+            root.attributes("-topmost", True)                         # a launch from the tray / second launch must come to the front
+            root.attributes("-topmost", bool(cfg["topmost"]))
+            root.focus_force()
+        except tk.TclError:
+            pass
+        tr.set_visible(False)
+
+    def guard_bench(then):
+        """A benchmark / load test runs (only possible from the open Settings window): ask first, stop it, close the
+        Settings window, then continue with then(). No: nothing happens."""
+        w = st["settings"]
+        try:
+            busy = w is not None and w.winfo_exists() and w.bench_busy()
+        except tk.TclError:
+            busy = False
+        if not busy:
+            then()
+            return
+        w.confirm_stop(lambda: (w.close(), then()))
+
     def on_close():
+        """The close button of the panel."""
+        if st["closing"]:
+            return
+        guard_bench(lambda: hide_panel() if bg_wanted() else full_exit())
+
+    def tray_exit():
+        """Exit in the tray menu: the normal full close (with the question when a test is running)."""
+        if st["closing"]:
+            return
+        if st.get("hidden"):
+            full_exit()
+        else:
+            guard_bench(full_exit)
+
+    def tray_poll():
+        """Tk thread: act on what the tray thread queued (clicks, menu choices, a second launch)."""
+        if st["closing"]:
+            return
+        try:
+            for cmd in tr.drain():
+                if cmd == "show":
+                    show_panel()
+                elif cmd == "mini":
+                    mm.toggle()
+                elif cmd == "stoplog":
+                    if cfg["logging"]:
+                        toggle()
+                elif cmd == "exit":
+                    tray_exit()
+                elif cmd == "quit":
+                    full_exit()
+            if st.get("hidden") and not st["closing"]:            # tooltip / menu follow logging and mini mode
+                tip, items = tray_state()
+                if st.get("tray_key") != (tip, tuple(items)):
+                    st["tray_key"] = (tip, tuple(items))
+                    tr.set_info(tip, items)
+        except Exception:
+            traceback.print_exc()
+        if not st["closing"]:
+            root.after(150, tray_poll)
+
+    def full_exit():
+        """Really end the program: stop logging cleanly, HWiNFO (when this panel started it), benchmarks, the icon."""
         if st.get("closing"):
             return
         st["closing"] = True
+        tray.release_instance()                          # a launch right after this (updater, Setup) must start a new panel
         try:
             root.withdraw()                              # the window is gone at once; the clean-up follows
         except tk.TclError:
             pass
         _arm_hard_exit(3.0)                              # something blocking below must not keep the process alive
-        steps = [mm.shutdown, procs.close, logger.ext.shutdown, logger.close, perf_core.kill_all_jobs, src.close]
+        steps = [tr.close, mm.shutdown, procs.close, logger.ext.shutdown, logger.close, perf_core.kill_all_jobs,
+                 src.close]
         if bool(cfg["manage_hwinfo"]) and st["tasks"] and (hw_active() or st.get("hw_used")):
             steps.append(lambda: hwctl.run_task(hwctl.TASK_STOP))
         for fn in steps:
@@ -1329,6 +1442,7 @@ def main():
     root.after(200, lambda: place(final=True))
     root.after(400, tick)
     root.after(300, upd_pump)
+    root.after(150, tray_poll)
     upd_reschedule(5000)
     root.mainloop()
     if st.get("closing"):
