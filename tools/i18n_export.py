@@ -94,6 +94,7 @@ def check(code):
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")   # Cyrillic etc. on a cp1252 console
     a = sys.argv[1:]
     if a and a[0] == "--check" and len(a) == 2:
         sys.exit(check(a[1].lower()))
