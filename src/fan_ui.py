@@ -708,10 +708,11 @@ class HeaderCard:
         sw.label(rb, t("fn_mode"), dim=True, size=9, bg=bg).pack(side="left")
         self.seg = uikit.Segmented(rb, C, [t("fn_mode_" + m) for m in MODES], 0, self._on_mode, (F, 10), bg=bg)
         self.seg.pack(side="left", padx=(6, 0))
-        helptexts.info_icon(rb, "fan_diag", bg=bg).pack(side="right")
         self.btn_diag = DiagButton(rb, C, t("fn_diag"), lambda: tab.toggle_diag(self), (F, 9), bg,
                                    t("fn_diag_on", t="99:59"))
-        self.btn_diag.pack(side="right", padx=(0, 6))
+        if not self.group:                              # a GPU's fans need no identifying: built, not shown
+            helptexts.info_icon(rb, "fan_diag", bg=bg).pack(side="right")
+            self.btn_diag.pack(side="right", padx=(0, 6))
         self.lbl_diag = sw.label(rb, "", dim=True, size=9, bg=bg)
         self.lbl_diag.config(fg=C["red"])
         self.lbl_diag.pack(side="right", padx=(0, 8))

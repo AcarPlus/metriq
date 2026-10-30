@@ -2,6 +2,7 @@
 import os
 import re
 import threading
+from datetime import datetime
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk
@@ -13,6 +14,8 @@ import logview
 import tooltip
 import uikit
 from i18n import t
+
+FMT = "%Y-%m-%d %H:%M:%S"
 
 
 def compact_usage(text):
@@ -57,8 +60,8 @@ class DiagTab:
         self.status = sw.label(bar, "", dim=True, size=9, bg=rbg)
         self.status.pack(side="left", padx=(12, 0))
         self.normal = []
-        self.rtree = self._tree(rcard, ("start", "last", "rows", "data", "side", "usage"),
-                                t("cr_rec_cols").split("|"), (110, 70, 40, 70, 70, 110), 5,
+        self.rtree = self._tree(rcard, ("start", "dur", "rows", "data", "side"),
+                                t("cr_rec_cols").split("|"), (90, 60, 40, 70, 70), 5,
                                 lambda e: self._rec_sel())
         self.rtree.column("rows", anchor="e")
         self.rtree.heading("rows", anchor="e")
@@ -310,11 +313,17 @@ class DiagTab:
             self._clear(self.rtree)
             for i, rec in enumerate(self.normal):
                 usage = rec.get("usage", "—")
-                last = rec["last"][11:] if rec["last"][:10] == rec["start"][:10] else rec["last"][5:]   # shorter: time, or month-day + time
-                self._put(self.rtree, str(i), (rec["start"], last, rec["rows"],
+                st = rec["start"]
+                try:
+                    dur = crashscan.fmt_dur((datetime.strptime(rec["last"], FMT) - datetime.strptime(st, FMT))
+                                            .total_seconds())
+                except ValueError:
+                    dur = "—"
+                # short cells (day.month hh:mm); the full range and the logged columns are in the start cell's tip
+                self._put(self.rtree, str(i), (f"{st[8:10]}.{st[5:7]} {st[11:16]}", dur, rec["rows"],
                                                t("cr_data_" + rec.get("data", "panel")),
-                                               t("cr_yes" if rec.get("side") else "cr_no"), compact_usage(usage)),
-                          {"last": rec["last"], "usage": usage})
+                                               t("cr_yes" if rec.get("side") else "cr_no")),
+                          {"start": f"{st} → {rec['last']}\n{compact_usage(usage)}"})
             self._measure(self.rtree)
             self._rec_sel()
             self._clear(self.tree)
