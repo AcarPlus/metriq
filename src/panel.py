@@ -24,6 +24,7 @@ import i18n
 import layout
 import proclog
 import logview
+import minimode
 import perf_core
 import procwin
 import settings_ui
@@ -681,6 +682,7 @@ def main():
         timed("✓ " + t("reset_done"), C["green"], st.get("reset_note", 0), TOAST_RESET_S)
         timed(t("st_write_err"), C["red"], st.get("err_note", 0), TOAST_ERR_S)
         timed(t("log_err"), C["red"], st.get("log_err", 0), TOAST_ERR_S)
+        timed(st.get("hk_msg", ""), C["yellow"], st.get("hk_note", 0), TOAST_ERR_S)
         ap = st.get("applying")
         hint = current_hint()
         if ap and now - ap[0] < 12:
@@ -862,6 +864,10 @@ def main():
         if root.focus_get() is not spin:
             logview.show(api)
 
+    def key_mini(e):
+        if root.focus_get() is not spin:
+            mm.toggle()
+
     spin.config(command=set_interval)
     spin.bind("<Return>", lambda e: (set_interval(), cv.focus_set()))
     spin.bind("<FocusOut>", set_interval)
@@ -873,6 +879,8 @@ def main():
     root.bind("<KeyPress-S>", key_settings)
     root.bind("<KeyPress-v>", key_viewer)
     root.bind("<KeyPress-V>", key_viewer)
+    root.bind("<KeyPress-m>", key_mini)
+    root.bind("<KeyPress-M>", key_mini)
     cv.bind("<Button-1>", lambda e: cv.focus_set(), add="+")
     root.bind("<F11>", lambda e: root.attributes("-fullscreen", not root.attributes("-fullscreen")))
     root.bind("<Escape>", lambda e: root.attributes("-fullscreen", False))
@@ -980,6 +988,7 @@ def main():
         """Apply settings live. changes: {config key: new value}; lay_mode: 'keep' | 'auto' | 'explicit'.
         Returns False when config.json could not be written (the settings are still applied)."""
         real = {k: v for k, v in changes.items() if cfg.get(k) != v}
+        old_mini = cfg.get("minimode")
         cfg.update(real)
         keys = list(real)
         need_build = bool({"columns", "language"} & set(real))
@@ -1011,6 +1020,10 @@ def main():
             need_build = True
         if "topmost" in real:
             root.attributes("-topmost", bool(cfg["topmost"]))
+        if "minimode" in real:
+            mm.reconfigure(old_mini)
+        elif (THEME_KEYS | {"language"}) & set(real):
+            mm.reconfigure()                       # colours / fonts / texts of the strip follow
         if "check_updates" in real:
             upd_reschedule(1000)
         if "hwinfo_path" in real:
@@ -1046,10 +1059,18 @@ def main():
     api = types.SimpleNamespace(root=root, cfg=cfg, C=C, fonts=(F_TXT, F_HEAD, F_NUM), fonts_now=lambda: (F_TXT, F_HEAD, F_NUM),
                                 apply=apply_settings, layout=layout_snapshot, readings=read_now,
                                 monitor=panel_monitor, refresh_tasks=refresh_tasks, tasks=cached_tasks,
-                                detect=hwctl.detect_hwinfo, monitors=config.monitors, source=src)
+                                detect=hwctl.detect_hwinfo, monitors=config.monitors, source=src,
+                                mini_rows=lambda: layout.all_rows(st["sections"]))
 
     procs = procwin.Controller(api)
     api.procs = procs
+
+    def mm_notice(text):
+        """Short notice in the toast stack above the status bar (e.g. the mini mode hotkey is taken)."""
+        st["hk_msg"], st["hk_note"] = text, time.time()
+        refresh_status()
+
+    mm = minimode.MiniMode(api, mm_notice)         # the in-game strip (starts shown when "enabled" is set)
 
     def open_settings(e=None):
         w = st["settings"]
@@ -1214,6 +1235,7 @@ def main():
             st["last"].clear()                  # restored: the canvas content is stale, redraw everything once
         st["mini"] = mini
         rows = layout.all_rows(st["sections"])
+        mm.update(rows, rd if ok else [], ok and not frozen)
         # HWiNFO has not polled since the last tick: nothing new to show (the values are identical)
         poll = hwsm.last_poll if (ok and src.active == "hwinfo") else None
         same = (poll is not None and poll == st.get("poll") and not st.get("need_draw") and not st["frozen"]
@@ -1270,7 +1292,7 @@ def main():
                 st["log_err"] = time.time()
         refresh_status()
         # HWiNFO: cheap (unchanged polls are skipped) -> 2 Hz; the other sources re-sample each tick -> 1 Hz
-        slow = (mini and not cfg["logging"]) or (src.active != "hwinfo" and not (cfg["logging"] and cfg["interval"] < 1))
+        slow = (mini and not cfg["logging"] and not mm.visible) or (src.active != "hwinfo" and not (cfg["logging"] and cfg["interval"] < 1))
         root.after(1000 if slow else 500, tick)
 
     def on_close():
@@ -1282,7 +1304,7 @@ def main():
         except tk.TclError:
             pass
         _arm_hard_exit(3.0)                              # something blocking below must not keep the process alive
-        steps = [procs.close, logger.ext.shutdown, logger.close, perf_core.kill_all_jobs, src.close]
+        steps = [mm.shutdown, procs.close, logger.ext.shutdown, logger.close, perf_core.kill_all_jobs, src.close]
         if bool(cfg["manage_hwinfo"]) and st["tasks"] and (hw_active() or st.get("hw_used")):
             steps.append(lambda: hwctl.run_task(hwctl.TASK_STOP))
         for fn in steps:

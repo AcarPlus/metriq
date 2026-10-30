@@ -52,6 +52,8 @@ Türkçe açıklama için aşağıya bakın: [Türkçe](#türkçe).
   always on top, logging, CSV format, data source and HWiNFO options, and the layout itself (show /
   hide rows, names, colour limits, bars, section titles / colours / order, "Add sensor" from the live sensor list).
   Changes apply live. The *Data source* tab also lists which data the active source cannot provide, and why.
+- **Mini mode**: a small semi-transparent strip with a few readings (FPS, CPU / GPU temperature, usage, power by
+  default) on top of your game, toggled by a global hotkey (`Ctrl+Shift+M`) or `M` on the panel, see [Mini mode](#mini-mode-in-game-overlay).
 - **Multi-column layout** for wide screens: sections are distributed over 1 to 3 columns (automatic by window shape).
 - **Updates**: the panel checks GitHub for a newer release and, after you confirm, downloads and installs it
   (checksum verified); can be turned off in Settings.
@@ -112,6 +114,21 @@ Optional (source installs): `pip install psutil` is used only if the Windows per
 Settings > Data source (`presentmon_path`). It measures the application in the foreground window. PresentMon needs
 administrator rights or membership in the Windows group *Performance Log Users*. *Status: implemented, not yet tested
 with a real PresentMon.*
+
+## Mini mode (in-game overlay)
+
+A small borderless strip that shows up to 8 rows of your layout (default: FPS, CPU temperature, CPU usage, GPU
+temperature, GPU usage, GPU power, where they exist) in the same colours as the panel. Settings > **Mini mode**:
+hotkey, corner + X / Y offset, monitor, horizontal / vertical, opacity (30 - 100 %), font size, labels on / off, a plate
+or a transparent background, the metric list, and "show when metriQ starts" (off by default).
+
+- It is click-through, never takes the keyboard focus, has no taskbar / Alt+Tab entry and is put back on top every 2 s,
+  so it does not disturb the game. Toggle it with the global hotkey (`Ctrl+Shift+M` by default; `Ctrl+Alt+M`,
+  `Ctrl+Shift+F10` or off) or press `M` on the panel. If another program already owns the hotkey, the panel says so.
+- **Limitation: it works over games in windowed or borderless ("fullscreen windowed") mode only.** A game in
+  *exclusive fullscreen* is drawn above every other window, so the strip is hidden there; switch the game to borderless.
+- It is an ordinary window of the metriQ process: nothing is injected into any game (no DLLs, no hooks), so it is
+  safe with anti-cheat systems. The values are the panel's own, read with the same interval.
 
 ## Install
 
@@ -206,6 +223,7 @@ v1.2.0, still works).
 | `lhm_url` | `"auto"` or URL | LibreHardwareMonitor web server (`auto` = `http://127.0.0.1:8085/data.json`) |
 | `presentmon_path` | `""` or path | PresentMon console exe for FPS with the LHM / built-in source (`""` = off) |
 | `bench_ssd_drive` | `"auto"` or `"D:"` | drive of the SSD benchmark file (`"auto"` = the Temp folder's drive) |
+| `minimode` | object | the in-game strip, see [Mini mode](#mini-mode-in-game-overlay): `enabled`, `hotkey` (`"ctrl+shift+m"`, `"ctrl+alt+m"`, `"ctrl+shift+f10"`, `"off"`), `corner` (`tl` `tr` `bl` `br`), `x`, `y`, `monitor` (`"primary"` or index), `orientation`, `opacity`, `font_size`, `labels`, `background` (`"plate"` / `"none"`), `metrics` (`"auto"` or a list). Missing keys use the defaults |
 | `sections` | `"auto"` or a list | the layout of the HWiNFO source, see below |
 | `sections_lhm`, `sections_builtin` | `"auto"` or a list | the layouts of the other sources (missing = `auto`) |
 
@@ -382,8 +400,11 @@ veremediğini ve nedenini de gösterir; değişiklikler anında uygulanır. **S�
 1-3 sütuna dağıtılır (`columns`: `auto`, 1, 2, 3). Gizlenen satırlar `"visible": false` olarak
 dosyada kalır.
 
-**Kısayollar:** `L` kaydı açar/kapatır, `S` ayarlar, `F11` tam ekran. **CSV:** her kayıt oturumu ayrı dosyadır; ayırıcı ve ondalık
+**Kısayollar:** `L` kaydı açar/kapatır, `S` ayarlar, `M` mini mod, `F11` tam ekran. **CSV:** her kayıt oturumu ayrı dosyadır; ayırıcı ve ondalık
 işareti varsayılan olarak Windows bölge ayarlarından alınır (Türkçe Excel için `;` ve `,`).
+**Mini mod:** oyunun üstünde duran, birkaç değeri gösteren küçük yarı saydam şerit (Ayarlar > *Mini mod*; kısayol varsayılan
+`Ctrl+Shift+M`, panelde `M`). Yalnızca **pencereli veya kenarlıksız (borderless) çalışan oyunlarda** görünür; özel tam ekran
+(exclusive fullscreen) oyunlarda gizlenir. Oyuna hiçbir şey enjekte edilmez, anti-cheat ile uyumludur.
 **Gizlilik:** veriler bilgisayarınızdan çıkmaz; tek ağ bağlantısı (LHM kaynağında) bu bilgisayardaki
 LibreHardwareMonitor web sunucusunadır (`127.0.0.1`). Kurulumda "HWiNFO64'ü de kur" seçilirse HWiNFO winget ile indirilir.
 Güncelleme denetimi: panel açılışta ve sonra her 24 saatte bir GitHub'a (`api.github.com`) yeni sürüm olup

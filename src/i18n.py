@@ -167,6 +167,21 @@ _STR = {
                        "and see which fan it is (on a GPU card, all fans of that GPU). The service accepts only 30 "
                        "seconds at a time, so metriQ renews it every 10 seconds. It turns off when you press it "
                        "again, leave this page, close Settings or press STOP.",
+        # ---- settings: Mini mode page (minimode_ui.py) and its notice
+        "mini_tab": "Mini mode", "mini_card_general": "Overlay", "mini_card_pos": "Position",
+        "mini_card_look": "Look", "mini_card_metrics": "Metrics",
+        "mini_enable": "Show mini mode when metriQ starts", "mini_hotkey": "Hotkey (show / hide)",
+        "mini_hk_off": "Off",
+        "mini_corner": "Corner", "mini_c_tl": "Top left", "mini_c_tr": "Top right", "mini_c_bl": "Bottom left",
+        "mini_c_br": "Bottom right", "mini_off_x": "Distance from the side (px)",
+        "mini_off_y": "Distance from the top / bottom (px)", "mini_mon_primary": "Primary monitor",
+        "mini_orient": "Orientation", "mini_horizontal": "Horizontal", "mini_vertical": "Vertical",
+        "mini_opacity": "Opacity (%)", "mini_font": "Font size (pt)", "mini_labels": "Show labels",
+        "mini_bg": "Background", "mini_bg_plate": "Plate", "mini_bg_none": "Transparent",
+        "mini_metrics_hint": "Tick up to {n} rows of your layout; they appear in this order.",
+        "mini_max": "At most {n} metrics.", "mini_no_rows": "No rows yet: waiting for sensor data.",
+        "mini_empty": "no metrics chosen",
+        "mini_hk_taken": "Mini mode hotkey {combo} is used by another program: choose another in Settings > Mini mode",
     },
     "tr": {
         "col_now": "ŞİMDİ", "col_min": "MİN", "col_max": "MAKS", "col_avg": "ORT",
@@ -331,6 +346,21 @@ _STR = {
                        "olduğunu görebilirsin (GPU kartında o GPU'nun tüm fanları döner). Hizmet her seferinde en "
                        "çok 30 saniyeye izin verdiği için metriQ bunu 10 saniyede bir yeniler. Tekrar basınca, bu "
                        "sayfadan çıkınca, Ayarlar'ı kapatınca ya da DURDUR'a basınca kapanır.",
+        # ---- ayarlar: Mini mod sayfası (minimode_ui.py) ve uyarısı
+        "mini_tab": "Mini mod", "mini_card_general": "Üst katman", "mini_card_pos": "Konum",
+        "mini_card_look": "Görünüm", "mini_card_metrics": "Ölçümler",
+        "mini_enable": "metriQ açılınca mini modu göster", "mini_hotkey": "Kısayol (göster / gizle)",
+        "mini_hk_off": "Kapalı",
+        "mini_corner": "Köşe", "mini_c_tl": "Sol üst", "mini_c_tr": "Sağ üst", "mini_c_bl": "Sol alt",
+        "mini_c_br": "Sağ alt", "mini_off_x": "Kenardan uzaklık (px)",
+        "mini_off_y": "Üstten / alttan uzaklık (px)", "mini_mon_primary": "Ana monitör",
+        "mini_orient": "Yön", "mini_horizontal": "Yatay", "mini_vertical": "Dikey",
+        "mini_opacity": "Saydamlık (%)", "mini_font": "Yazı boyutu (pt)", "mini_labels": "Etiketleri göster",
+        "mini_bg": "Arka plan", "mini_bg_plate": "Zemin", "mini_bg_none": "Saydam",
+        "mini_metrics_hint": "Düzeninizden en çok {n} satır seçin; bu sırayla görünürler.",
+        "mini_max": "En çok {n} ölçüm seçilebilir.", "mini_no_rows": "Henüz satır yok: sensör verisi bekleniyor.",
+        "mini_empty": "ölçüm seçilmedi",
+        "mini_hk_taken": "Mini mod kısayolu {combo} başka bir program tarafından kullanılıyor: Ayarlar > Mini mod'dan başkasını seçin",
     },
 }
 
@@ -362,6 +392,11 @@ def register(strings):
     """Feature modules add their own texts here instead of editing _STR: register({"tr": {...}, "en": {...}})."""
     for lang, d in strings.items():
         _STR.setdefault(lang, {}).update(d)
+
+
+def every(key):
+    """The text of `key` in all languages (a stored row name may come from the other language)."""
+    return {d[key] for d in _STR.values() if key in d}
 
 
 def t(key, **kw):

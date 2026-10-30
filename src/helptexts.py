@@ -95,6 +95,19 @@ i18n.register({
         "hp_viewbtn": "Opens the recording viewer (or press V).",
         "hp_gearbtn": "Opens the settings (or press S).",
         "hp_interval_lbl": "Seconds between readings and CSV lines. You can also change it in Settings > Logging.",
+        # ---- settings: Mini mode
+        "hp_mini": "A small see-through strip with a few readings that stays on top of your game. It works only "
+                   "over games in windowed or borderless (fullscreen windowed) mode: a game in exclusive "
+                   "fullscreen hides it. The strip cannot be clicked, so the mouse and keys always reach the game. "
+                   "metriQ never touches the game itself.",
+        "hp_mini_hotkey": "Shows or hides the strip from anywhere, even inside a game (the strip itself cannot be "
+                          "clicked). On the panel you can also press M. If another program already uses the key "
+                          "combination, metriQ tells you; pick a different one.",
+        "hp_mini_bg": "Plate puts the readings on a card in the theme colour, which is the easiest to read. "
+                      "Transparent shows only the text, which can be hard to read on bright scenes.",
+        "hp_mini_metrics": "Rows of your panel layout (up to 8). The colours follow the same green-to-red limits "
+                           "as on the panel. Leave it as it is to get FPS, CPU / GPU temperature, usage and power "
+                           "where they exist.",
     },
     "tr": {
         "hp_columns": "Kartların kaç sütunda dizileceği. Otomatik, ekranınıza en uygun olanı seçer.",
@@ -167,6 +180,17 @@ i18n.register({
         "hp_viewbtn": "Kayıt görüntüleyiciyi açar (veya V'ye basın).",
         "hp_gearbtn": "Ayarları açar (veya S'ye basın).",
         "hp_interval_lbl": "Okumalar ve CSV satırları arasındaki saniye. Ayarlar > Kayıt'tan da değiştirebilirsiniz.",
+        "hp_mini": "Oyunun üstünde duran, birkaç değer gösteren küçük, yarı saydam bir şerit. Yalnızca pencereli "
+                   "ya da kenarlıksız (tam ekran pencere) çalışan oyunların üstünde görünür: özel tam ekran "
+                   "(exclusive fullscreen) oyunlar şeridi gizler. Şerit tıklanamaz; fare ve tuşlar hep oyuna "
+                   "gider. metriQ oyuna hiçbir şekilde müdahale etmez.",
+        "hp_mini_hotkey": "Şeridi her yerden, oyunun içinden bile gösterir ya da gizler (şeride tıklanamaz). "
+                          "Panelde M tuşuna da basabilirsiniz. Tuş birleşimini başka bir program kullanıyorsa "
+                          "metriQ haber verir; başka bir tane seçin.",
+        "hp_mini_bg": "Zemin, değerleri tema renginde bir kartın üstüne koyar; en rahat okunan budur. Saydam "
+                      "yalnızca yazıyı gösterir; parlak sahnelerde okunması zor olabilir.",
+        "hp_mini_metrics": "Panel düzeninizdeki satırlar (en çok 8). Renkler, paneldeki aynı yeşilden kırmızıya "
+                           "sınırları izler. Dokunmazsanız, varsa FPS, CPU / GPU sıcaklığı, kullanımı ve gücü gelir.",
     },
 })
 

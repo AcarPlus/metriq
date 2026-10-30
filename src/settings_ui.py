@@ -29,6 +29,7 @@ import hwctl
 import i18n
 import layout
 import logview
+import minimode_ui
 import procset
 import themes
 import uikit
@@ -55,7 +56,8 @@ PAGES = (("st_tab_look", "look", "accent_clock", "gauge"), ("st_tab_log", "log",
          ("st_tab_hw", "hw", "accent_power", "bolt"), ("st_tab_layout", "layout", "accent_net", "net"),
          ("st_tab_theme", "theme", "accent_fan", "fan"), ("cr_tab", "diag", "accent_fps", "fps"),
          ("pf_tab", "perf", "accent_power", "bolt"),
-         ("fn_tab", "fan", "accent_fan", "fan"))
+         ("fn_tab", "fan", "accent_fan", "fan"),
+         ("mini_tab", "mini", "accent_net", "fps"))
 
 _bg = uikit._bg_of
 themes_keys = {"theme", "theme_overrides", "value_color_mode", "value_steps"}
@@ -420,10 +422,11 @@ class SettingsWindow:
 
         # the first three pages hold the plain settings (cheap); layout, theme, diagnostics and performance are built
         # on the first visit (the layout page alone takes ~0.6 s)
-        self.lay_sf = self.layout_tool = self.lbl_lay = self.theme_tab = None
+        self.lay_sf = self.layout_tool = self.lbl_lay = self.theme_tab = self.mini_tab = None
         self.lay, self.lay_mode, self.lay_is_auto = [], "keep", None
         self._lazy = {}
         self._theme0 = ThemeTab.initial_values(cfg)
+        self._mini0 = config.norm_minimode(cfg.get("minimode"))
         self._tab_look(self._page(0).inner, cfg)
         self._tab_log(self._page(1).inner, cfg)
         self._tab_hw(self._page(2).inner, cfg)
@@ -437,6 +440,8 @@ class SettingsWindow:
         self._lazy[6] = lambda: perf_ui.add_tab(self)
         self._page(7)
         self._lazy[7] = lambda: fan_ui.add_tab(self)
+        self._page(8)
+        self._lazy[8] = lambda: minimode_ui.add_tab(self)
 
         tk.Label(bar, text=f"{config.APP_NAME} v{version.__version__}", bg=C["bg"], fg=C["faint"],
                  font=(self.F_TXT, 9)).pack(side="left")
@@ -544,17 +549,23 @@ class SettingsWindow:
         self.theme_tab = ThemeTab(self, cfg)
 
     # ---------------- appearance
+    @staticmethod
+    def monitor_labels(mons):
+        """One drop-down text per monitor: index, size, primary / portrait."""
+        out = []
+        for m in mons:
+            extra = [t("st_mon_primary")] if m["primary"] else []
+            if m["h"] > m["w"]:
+                extra.append(t("st_mon_portrait"))
+            out.append(f"{m['index']}:  {m['w']} × {m['h']}" + ("   ·   " + ", ".join(extra) if extra else ""))
+        return out
+
     def _tab_look(self, p, cfg):
         C = self.C
         card = self.card(p, t("st_card_window"), "fps")
         mons = self.api.monitors() or []
         self.mon_vals = ["auto"] + [m["index"] for m in mons]
-        names = [t("st_auto")]
-        for m in mons:
-            extra = [t("st_mon_primary")] if m["primary"] else []
-            if m["h"] > m["w"]:
-                extra.append(t("st_mon_portrait"))
-            names.append(f"{m['index']}:  {m['w']} × {m['h']}" + ("   ·   " + ", ".join(extra) if extra else ""))
+        names = [t("st_auto")] + self.monitor_labels(mons)
         cur = cfg.get("monitor", "auto")
         idx = 0
         if str(cur).strip().lower() not in ("", "auto"):
@@ -1264,6 +1275,7 @@ class SettingsWindow:
             "manage_hwinfo": bool(self.v_manage.get()),
             "sync_hwinfo_interval": bool(self.v_sync.get()),
         }
+        d["minimode"] = self.mini_tab.read() if self.mini_tab is not None else copy.deepcopy(self._mini0)    # (page not visited: unchanged)
         if self.theme_tab is not None:
             d.update(self.theme_tab.read())
         else:                                    # theme page not visited yet: unchanged

@@ -48,7 +48,24 @@ DEFAULTS = {
     "presentmon_path": "",           # optional: PresentMon console exe for FPS with the lhm / builtin source
     "sections": "auto",              # "auto" (detected from your hardware) or a list, see README
                                      # (the lhm / builtin sources use "sections_lhm" / "sections_builtin")
+    "minimode": {                    # in-game overlay strip (minimode.py, README: Mini mode)
+        "enabled": False,            # show it when the panel starts (the hotkey / M key toggle it any time)
+        "hotkey": "ctrl+shift+m",    # "ctrl+shift+m" | "ctrl+alt+m" | "ctrl+shift+f10" | "off"
+        "corner": "tl",              # "tl" | "tr" | "bl" | "br"
+        "x": 20, "y": 20,            # distance from that corner in pixels
+        "monitor": "primary",        # "primary" or a monitor index (see "monitor" above)
+        "orientation": "horizontal", # "horizontal" | "vertical"
+        "opacity": 85,               # 30 - 100 (%)
+        "font_size": 12,             # 8 - 40 (pt)
+        "labels": True,              # short label in front of each value
+        "background": "plate",       # "plate" (card colour) | "none" (only the text, colour-keyed)
+        "metrics": "auto",           # "auto" (FPS, CPU / GPU temperature, usage, power) or a list of row keys (max 8)
+    },
 }
+
+MINI_CORNERS = ("tl", "tr", "bl", "br")
+MINI_HOTKEYS = ("ctrl+shift+m", "ctrl+alt+m", "ctrl+shift+f10", "off")
+MINI_MAX_METRICS = 8
 
 
 def _package_family():
@@ -254,6 +271,7 @@ def load_config():
     cfg["columns"] = norm_columns(cfg.get("columns"))
     cfg.pop("ui_scale", None)        # removed feature: ignore old values
     cfg["backend"] = norm_backend(cfg.get("backend"))
+    cfg["minimode"] = norm_minimode(cfg.get("minimode"))
     return cfg, note
 
 
@@ -274,6 +292,43 @@ def norm_columns(v):
     except (TypeError, ValueError):
         pass
     return "auto"
+
+
+def _int_in(v, lo, hi, default):
+    try:
+        return int(min(hi, max(lo, round(float(str(v).replace(",", "."))))))
+    except (TypeError, ValueError):
+        return default
+
+
+def norm_minimode(v):
+    """The "minimode" dict with every key present and valid (older config files have none, hand edits may be partial)."""
+    d = copy.deepcopy(DEFAULTS["minimode"])
+    if not isinstance(v, dict):
+        return d
+    flag = lambda x, default: x if isinstance(x, bool) else default
+    d["enabled"] = flag(v.get("enabled"), d["enabled"])
+    d["labels"] = flag(v.get("labels"), d["labels"])
+    hk = str(v.get("hotkey", d["hotkey"])).strip().lower()
+    d["hotkey"] = hk if hk in MINI_HOTKEYS else d["hotkey"]
+    cn = str(v.get("corner", d["corner"])).strip().lower()
+    d["corner"] = cn if cn in MINI_CORNERS else d["corner"]
+    d["x"] = _int_in(v.get("x"), 0, 9999, d["x"])
+    d["y"] = _int_in(v.get("y"), 0, 9999, d["y"])
+    mon = str(v.get("monitor", d["monitor"])).strip().lower()
+    d["monitor"] = int(mon) if mon.isdigit() else "primary"
+    d["orientation"] = "vertical" if str(v.get("orientation", "")).strip().lower() == "vertical" else "horizontal"
+    d["opacity"] = _int_in(v.get("opacity"), 30, 100, d["opacity"])
+    d["font_size"] = _int_in(v.get("font_size"), 8, 40, d["font_size"])
+    d["background"] = "none" if str(v.get("background", "")).strip().lower() == "none" else "plate"
+    m = v.get("metrics", "auto")
+    if isinstance(m, list):
+        keys = []
+        for k in m:
+            if isinstance(k, str) and k not in keys:
+                keys.append(k)
+        d["metrics"] = keys[:MINI_MAX_METRICS]
+    return d
 
 
 def layout_key(source):
