@@ -85,6 +85,75 @@ _STR = {
         "st_lhm_url": "LHM web server", "st_lhm_hint": "auto = http://127.0.0.1:8085/data.json · in LibreHardwareMonitor: Options > Remote Web Server > Run",
         "st_pm_path": "PresentMon (FPS)", "st_pm_hint": "optional, experimental: PresentMon console exe, FPS for LHM / built-in · empty = off",
         "st_hw_only": "HWiNFO only: these options are used only while HWiNFO is the active data source.",
+        # ---- settings: Fan page (fan_ui.py)
+        "fn_tab": "Fan", "fn_title": "Fan control",
+        "fn_missing": "Fan control only works in the installed version (Setup). The portable version has no fan service.",
+        "fn_stopped": "The fan service (metriQFan) is not running. Until it starts, the BIOS controls the fans. "
+                      "You can start it from the Windows Services list and try again.",
+        "fn_starting": "The fan service is starting or stopping. Try again in a few seconds.",
+        "fn_unreach": "The fan service does not answer. Wait a moment and try again; if it keeps failing, restart "
+                      "the computer.",
+        "fn_retry": "Try again", "fn_checking": "Connecting to the fan service...",
+        "fn_pawnio": "Motherboard fans need the PawnIO driver (GPU fans work without it).",
+        "fn_pawnio_btn": "Get PawnIO",
+        "fn_risk_title": "Read this first",
+        "fn_risk_intro": "Wrong fan settings can overheat the computer and damage hardware. This feature comes "
+                         "without any warranty; you use it at your own risk.",
+        "fn_risk_rules": "Safety rules",
+        "fn_risk_1": "Every role has a minimum speed: pump at least 60 %, CPU / GPU / unknown fans at least 30 %. The "
+                     "pump and the CPU fan are never lowered below their minimum.",
+        "fn_risk_2": "If the CPU or GPU temperature limit is exceeded, all fans go to 100 %.",
+        "fn_risk_3": "If a temperature sensor is lost, the fans that depend on it go to 100 %.",
+        "fn_risk_4": "Pressing STOP or switching the control off gives the fans back to the BIOS.",
+        "fn_risk_ok": "I understand the risks", "fn_continue": "Continue",
+        "fn_master": "Fan control", "fn_stop": "STOP", "fn_cpu": "CPU", "fn_gpu": "GPU",
+        "fn_panic": "Temperature limit exceeded: all fans at 100 %",
+        "fn_safe": "A fan could not return to the BIOS cleanly; the safe curve is used. Restarting the computer "
+                   "gives control back to the BIOS.",
+        "fn_hw_error": "Hardware could not be opened: {e}", "fn_hw_idle": "Opening the hardware...",
+        "fn_lost": "The fan service is not reachable.",
+        "fn_save_err": "Settings could not be saved: the fan service is not reachable.",
+        "fn_enable_err": "Fan control could not be changed: the fan service is not reachable.",
+        "fn_stop_err": "The STOP command did not reach the service! The fans may still be under software control.",
+        "fn_profiles": "Profiles", "fn_p_silent": "Silent", "fn_p_balanced": "Balanced", "fn_p_perf": "Performance",
+        "fn_profiles_hint": "Applies a ready-made curve to every fan except pumps and empty headers; pumps run at a "
+                            "fixed 100 %. You can fine-tune each fan afterwards.",
+        "fn_limits": "Temperature limits", "fn_cpu_limit": "CPU limit (°C)", "fn_gpu_limit": "GPU limit (°C)",
+        "fn_limit_hint": "At this temperature all fans go to 100 % (CPU 60-95 °C, GPU 60-90 °C).",
+        "fn_headers": "Fan headers",
+        "fn_headers_hint": "Each card is one fan header. Press Identify to find out which fan in the case it is.",
+        "fn_no_headers": "No fan headers found.",
+        "fn_role": "Role", "fn_mode": "Mode",
+        "fn_role_unknown": "Unknown", "fn_role_case": "Case fan", "fn_role_cpu": "CPU fan", "fn_role_pump": "Pump",
+        "fn_role_gpu": "GPU", "fn_role_none": "Empty header",
+        "fn_mode_bios": "BIOS", "fn_mode_fixed": "Fixed", "fn_mode_curve": "Curve",
+        "fn_min": "at least {n} %", "fn_min0": "no minimum",
+        "fn_rpm": "{v} RPM", "fn_no_rpm": "- RPM", "fn_duty": "now {d} %", "fn_target": " (target {g} %)",
+        "fn_r_bios": "BIOS controls it", "fn_r_fixed": "fixed speed", "fn_r_curve": "following the curve",
+        "fn_r_safe": "safe curve", "fn_r_limit": "temperature limit: 100 %", "fn_r_override": "identify",
+        "fn_r_nosensor": "sensor lost: 100 %", "fn_r_waiting": "waiting for the sensor",
+        "fn_stall": "Fan is not spinning!",
+        "fn_diag": "Identify", "fn_diag_on": "100 % · {n} s", "fn_diag_fail": "Could not start.",
+        "fn_fixed": "Fixed speed", "fn_source": "Temperature source", "fn_src_cpu": "CPU", "fn_src_gpu": "GPU",
+        "fn_src_max": "Highest (CPU / GPU)",
+        "fn_curve_hint": "Drag the points. Double-click empty space to add a point, double-click a point to remove "
+                         "it (2-8 points). The red area is below this role's minimum.",
+        "fn_bios_note": "The BIOS controls this fan; metriQ leaves it alone.",
+        "fn_none_note": "Empty header: it always stays under BIOS control.",
+        "hp_fan_master": "While on, metriQ drives the fans with the curves you set. While off, the BIOS controls "
+                         "all fans.",
+        "hp_fan_stop": "Gives every fan back to the BIOS at once and switches fan control off.",
+        "hp_fan_profiles": "Quick starting points. Each profile sets a temperature curve on all fans except pumps "
+                           "and empty headers.",
+        "hp_fan_limits": "If the CPU or GPU reaches this temperature, all fans go to 100 %.",
+        "hp_fan_role": "The role sets the lowest speed allowed: pump 60 %, CPU / GPU / unknown 30 %, case fan no "
+                       "minimum. An empty header has no fan and always stays under BIOS control.",
+        "hp_fan_curve": "Sets the fan speed by temperature. Drag the points; double-click empty space to add one, "
+                        "double-click a point to remove it (2-8 points). The red area is below the role's minimum: "
+                        "the fan never goes lower. The vertical line is the current temperature, the dot the "
+                        "current speed.",
+        "hp_fan_diag": "Spins the fan on this header at 100 % for 8 seconds, so you can look into the case and see "
+                       "which fan it is.",
     },
     "tr": {
         "col_now": "ŞİMDİ", "col_min": "MİN", "col_max": "MAKS", "col_avg": "ORT",
@@ -163,6 +232,79 @@ _STR = {
         "st_lhm_url": "LHM web sunucusu", "st_lhm_hint": "auto = http://127.0.0.1:8085/data.json · LibreHardwareMonitor'da: Options > Remote Web Server > Run",
         "st_pm_path": "PresentMon (FPS)", "st_pm_hint": "isteğe bağlı, deneysel: PresentMon konsol exe'si, LHM / yerleşik için FPS · boş = kapalı",
         "st_hw_only": "Yalnızca HWiNFO: bu seçenekler sadece veri kaynağı HWiNFO iken kullanılır.",
+        # ---- ayarlar: Fan sayfası (fan_ui.py)
+        "fn_tab": "Fan", "fn_title": "Fan kontrolü",
+        "fn_missing": "Fan kontrolü yalnızca kurulu sürümde (Setup) çalışır. Taşınabilir sürümde fan hizmeti "
+                      "bulunmaz.",
+        "fn_stopped": "Fan hizmeti (metriQFan) çalışmıyor. Hizmet başlayana kadar fanları BIOS yönetir. Hizmeti "
+                      "Windows'un Hizmetler ekranından başlatıp yeniden deneyebilirsin.",
+        "fn_starting": "Fan hizmeti başlıyor ya da duruyor. Birkaç saniye sonra yeniden dene.",
+        "fn_unreach": "Fan hizmeti yanıt vermiyor. Biraz bekleyip yeniden dene; sorun sürerse bilgisayarı yeniden "
+                      "başlat.",
+        "fn_retry": "Yeniden dene", "fn_checking": "Fan hizmetine bağlanılıyor…",
+        "fn_pawnio": "Anakart fanları için PawnIO sürücüsü gerekli (GPU fanları onsuz da çalışır).",
+        "fn_pawnio_btn": "PawnIO'yu indir",
+        "fn_risk_title": "Önce bunu oku",
+        "fn_risk_intro": "Fan hızlarını yanlış ayarlamak bilgisayarın aşırı ısınmasına ve donanımın zarar "
+                         "görmesine yol açabilir. Bu özellik hiçbir garanti olmadan sunulur; kullanım sorumluluğu "
+                         "sana aittir.",
+        "fn_risk_rules": "Güvenlik kuralları",
+        "fn_risk_1": "Her rolün bir alt hız sınırı var: pompa en az %60, CPU / GPU / bilinmeyen fanlar en az %30. "
+                     "Pompa ve CPU fanı bu sınırın altına asla indirilmez.",
+        "fn_risk_2": "CPU ya da GPU sıcaklık sınırı aşılırsa tüm fanlar %100'e çıkar.",
+        "fn_risk_3": "Bir sıcaklık sensörü okunamaz olursa o sensöre bağlı fan %100'e çıkar.",
+        "fn_risk_4": "DURDUR'a basınca ya da kontrolü kapatınca fanlar BIOS'a döner.",
+        "fn_risk_ok": "Riskleri anladım", "fn_continue": "Devam",
+        "fn_master": "Fan kontrolü", "fn_stop": "DURDUR", "fn_cpu": "CPU", "fn_gpu": "GPU",
+        "fn_panic": "Sıcaklık sınırı aşıldı: tüm fanlar %100",
+        "fn_safe": "Bir fan BIOS'a temiz dönemedi; güvenli eğri kullanılıyor, bilgisayarı yeniden başlatınca BIOS "
+                   "devralır.",
+        "fn_hw_error": "Donanım açılamadı: {e}", "fn_hw_idle": "Donanım açılıyor…",
+        "fn_lost": "Fan hizmetine ulaşılamıyor.",
+        "fn_save_err": "Ayarlar kaydedilemedi: fan hizmetine ulaşılamadı.",
+        "fn_enable_err": "Fan kontrolü değiştirilemedi: fan hizmetine ulaşılamadı.",
+        "fn_stop_err": "DURDUR komutu hizmete ulaşmadı! Fanlar hâlâ yazılım denetiminde olabilir.",
+        "fn_profiles": "Profiller", "fn_p_silent": "Sessiz", "fn_p_balanced": "Dengeli",
+        "fn_p_perf": "Performans",
+        "fn_profiles_hint": "Pompa ve boş başlıklar dışındaki her fana hazır bir eğri uygular; pompa %100 sabit "
+                            "döner. Sonra fanları tek tek ayarlayabilirsin.",
+        "fn_limits": "Sıcaklık sınırları", "fn_cpu_limit": "CPU sınırı (°C)", "fn_gpu_limit": "GPU sınırı (°C)",
+        "fn_limit_hint": "Bu sıcaklıkta tüm fanlar %100'e çıkar (CPU 60-95 °C, GPU 60-90 °C).",
+        "fn_headers": "Fan başlıkları",
+        "fn_headers_hint": "Her kart bir fan başlığıdır. Kasadaki hangi fan olduğunu anlamak için Tanı'ya bas.",
+        "fn_no_headers": "Fan başlığı bulunamadı.",
+        "fn_role": "Rol", "fn_mode": "Mod",
+        "fn_role_unknown": "Bilinmiyor", "fn_role_case": "Kasa fanı", "fn_role_cpu": "CPU fanı",
+        "fn_role_pump": "Pompa", "fn_role_gpu": "GPU", "fn_role_none": "Boş başlık",
+        "fn_mode_bios": "BIOS", "fn_mode_fixed": "Sabit", "fn_mode_curve": "Eğri",
+        "fn_min": "en az %{n}", "fn_min0": "alt sınır yok",
+        "fn_rpm": "{v} RPM", "fn_no_rpm": "- RPM", "fn_duty": "şimdi %{d}", "fn_target": " (hedef %{g})",
+        "fn_r_bios": "BIOS yönetiyor", "fn_r_fixed": "sabit hız", "fn_r_curve": "eğriye göre",
+        "fn_r_safe": "güvenli eğri", "fn_r_limit": "sıcaklık sınırı: %100", "fn_r_override": "tanı",
+        "fn_r_nosensor": "sensör kayıp: %100", "fn_r_waiting": "sensör bekleniyor",
+        "fn_stall": "Fan dönmüyor!",
+        "fn_diag": "Tanı", "fn_diag_on": "%100 · {n} sn", "fn_diag_fail": "Başlatılamadı.",
+        "fn_fixed": "Sabit hız", "fn_source": "Sıcaklık kaynağı", "fn_src_cpu": "CPU", "fn_src_gpu": "GPU",
+        "fn_src_max": "En yüksek (CPU / GPU)",
+        "fn_curve_hint": "Noktaları sürükle. Boş yere çift tıklayınca nokta eklenir, noktaya çift tıklayınca "
+                         "silinir (2-8 nokta). Kırmızı alan bu rolün alt sınırının altıdır.",
+        "fn_bios_note": "Bu fanı BIOS yönetir; metriQ dokunmaz.",
+        "fn_none_note": "Boş başlık: her zaman BIOS'un denetiminde kalır.",
+        "hp_fan_master": "Açıkken metriQ fanları senin belirlediğin eğrilere göre yönetir. Kapalıyken tüm fanları "
+                         "BIOS yönetir.",
+        "hp_fan_stop": "Tüm fanları hemen BIOS'a geri verir ve fan kontrolünü kapatır.",
+        "hp_fan_profiles": "Hızlı başlangıç noktaları. Her profil, pompa ve boş başlıklar dışındaki tüm fanlara bir "
+                           "sıcaklık eğrisi uygular.",
+        "hp_fan_limits": "CPU ya da GPU bu sıcaklığa ulaşırsa tüm fanlar %100'e çıkar.",
+        "hp_fan_role": "Rol, izin verilen en düşük hızı belirler: pompa %60, CPU / GPU / bilinmeyen %30, kasa "
+                       "fanında alt sınır yok. Boş başlıkta fan takılı değildir ve her zaman BIOS'un denetiminde "
+                       "kalır.",
+        "hp_fan_curve": "Fan hızını sıcaklığa göre belirler. Noktaları sürükle; boş yere çift tıklayınca nokta "
+                        "eklenir, noktaya çift tıklayınca silinir (2-8 nokta). Kırmızı alan rolün alt sınırının "
+                        "altıdır: fan bunun altına inmez. Dikey çizgi şimdiki sıcaklığı, nokta şimdiki hızı "
+                        "gösterir.",
+        "hp_fan_diag": "Bu başlıktaki fanı 8 saniye boyunca %100 hızla döndürür; kasaya bakıp hangi fan "
+                       "olduğunu görebilirsin.",
     },
 }
 

@@ -214,6 +214,17 @@ def nav_icon(kind, size, col):
             gfx._arc(d, k, n * 0.5, n * 0.56, n * 0.36, 150, 390, w, col)
             L(0.5, 0.56, 0.68, 0.36, w * 1.1)
             gfx._disc(d, k, n * 0.5, n * 0.56, n * 0.07, col)
+        elif kind == "fan":                                  # three blades around a hub
+            for blade in range(3):
+                a = math.radians(blade * 120 + 90)
+                pts = [(0.5, 0.5)]
+                for i in range(1, 13):
+                    f = i / 12
+                    ang = a - f * math.radians(80)
+                    rr = 0.40 * (0.30 + 0.70 * math.sin(f * math.pi) ** 0.5)
+                    pts.append((0.5 + rr * math.cos(ang), 0.5 - rr * math.sin(ang)))
+                gfx._poly(d, k, [(x * n, y * n) for x, y in pts], col)
+            gfx._disc(d, k, n * 0.5, n * 0.5, n * 0.07, col)
         else:                                                # diag: pulse line
             pts = [(0.08, 0.54), (0.30, 0.54), (0.40, 0.22), (0.54, 0.80), (0.64, 0.46), (0.72, 0.54), (0.92, 0.54)]
             for a, b in zip(pts, pts[1:]):

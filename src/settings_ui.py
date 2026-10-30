@@ -22,6 +22,7 @@ from tkinter import colorchooser, filedialog, messagebox, ttk
 import backend
 import config
 import crashscan_ui
+import fan_ui
 import perf_ui
 import helptexts
 import hwctl
@@ -53,7 +54,8 @@ i18n.register({
 PAGES = (("st_tab_look", "look", "accent_clock", "gauge"), ("st_tab_log", "log", "accent_temp", "temp"),
          ("st_tab_hw", "hw", "accent_power", "bolt"), ("st_tab_layout", "layout", "accent_net", "net"),
          ("st_tab_theme", "theme", "accent_fan", "fan"), ("cr_tab", "diag", "accent_fps", "fps"),
-         ("pf_tab", "perf", "accent_power", "bolt"))
+         ("pf_tab", "perf", "accent_power", "bolt"),
+         ("fn_tab", "fan", "accent_fan", "fan"))
 
 _bg = uikit._bg_of
 themes_keys = {"theme", "theme_overrides", "value_color_mode", "value_steps"}
@@ -433,6 +435,8 @@ class SettingsWindow:
         self._lazy[5] = lambda: crashscan_ui.add_tab(self)
         self._page(6)
         self._lazy[6] = lambda: perf_ui.add_tab(self)
+        self._page(7)
+        self._lazy[7] = lambda: fan_ui.add_tab(self)
 
         tk.Label(bar, text=f"{config.APP_NAME} v{version.__version__}", bg=C["bg"], fg=C["faint"],
                  font=(self.F_TXT, 9)).pack(side="left")

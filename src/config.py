@@ -31,6 +31,7 @@ DEFAULTS = {
     "value_steps": [],               # stepped: [] = 4 equal bands, or 2-4 thresholds in % of each row's range
     "topmost": True,
     "diag_errors": True,             # diagnostics tab: show the error-detection section
+    "fan_risk_ok": False,            # fan page: the risk notice was accepted once
     "check_updates": True,           # look for a newer release on GitHub at start and every 24 h (README: Privacy)
     "interval": 5.0,                 # CSV logging interval, seconds (0.5 - 30)
     "logging": False,                # CSV logging on/off
