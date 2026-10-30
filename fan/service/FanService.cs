@@ -297,6 +297,17 @@ namespace MetriqFan
 
         private void CloseHardware()
         {
+            // service stop with unrestorable headers: leave them at a duty that is safe until the reboot
+            foreach (Ctl c in _ctls)
+                if (c.Taken && Unrestorable(c))
+                {
+                    try
+                    {
+                        c.Control.Control.SetSoftware((float)Math.Max(c.Last, 60));
+                        Log.Write("left " + c.Id + " at " + Math.Max(c.Last, 60) + " % until reboot");
+                    }
+                    catch { }
+                }
             ReleaseAllQuiet();
             if (_pc != null)
             {
@@ -481,9 +492,16 @@ namespace MetriqFan
             c.LastWrite = now;
         }
 
+        private bool Unrestorable(Ctl c)
+        {
+            return c.Kind == "board" && _safeIds.Contains(c.Id);
+        }
+
         private void Release(Ctl c)
         {
             if (!c.Taken) return;
+            // LHM's "default" of a header left in manual mode by a killed run is that stuck value: keep driving it
+            if (Unrestorable(c)) return;
             try
             {
                 c.Control.Control.SetDefault();
@@ -811,7 +829,7 @@ namespace MetriqFan
             return Array.IndexOf(allowed, v) >= 0 ? v : allowed[0];
         }
 
-        private static object[] ToArray(object o)
+        public static object[] ToArray(object o)
         {
             if (o is object[]) return (object[])o;
             System.Collections.ArrayList al = o as System.Collections.ArrayList;
@@ -892,8 +910,9 @@ namespace MetriqFan
                 object o;
                 long b = d.TryGetValue("boot", out o) ? (long)Config.ToNum(o, 0) : 0;
                 if (Math.Abs(b - boot) > 120) return ids;          // rebooted since: BIOS set the chip up again
-                if (d.TryGetValue("ids", out o) && o is System.Collections.ArrayList)
-                    foreach (object x in (System.Collections.ArrayList)o)
+                object[] arr = d.TryGetValue("ids", out o) ? Config.ToArray(o) : null;
+                if (arr != null)
+                    foreach (object x in arr)
                         if (x is string) ids.Add((string)x);
             }
             catch { }
