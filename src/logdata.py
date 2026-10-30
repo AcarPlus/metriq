@@ -335,7 +335,16 @@ class Recording:
             order = sorted(range(len(self.t)), key=self.t.__getitem__)
             self.lines = [self.lines[i] for i in order]
             self.t = array("d", (self.t[i] for i in order))
-        self.dec = detect_decimal(self.lines, self.delim, hint_decimal)
+        # the time column has whole seconds: n rows logged in the same second are spread evenly over it
+        i, n = 0, len(self.t)
+        while i < n:
+            j = i + 1
+            while j < n and self.t[j] == self.t[i]:
+                j += 1
+            for k in range(1, j - i):
+                self.t[i + k] += k / (j - i)
+            i = j
+        self.dec =detect_decimal(self.lines, self.delim, hint_decimal)
         # numeric columns: everything except the time and the text columns of the top-N program lists
         self.series = []
         for i, h in enumerate(self.header):

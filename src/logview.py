@@ -4,15 +4,14 @@
     logview.add_button(sw, parent, folder=None)           "View recordings" button for the settings tabs
 
 Layout (same look as the settings window: uikit cards, buttons, switches):
-    toolbar    recording picker (date, length, size, tags; opens a searchable list), time range, zoom, export, folder,
-               "Advanced" (band, gap marks, statistics table, remove markers)
+    toolbar    recording picker (date, length, size, tags; opens a searchable list), statistics table toggle,
+               remove markers
     left       series: search, quick picks (Temperatures, Power, ... Show all), a tree hardware group (CPU, GPU,
                RAM, Disk, Network, ...) > kind > series with tri-state group tick boxes, programs at the cursor
-    centre     chart (min-max envelope per pixel column for any number of rows, one axis per unit, inline legend,
-               hover balloon) and a min / avg / max / cursor table
+    centre     chart (min-max envelope per pixel column for any number of rows, smooth curves, at most two axes
+               (left / right), inline legend, hover balloon) and a searchable min / avg / max / cursor table
 Mouse wheel = zoom, drag = pan, click = pin a marker, double click = show everything. Data work lives in
 logdata.py; crash markers come from crashscan."""
-import csv
 import gc
 import math
 import os
@@ -56,14 +55,8 @@ i18n.register({
         "lv_comp_net": "Network", "lv_comp_mb": "Motherboard and system", "lv_comp_fan": "Fans",
         "lv_comp_fps": "FPS and frame time", "lv_comp_prog": "Programs", "lv_comp_other": "Other",
         "lv_no_rec": "No recording", "lv_pick_rec": "Choose a recording",
-        "lv_r_all": "All", "lv_r_1h": "1 h", "lv_r_15m": "15 min", "lv_r_5m": "5 min",
-        "lv_r_tip": "Show the last {x} of the recording", "lv_r_tip_all": "Show the whole recording",
-        "lv_zoom_in": "Zoom in", "lv_zoom_out": "Zoom out",
-        "lv_export": "Export", "lv_export_tip": "Save the selected series of the visible range as a CSV file",
-        "lv_export_none": "Pick at least one series to export.", "lv_exported": "Saved: {s} series, {n} rows",
-        "lv_export_err": "Could not save: {e}", "lv_export_title": "Export CSV",
-        "lv_adv": "Advanced", "lv_adv_band": "Min - max band", "lv_adv_marks": "Gap and abrupt-end marks",
-        "lv_adv_stats": "Statistics table", "lv_clear_pins": "Remove markers",
+        "lv_stats": "Statistics table", "lv_stats_tip": "Show or hide the table of min / avg / max values",
+        "lv_clear_pins": "Remove markers",
         "lv_tip_check": "Select / unselect every series of this group. Other groups are not touched.",
         "lv_tip_open": "Only opens or closes the list. Your selection stays as it is.",
         "lv_tip_preset": "Adds this group's main series. Press again to remove exactly those.",
@@ -81,7 +74,7 @@ i18n.register({
         "lv_hint": "Wheel: zoom   Drag: pan   Click: pin   Double click: reset",
         "lv_programs": "Programs", "lv_prog_none": "No program data at this moment.",
         "lv_src_side": "process file", "lv_src_top": "top programs of the recording",
-        "lv_open_dir": "Open folder", "lv_browse": "Open file...", "lv_refresh": "Refresh",
+        "lv_browse": "Open file...", "lv_refresh": "Refresh",
         "lv_err": "Could not read the recording: {e}", "lv_more": "+{n} more", "lv_stride": "every {k}th row shown",
         "lv_gap_lbl": "Gap {d}", "lv_end_lbl": "Ended abruptly", "lv_pick_file": "Recording (CSV)",
         "lv_no_data": "No data in this range.", "lv_sort": "Sort by",
@@ -94,7 +87,9 @@ i18n.register({
         "hp_lv_series": "Tick the series to draw. A group's tick box selects or clears only the series of that "
                         "group and the arrow only folds the list: neither touches your other picks. The round "
                         "buttons add a ready-made set of main series (press again to remove just those). "
-                        "Series with the same unit share an axis; another unit gets its own axis on the right.",
+                        "Series with the same unit share an axis. The first unit gets the left axis and the "
+                        "second unit the right axis; further units are still drawn (each on its own scale) but "
+                        "have no ruler, so read them from the hover balloon or the statistics table.",
     },
     "tr": {
         "lv_title": "Kayıt görüntüleyici", "lv_open": "Kayıtları görüntüle", "lv_open_at": "Görüntüleyicide aç",
@@ -110,14 +105,8 @@ i18n.register({
         "lv_comp_net": "Ağ", "lv_comp_mb": "Anakart ve sistem", "lv_comp_fan": "Fanlar",
         "lv_comp_fps": "FPS ve kare süresi", "lv_comp_prog": "Programlar", "lv_comp_other": "Diğer",
         "lv_no_rec": "Kayıt yok", "lv_pick_rec": "Kayıt seçin",
-        "lv_r_all": "Tümü", "lv_r_1h": "1 sa", "lv_r_15m": "15 dk", "lv_r_5m": "5 dk",
-        "lv_r_tip": "Kaydın son {x} bölümünü göster", "lv_r_tip_all": "Kaydın tamamını göster",
-        "lv_zoom_in": "Yakınlaştır", "lv_zoom_out": "Uzaklaştır",
-        "lv_export": "Dışa aktar", "lv_export_tip": "Görünen aralıktaki seçili serileri CSV dosyası olarak kaydet",
-        "lv_export_none": "Dışa aktarmak için en az bir seri seçin.", "lv_exported": "Kaydedildi: {s} seri, {n} satır",
-        "lv_export_err": "Kaydedilemedi: {e}", "lv_export_title": "CSV olarak dışa aktar",
-        "lv_adv": "Gelişmiş", "lv_adv_band": "En düşük - en yüksek bandı", "lv_adv_marks": "Boşluk ve ani bitiş işaretleri",
-        "lv_adv_stats": "İstatistik tablosu", "lv_clear_pins": "İşaretleri kaldır",
+        "lv_stats": "İstatistik tablosu", "lv_stats_tip": "En düşük / ortalama / en yüksek tablosunu göster ya da gizle",
+        "lv_clear_pins": "İşaretleri kaldır",
         "lv_tip_check": "Bu gruptaki tüm serileri seçer ya da bırakır. Diğer gruplara dokunmaz.",
         "lv_tip_open": "Yalnızca listeyi açar ya da kapatır. Seçimin olduğu gibi kalır.",
         "lv_tip_preset": "Bu grubun başlıca serilerini ekler. Tekrar basınca yalnızca onları kaldırır.",
@@ -136,7 +125,7 @@ i18n.register({
         "lv_hint": "Tekerlek: yakınlaştır   Sürükle: kaydır   Tıkla: işaretle   Çift tık: sıfırla",
         "lv_programs": "Programlar", "lv_prog_none": "Bu anda program verisi yok.",
         "lv_src_side": "işlem dosyası", "lv_src_top": "kaydın en çok çalışan programları",
-        "lv_open_dir": "Klasörü aç", "lv_browse": "Dosya aç...", "lv_refresh": "Yenile",
+        "lv_browse": "Dosya aç...", "lv_refresh": "Yenile",
         "lv_err": "Kayıt okunamadı: {e}", "lv_more": "+{n} tane daha", "lv_stride": "her {k}. satır gösteriliyor",
         "lv_gap_lbl": "Boşluk {d}", "lv_end_lbl": "Ani bitti", "lv_pick_file": "Kayıt (CSV)",
         "lv_no_data": "Bu aralıkta veri yok.", "lv_sort": "Sırala",
@@ -149,8 +138,9 @@ i18n.register({
         "hp_lv_series": "Çizilecek serileri işaretle. Bir grubun kutusu yalnızca o gruptaki serileri seçer ya "
                         "da bırakır, ok ise sadece listeyi açıp kapatır: ikisi de diğer seçimlerine dokunmaz. "
                         "Yuvarlak düğmeler hazır bir ana seri takımı ekler (tekrar basınca yalnızca onları "
-                        "kaldırır). Birimi aynı olan seriler aynı ekseni paylaşır; farklı birim sağda kendi "
-                        "eksenini alır.",
+                        "kaldırır). Birimi aynı olan seriler aynı ekseni paylaşır. İlk birim sol, ikinci birim "
+                        "sağ ekseni alır; diğer birimler yine çizilir (her biri kendi ölçeğinde) ama cetveli "
+                        "olmaz: değerlerini imleç balonundan ya da istatistik tablosundan oku.",
     },
 })
 
@@ -289,6 +279,47 @@ def series_colors(C):
     return out
 
 
+def smooth_pts(pts, step=3.0, max_sub=24):
+    """Monotone cubic (Fritsch-Carlson) curve through the points (x ascending): extra points between samples that
+    are further apart than `step` pixels. Between two samples the curve never leaves their min..max, so spikes and
+    flat runs are not overshot; narrow intervals (many samples per pixel) are returned untouched."""
+    n = len(pts)
+    if n < 3:
+        return list(pts)
+    if any(pts[i + 1][0] - pts[i][0] <= 1e-9 for i in range(n - 1)):      # equal timestamps: a vertical step, so
+        out, run = [], [pts[0]]                                           # smooth every strictly rising run alone
+        for p in pts[1:]:
+            if p[0] - run[-1][0] <= 1e-9:
+                out += smooth_pts(run, step, max_sub)
+                run = []
+            run.append(p)
+        return out + smooth_pts(run, step, max_sub)
+    h = [pts[i + 1][0] - pts[i][0] for i in range(n - 1)]
+    d = [(pts[i + 1][1] - pts[i][1]) / h[i] for i in range(n - 1)]
+    m = [d[0]] + [0.0 if d[i - 1] * d[i] <= 0 else (d[i - 1] + d[i]) / 2 for i in range(1, n - 1)] + [d[-1]]
+    for k in range(n - 1):                                     # keep each interval monotone
+        if d[k] == 0:
+            m[k] = m[k + 1] = 0.0
+            continue
+        a, b = m[k] / d[k], m[k + 1] / d[k]
+        r = a * a + b * b
+        if r > 9:
+            tau = 3 / math.sqrt(r)
+            m[k], m[k + 1] = tau * a * d[k], tau * b * d[k]
+    out = [pts[0]]
+    for i in range(n - 1):
+        (x0, y0), (x1, y1) = pts[i], pts[i + 1]
+        sub = min(max_sub, int(h[i] / step))
+        for j in range(1, sub):
+            u = j / sub
+            u2, u3 = u * u, u * u * u
+            y = ((2 * u3 - 3 * u2 + 1) * y0 + (u3 - 2 * u2 + u) * h[i] * m[i]
+                 + (3 * u2 - 2 * u3) * y1 + (u3 - u2) * h[i] * m[i + 1])
+            out.append((x0 + h[i] * u, min(max(y, min(y0, y1)), max(y0, y1))))
+        out.append((x1, y1))
+    return out
+
+
 # ====================================================================== painters
 class PilPainter:
     """Everything the chart paints (background, bands, lines) into one RGB image at 2x, reduced to the canvas size:
@@ -313,9 +344,11 @@ class PilPainter:
     def vline(self, x, y0, y1, col, alpha=255):
         self.rect(x, y0, x + 1, y1, col, alpha)
 
-    def polyline(self, pts, col, width=1.6):
+    def polyline(self, pts, col, width=1.6, smooth=False):
         if len(pts) < 2:
             return
+        if smooth:
+            pts = smooth_pts(pts)
         S = self.SS
         self.d.line([v * S for p in pts for v in p], fill=rgba(col), width=max(1, round(width * S)), joint="curve")
 
@@ -353,8 +386,10 @@ class CanvasPainter:
     def vline(self, x, y0, y1, col, alpha=255):
         self.cv.create_line(x + 0.5, y0, x + 0.5, y1, fill=themes.mix(self.under, col, alpha / 255.0))
 
-    def polyline(self, pts, col, width=1.6):
+    def polyline(self, pts, col, width=1.6, smooth=False):
         if len(pts) >= 2:
+            if smooth:
+                pts = smooth_pts(pts)
             self.cv.create_line(*[v for p in pts for v in p], fill=col, width=width, joinstyle="round",
                                 capstyle="round")
 
@@ -745,7 +780,6 @@ class RecPicker(uikit._Cv):
 
 
 # ====================================================================== the viewer
-RANGE_SPANS = (None, 3600.0, 900.0, 300.0)          # toolbar: whole recording, last hour, last 15 / 5 minutes
 
 
 class Viewer:
@@ -774,6 +808,8 @@ class Viewer:
         self.rec, self.sel, self.slot, self._keys, self.presets = None, [], {}, [], {}
         self.f0 = self.f1 = self.v0 = self.v1 = 0.0
         self.pins, self.hover_t, self.hover_i = [], None, None
+        self.hl = None                                 # series picked in the statistics table (emphasised in the chart)
+        self._strip_list = []                          # rows the statistics table shows now (after the search filter)
         self._draw_job = self._load_job = self._ens_job = self._probe_job = self._note_job = None
         self._jobs, self._traces, self._tips = set(), [], []
         self._closed = False
@@ -906,6 +942,10 @@ class Viewer:
     def _escape(self):
         if self.pop is not None:
             self.close_rec_popup()
+        elif self.hl is not None:
+            self.hl = None
+            self.request_draw()
+            self.draw_strip()
         else:
             self.close()
 
@@ -978,42 +1018,17 @@ class Viewer:
         win.grid_columnconfigure(0, weight=1)
         win.grid_rowconfigure(2, weight=1)
 
-        # ---- toolbar: recording picker | time range | export, folder, advanced
+        # ---- toolbar: recording picker | statistics table toggle, remove markers
         tb = self.toolbar = tk.Frame(win, bg=C["bg"])
         tb.grid(row=0, column=0, sticky="ew", padx=P(16), pady=(P(14), P(10)))
         tb.grid_columnconfigure(0, weight=1, minsize=P(250))
         self.picker = RecPicker(self)
         self.picker.grid(row=0, column=0, sticky="ew", padx=(0, P(14)))
-        self.range_seg = uikit.Segmented(tb, C, [t("lv_r_all"), t("lv_r_1h"), t("lv_r_15m"), t("lv_r_5m")], 0,
-                                         self._range_pick, (self.F_TXT, 10), bg=C["bg"])
-        self.range_seg.grid(row=0, column=1, padx=(0, P(6)))
-        hover_tip(self.range_seg, lambda x, y: max(0, min(3, int((x - P(3)) // self.range_seg.sw))),
-                  lambda i: t("lv_r_tip_all") if i == 0 else t("lv_r_tip", x=(t("lv_r_all"), t("lv_r_1h"),
-                                                                              t("lv_r_15m"), t("lv_r_5m"))[i]))
-        zb = self._btn(tb, "−", lambda: self.zoom_by(1 / 0.7), font_size=12)
-        zb.grid(row=0, column=2, padx=(0, P(4)))
-        self._tipped(zb, t("lv_zoom_out"))
-        zb = self._btn(tb, "+", lambda: self.zoom_by(0.7), font_size=12)
-        zb.grid(row=0, column=3, padx=(0, P(14)))
-        self._tipped(zb, t("lv_zoom_in"))
-        self.export_btn = self._btn(tb, t("lv_export"), self.export_csv)
-        self.export_btn.grid(row=0, column=4, padx=(0, P(8)))
-        self._tipped(self.export_btn, t("lv_export_tip"))
-        self._btn(tb, t("lv_open_dir"), self.open_dir).grid(row=0, column=5, padx=(0, P(8)))
-        self.adv_btn = self._btn(tb, t("lv_adv") + "  ▾", self.toggle_adv)
-        self.adv_btn.grid(row=0, column=6)
-
-        # ---- advanced options (folded away until asked for)
-        self.adv = uikit.Card(win, C, fill=card, pad=(P(16), P(16), P(8), P(8)), radius=10, bg=C["bg"])
-        self.adv_on = False
-        row = tk.Frame(self.adv.body, bg=card)
-        row.pack(fill="x")
-        self.v_band, self.v_marks, self.v_stats = tk.BooleanVar(value=True), tk.BooleanVar(value=True), \
-            tk.BooleanVar(value=True)
-        for var, key in ((self.v_band, "lv_adv_band"), (self.v_marks, "lv_adv_marks"), (self.v_stats, "lv_adv_stats")):
-            uikit.Check(row, t(key), var, C, (self.F_TXT, 10), bg=card, command=self.request_draw,
-                        small=True).pack(side="left", padx=(0, P(22)))
-        self._btn(row, t("lv_clear_pins"), self.clear_pins, small=True, bg=card).pack(side="right")
+        self.v_stats = tk.BooleanVar(value=True)
+        self.stats_btn = self._btn(tb, t("lv_stats"), self.toggle_stats, primary=True)
+        self.stats_btn.grid(row=0, column=1, padx=(0, P(8)))
+        self._tipped(self.stats_btn, t("lv_stats_tip"))
+        self._btn(tb, t("lv_clear_pins"), self.clear_pins).grid(row=0, column=2)
 
         # ---- body: series sidebar | chart + statistics
         body = tk.Frame(win, bg=C["bg"])
@@ -1101,19 +1116,30 @@ class Viewer:
         self.tip = ChartTip(self.cv)
         self.stats_card = uikit.Card(main, C, fill=card, pad=(P(10), P(10), P(6), P(6)), bg=C["bg"])
         self.stats_card.grid(row=1, column=0, sticky="ew", pady=(P(12), 0))
+        sh = tk.Frame(self.stats_card.body, bg=card)                 # search box above the table
+        sh.pack(fill="x", pady=(0, P(4)))
+        self.v_stsearch = tk.StringVar()
+        self._traces.append((self.v_stsearch, self.v_stsearch.trace_add("write", self._stats_search)))
+        sf = self._search_field(sh, self.v_stsearch, t("lv_series_search"), card)
+        sf.config(width=P(260))
+        sf.pack(side="left")
         self.strip = tk.Canvas(self.stats_card.body, height=P(34), bg=card, highlightthickness=0, bd=0)
         self.strip.pack(fill="x")
         self.strip.bind("<Configure>", lambda e: self.draw_strip())
+        self.strip.bind("<Button-1>", self._strip_click)
         self.stats_card.grid_remove()
         self._stats_on = False
 
-    def toggle_adv(self):
-        self.adv_on = not self.adv_on
-        if self.adv_on:
-            self.adv.grid(row=1, column=0, sticky="ew", padx=P(16), pady=(0, P(10)))
-        else:
-            self.adv.grid_remove()
-        self.adv_btn.config(text=t("lv_adv") + ("  ▴" if self.adv_on else "  ▾"))
+    def toggle_stats(self):
+        on = not self.v_stats.get()
+        self.v_stats.set(on)
+        self.stats_btn.primary = on                                # lit while the table is shown
+        self.stats_btn.draw()
+        self.request_draw()
+
+    def _stats_search(self, *a):
+        self.strip_off = 0
+        self.draw_strip()
 
     def clear_pins(self):
         self.pins = []
@@ -1401,13 +1427,6 @@ class Viewer:
         self.close_rec_popup()
         self.browse()
 
-    def open_dir(self):
-        try:
-            os.makedirs(self.folder, exist_ok=True)
-            os.startfile(self.folder)
-        except OSError:
-            pass
-
     def browse(self):
         p = filedialog.askopenfilename(parent=self.win, initialdir=self.folder if os.path.isdir(self.folder) else None,
                                        filetypes=[(t("lv_pick_file"), "*.csv"), ("*", "*.*")])
@@ -1462,6 +1481,7 @@ class Viewer:
         self.rec = rec
         self.msg = ""
         self.sel, self.slot, self.pins = [], {}, []
+        self.hl = None
         self._all_added, self._preset_added = set(), {}
         self.hover_t = self.hover_i = None
         self._leave()
@@ -1858,38 +1878,6 @@ class Viewer:
                                 width=0)
         cv.create_line(P(6), y + P(37), w - P(6), y + P(37), fill=C["border"])
 
-    # ------------------------------------------------------------ export
-    def export_csv(self):
-        """Selected series of the visible time range as a CSV file (same separators as the recording)."""
-        rec = self.rec
-        if rec is None or not len(rec):
-            return
-        if not self.sel:
-            self.flash(t("lv_export_none"))
-            return
-        j0, j1 = bisect_left(rec.t, self.v0), bisect_right(rec.t, self.v1)
-        if j1 <= j0:
-            self.flash(t("lv_no_data"))
-            return
-        start = os.path.splitext(rec.name)[0]
-        p = filedialog.asksaveasfilename(parent=self.win, title=t("lv_export_title"), defaultextension=".csv",
-                                         initialfile=f"{start}_export.csv",
-                                         initialdir=os.path.dirname(rec.path),
-                                         filetypes=[(t("lv_pick_file"), "*.csv")])
-        if not p:
-            return
-        cols = [0] + [i for i in self.sel if i in rec.by_idx]
-        try:
-            with open(p, "w", encoding="utf-8-sig", newline="") as f:
-                w = csv.writer(f, delimiter=rec.delim, lineterminator="\r\n")
-                w.writerow([rec.header[i] for i in cols])
-                for k in range(j0, j1):
-                    parts = logdata._split(rec.lines[k], rec.delim)
-                    w.writerow([parts[i] if i < len(parts) else "" for i in cols])
-            self.flash(t("lv_exported", s=len(cols) - 1, n=fmt_count(j1 - j0)))
-        except OSError as e:
-            self.flash(t("lv_export_err", e=e))
-
     # ------------------------------------------------------------ view
     def reset_view(self):
         if self.rec is None:
@@ -2058,7 +2046,6 @@ class Viewer:
             cv.create_text(W / 2, H / 2, text=text, fill=C["dim"], font=(self.F_TXT, 11))
             self.box = None
             self._update_stats_visibility()
-            self._sync_range()
             self._update_info()
             return
         sel = [rec.by_idx[i] for i in self.sel if i in rec.by_idx]
@@ -2095,9 +2082,9 @@ class Viewer:
         for s in sel:
             if s.unit not in units:
                 units.append(s.unit)
-        extra = max(0, len(units) - 1)
-        pl, pr = self.PAD_L, W - self.PAD_R - extra * self.AXIS_W
         pt, pb = top + 4, H - self.PAD_B
+        pl = self.PAD_L                                                 # left axis: first unit, right axis: second unit
+        pr = W - self.PAD_R - (self.AXIS_W if len(units) > 1 else 0)   # (further units are drawn without a ruler)
         if pr - pl < 80 or pb - pt < 60:
             return
         self.box = (pl, pt, pr, pb)
@@ -2128,13 +2115,12 @@ class Viewer:
         # gaps / abrupt end
         x_of = lambda ts: pl + (ts - v0) / (v1 - v0) * (pr - pl)
         marks = []
-        show_marks = bool(self.v_marks.get())
-        for a, b in (rec.gaps if show_marks else ()):
+        for a, b in rec.gaps:
             if b >= v0 and a <= v1:
                 xa, xb = max(pl, x_of(a)), min(pr, x_of(b))
                 pw.rect(xa, pt, max(xb, xa + 1), pb, C["red"], 44)
                 marks.append(("gap", xa, xb, b - a))
-        if rec.abrupt and v1 > rec.end and show_marks:
+        if rec.abrupt and v1 > rec.end:
             xe = max(pl, x_of(rec.end))
             pw.rect(xe, pt, pr, pb, C["red"], 50)
             pw.vline(int(xe), pt, pb, C["red"])
@@ -2155,16 +2141,25 @@ class Viewer:
         plot_w = max(1, int(pr - pl))
         dense = (i1 - i0) > 2.2 * plot_w
         edges = rec.edges(v0, v1, plot_w) if dense else None
-        for s in sel:
+        if not loading and self.hl is not None and self.hl not in {s.idx for s in sel}:
+            self.hl = None                                               # the highlighted series is no longer drawn
+        hl = self.hl
+        for s in sorted(sel, key=lambda s: s.idx == hl):                # the highlighted series is drawn last (on top)
             rg = ranges.get(s.unit)
             if rg is None:
                 continue
             col = self.color_of(s.idx)
+            w, band = 1.7, 70
+            if hl is not None:
+                if s.idx == hl:
+                    w, band = 2.8, 90
+                else:
+                    col, w, band = themes.mix(inner, col, 0.5), 1.3, 30     # the others step back
             ymap = lambda v, rg=rg: self._ymap(v, rg, pt, pb)
             if dense:
-                self._paint_dense(pw, rec, s, edges, col, ymap, pl, pt, pb)
+                self._paint_dense(pw, rec, s, edges, col, ymap, pl, pt, pb, w, band)
             else:
-                self._paint_sparse(pw, rec, s, i0, i1, col, ymap, x_of)
+                self._paint_sparse(pw, rec, s, i0, i1, col, ymap, x_of, w)
         pw.rect(0, pt - 2, pl, pb + 2, outer)                         # lines of the neighbouring rows end at the frame
         pw.rect(pr + 1, pt - 2, W, pb + 2, outer)
         pw.hline(pl - 1, pr + 1, pb, C["faint"], 130)
@@ -2195,8 +2190,8 @@ class Viewer:
         d0, d1 = logdata.from_secs(v0).strftime("%Y-%m-%d"), logdata.from_secs(v1).strftime("%Y-%m-%d")
         cv.create_text(pl, pb + 25, text=d0 if d0 == d1 else f"{d0}  -  {d1}", anchor="nw", fill=C["faint"],
                        font=self.f9)
-        # y axes
-        for k, u in enumerate(units):
+        # y axes: the first unit on the left, the second on the right, no ruler for the rest
+        for k, u in enumerate(units[:2]):
             rg = ranges.get(u)
             if rg is None:
                 continue
@@ -2209,7 +2204,7 @@ class Viewer:
                                    font=self.fnum9)
                 cv.create_text(pl - 8, pt - 17, text=u or "", anchor="e", fill=tint, font=self.f9b)
             else:
-                x = pr + 10 + (k - 1) * self.AXIS_W
+                x = pr + 10
                 cv.create_line(x - 4, pt, x - 4, pb, fill=tint)
                 for val in rg[2]:
                     y = self._ymap(val, rg, pt, pb)
@@ -2252,7 +2247,6 @@ class Viewer:
         self.draw_pins()
         self._ranges, self._units = ranges, units
         self._update_info()
-        self._sync_range()
         if self.hover_i is not None and self.hover_i < len(rec):
             self.draw_cursor(None, None)                               # also refreshes the strip and the programs
         else:
@@ -2271,7 +2265,7 @@ class Viewer:
         lo, hi = rg[0], rg[1]
         return pb - (v - lo) / (hi - lo) * (pb - pt)
 
-    def _paint_sparse(self, pw, rec, s, i0, i1, col, ymap, x_of):
+    def _paint_sparse(self, pw, rec, s, i0, i1, col, ymap, x_of, width=1.7):
         col_vals = rec.cols[s.idx]
         t_ = rec.t
         gap = rec.itv_gap
@@ -2292,16 +2286,12 @@ class Viewer:
             prev_t = ts
         if seg:
             segs.append(seg)
-        n = i1 - i0
         for sg in segs:
             if len(sg) >= 2:
-                pw.polyline(sg, col, 1.7)
-        if n <= max(12, int((self.box[2] - self.box[0]) / 9)):
-            pw.dots([p for sg in segs for p in sg], 2.6, col)
-        else:
-            pw.dots([sg[0] for sg in segs if len(sg) == 1], 2.2, col)
+                pw.polyline(sg, col, width, smooth=True)                 # no marker per sample: a smooth monotone curve
+        pw.dots([sg[0] for sg in segs if len(sg) == 1], 2.2, col)       # a lone sample would be invisible otherwise
 
-    def _paint_dense(self, pw, rec, s, edges, col, ymap, pl, pt, pb):
+    def _paint_dense(self, pw, rec, s, edges, col, ymap, pl, pt, pb, width=1.7, band=70):
         env = rec.envelope(s.idx, edges)
         t_ = rec.t
         gap = rec.itv_gap
@@ -2320,10 +2310,10 @@ class Viewer:
             if len(sg) >= 2:
                 upper = [(x, ymap(e[3])) for x, e in zip(xs, sg)]
                 lower = [(x, ymap(e[1])) for x, e in zip(xs, sg)]
-                for a, b in zip(upper, lower) if self.v_band.get() else ():   # min..max band: one translucent bar per pixel column
+                for a, b in zip(upper, lower):                                # min..max band: one translucent bar per pixel column
                     if b[1] - a[1] > 0.8:
-                        pw.rect(a[0] - 0.5, a[1], a[0] + 0.5, b[1], col, 70)
-                pw.polyline(mean, col, 1.7)
+                        pw.rect(a[0] - 0.5, a[1], a[0] + 0.5, b[1], col, band)
+                pw.polyline(mean, col, width)
             else:
                 pw.dots(mean, 1.6, col)
 
@@ -2400,30 +2390,6 @@ class Viewer:
         self.draw_strip()
         self.update_programs(i)
 
-    # ------------------------------------------------------------ time range control (toolbar)
-    def _range_pick(self, i):
-        rec = self.rec
-        if rec is None or not len(rec):
-            return
-        span = RANGE_SPANS[i]
-        if span is None:
-            self.reset_view()
-        else:
-            self._set_view(self.f1 - span, self.f1)
-
-    def _sync_range(self):
-        """Highlight the toolbar range button that matches the visible range (none when it is a custom zoom)."""
-        rec = self.rec
-        idx = -1
-        if rec is not None and len(rec):
-            full, span = self.f1 - self.f0, self.v1 - self.v0
-            if span >= full - 0.5:
-                idx = 0
-            elif abs(self.v1 - self.f1) < 0.5:
-                idx = next((k for k, s in enumerate(RANGE_SPANS) if s and abs(span - s) < 0.5), -1)
-        if idx != self.range_seg.index:
-            self.range_seg.set(idx)
-
     def _update_stats_visibility(self):
         on = bool(self.v_stats.get()) and self.rec is not None and len(self.rec) > 0 and bool(self.sel)
         if on != self._stats_on:
@@ -2451,6 +2417,18 @@ class Viewer:
         text = rec.name + (f" ({t('lv_stride', k=rec.stride)})" if rec.stride > 1 else "") + "      " + text
         self.info_l.config(text=text)
 
+    def _strip_click(self, e):
+        """Click a row of the statistics table: highlight its series in the chart (the same row again clears it)."""
+        i = (e.y - P(26)) // P(22)
+        if e.y < P(26) or i >= self.strip_rows:
+            return
+        i += self.strip_off
+        if 0 <= i < len(self._strip_list):
+            idx = self._strip_list[i].idx
+            self.hl = None if self.hl == idx else idx
+            self.draw_strip()
+            self.request_draw()
+
     def draw_strip(self):
         st, C = self.strip, self.C
         try:
@@ -2461,11 +2439,16 @@ class Viewer:
         rec = self.rec
         sel = getattr(self, "_sel_drawn", [])
         if rec is None or not len(rec) or not sel:
+            self._strip_list = []
             return                                                      # the card is hidden then
+        q = self.v_stsearch.get().strip().lower()
+        if q:
+            sel = [s for s in sel if q in s.label.lower() or q in s.name.lower()]
+        self._strip_list = sel
         RH, HH = P(22), P(26)
         nrows = len(sel)
         vis = min(nrows, self.strip_rows)
-        want = HH + vis * RH + P(2)
+        want = HH + max(1, vis) * RH + P(2)
         if int(st.cget("height")) != want:
             st.config(height=want)
         self.strip_off = max(0, min(self.strip_off, nrows - vis))
@@ -2480,7 +2463,9 @@ class Viewer:
         for r in range(vis):
             s = sel[self.strip_off + r]
             y = HH + r * RH + RH / 2 + 1
-            if r % 2:
+            if s.idx == self.hl:                                        # picked row (click again or Escape to clear)
+                st.create_rectangle(0, y - RH / 2, W, y + RH / 2, fill=themes.mix(C["card"], C["ui"], 0.28), width=0)
+            elif r % 2:
                 st.create_rectangle(0, y - RH / 2, W, y + RH / 2, fill=C["stripe"], width=0)
             col = self.color_of(s.idx)
             st.create_rectangle(P(8), y - P(4), P(16), y + P(4), fill=col, width=0)
@@ -2492,6 +2477,8 @@ class Viewer:
             for k, v in enumerate(vals):
                 st.create_text(W - P(10) - cw * (3 - k), y, text=fnum(v, s.unit) if v is not None else "-",
                                anchor="e", fill=C["fg"] if k == 3 else C["name"], font=self.fnum9)
+        if not nrows:
+            st.create_text(P(10), HH + RH / 2 + 1, text=t("lv_no_match"), anchor="w", fill=C["dim"], font=self.f9)
         if nrows > vis:                                                # thin scroll bar
             span = vis * RH
             h = max(14, span * vis / nrows)
