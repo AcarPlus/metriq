@@ -59,8 +59,10 @@ i18n.register({
                     "repeated runs and a bandwidth curve over block sizes (cache to DRAM).",
         "pf_ssd_d": "Sequential 1 MB read/write with 8 requests in flight and random 4K read/write on a temporary "
                     "file, cache bypassed. Detailed uses a larger file, repeated runs and more queue depths.",
-        "pf_gpu_d": "Direct3D 11 compute shader: shader throughput and video memory bandwidth. Detailed runs three "
-                    "times in a row and shows how clock and temperature hold up.",
+        "pf_gpu_d": "Direct3D 11 compute shader in two phases: shader math (draws up to the power limit), then video "
+                    "memory bandwidth (the shader cores mostly wait, so less power). Each phase warms up first; only "
+                    "the settled part is scored. Detailed runs three times in a row and shows how clock and "
+                    "temperature hold up.",
         "hp_bench_cpu": "Runs integer and floating-point loops in separate processes: one process for the "
                         "single-thread score, one per logical core for the multi-thread score. Records the highest "
                         "temperature, average clock, power and whether the CPU throttled. Detailed mode repeats the "
@@ -98,6 +100,8 @@ i18n.register({
         "pf_m_gflops": "Shader math", "pf_m_bandwidth": "Memory bandwidth",
         "pf_x_seq_read_q8": "Sequential read, queue depth 8", "pf_x_seq_write_q8": "Sequential write, queue depth 8",
         "pf_x_seq_read_q1": "Sequential read, queue depth 1", "pf_x_seq_write_q1": "Sequential write, queue depth 1",
+        "pf_ph_fma": "shader math: avg {w}, {c}", "pf_ph_bandwidth": "memory copy: avg {w}, {c}",
+        "pf_stab": "scored part: ±{cv:.1f} %, GPU busy {busy:.0f} %",
         "pf_x_rnd_read_q4": "4K random read, queue depth 4", "pf_x_rnd_read_q32": "4K random read, queue depth 32",
         "pf_pm": "±{v:.1f} %",
         "pf_temp": "max {v:.0f} °C", "pf_clock": "avg {v:.0f} MHz", "pf_power": "avg {v:.0f} W / max {m:.0f} W",
@@ -158,8 +162,10 @@ i18n.register({
                     "mod tekrarlı çalıştırma ve blok boyutuna göre bant genişliği eğrisi (önbellekten DRAM'e) ekler.",
         "pf_ssd_d": "Geçici dosyada 8 istek kuyrukta 1 MB sıralı ve 4K rastgele okuma/yazma, önbellek devre dışı. "
                     "Detaylı mod daha büyük dosya, tekrarlı çalıştırma ve daha fazla kuyruk derinliği kullanır.",
-        "pf_gpu_d": "Direct3D 11 compute shader: gölgelendirici işlem gücü ve video belleği bant genişliği. Detaylı "
-                    "mod üç kez art arda çalışır ve saat hızı ile sıcaklığın nasıl tuttuğunu gösterir.",
+        "pf_gpu_d": "Direct3D 11 compute shader, iki faz: hesaplama (güç sınırına kadar çeker), sonra video belleği "
+                    "bant genişliği (çekirdekler çoğunlukla bekler, güç daha düşüktür). Her faz önce ısınır; yalnızca "
+                    "oturmuş bölüm puanlanır. Detaylı mod üç kez art arda çalışır ve saat hızı ile sıcaklığın nasıl "
+                    "tuttuğunu gösterir.",
         "hp_bench_cpu": "Tam sayı ve kayan noktalı döngüleri ayrı süreçlerde çalıştırır: tek iş parçacığı puanı için "
                         "bir süreç, çok iş parçacığı puanı için her mantıksal çekirdekte bir süreç. En yüksek "
                         "sıcaklığı, ortalama saat hızını, gücü ve işlemcinin kısılıp kısılmadığını kaydeder. Detaylı "
@@ -199,6 +205,8 @@ i18n.register({
         "pf_m_gflops": "Gölgelendirici matematiği", "pf_m_bandwidth": "Bellek bant genişliği",
         "pf_x_seq_read_q8": "Sıralı okuma, kuyruk derinliği 8", "pf_x_seq_write_q8": "Sıralı yazma, kuyruk derinliği 8",
         "pf_x_seq_read_q1": "Sıralı okuma, kuyruk derinliği 1", "pf_x_seq_write_q1": "Sıralı yazma, kuyruk derinliği 1",
+        "pf_ph_fma": "hesaplama: ort. {w}, {c}", "pf_ph_bandwidth": "bellek kopyalama: ort. {w}, {c}",
+        "pf_stab": "puanlanan bölüm: ±%{cv:.1f}, GPU doluluğu %{busy:.0f}",
         "pf_x_rnd_read_q4": "4K rastgele okuma, kuyruk derinliği 4",
         "pf_x_rnd_read_q32": "4K rastgele okuma, kuyruk derinliği 32",
         "pf_pm": "±{v:.1f} %",
@@ -595,10 +603,22 @@ class PerfTab:
                 bits.append(t("pf_temp", v=s["temp_max"]))
             if s.get("hot_max") is not None:
                 bits.append(t("pf_hot", v=s["hot_max"]))
-            if s.get("clock_avg"):
-                bits.append(t("pf_clock", v=s["clock_avg"]))
-            if s.get("power_avg"):
-                bits.append(t("pf_power", v=s["power_avg"], m=s.get("power_max") or 0))
+            phases = res.get("phases") if test == "gpu" else None
+            if phases:                          # shader math and memory copy draw very different power: one bit each
+                for ph in ("fma", "bandwidth"):
+                    p = phases.get(ph) or {}
+                    if p.get("power_avg") or p.get("clock_avg"):
+                        bits.append(t("pf_ph_" + ph, w=("%.0f W" % p["power_avg"]) if p.get("power_avg") else "- W",
+                                      c=("%.0f MHz" % p["clock_avg"]) if p.get("clock_avg") else "- MHz"))
+            else:
+                if s.get("clock_avg"):
+                    bits.append(t("pf_clock", v=s["clock_avg"]))
+                if s.get("power_avg"):
+                    bits.append(t("pf_power", v=s["power_avg"], m=s.get("power_max") or 0))
+            st = res.get("stability") if test == "gpu" else None
+            if st and st.get("gflops_cv") is not None:
+                bits.append(t("pf_stab", cv=max(st.get("gflops_cv") or 0, st.get("bandwidth_cv") or 0),
+                              busy=st.get("busy") or 0))
             if s.get("throttled") is True:
                 bits.append(t("pf_throttle_yes", why=", ".join(s.get("throttle_notes") or []) or "?"))
             elif s.get("throttled") is False:

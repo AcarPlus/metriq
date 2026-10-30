@@ -7,9 +7,11 @@
 //     {"stress":{"errors":0,"checks":123456789,"elapsed":12.3}} about once a second (--fault: corrupt on purpose, for tests)
 //
 // stdout is one JSON object per line:
-//   {"progress":0.42,"phase":"fma"}  ...  {"result":{"adapter":"..","vram_mb":16303,"gflops":41234.5,"bandwidth_gbs":812.3}}
+//   {"progress":0.42,"phase":"fma","warm":true}  ...  (warm: clocks still settling, not scored)
+//   {"result":{"adapter":"..","vram_mb":16303,"gflops":41234.5,"bandwidth_gbs":812.3,"fma_cv":0.3,"bw_cv":0.2,..}}
 //   {"error":"message"}              (exit code 1)
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
@@ -47,6 +49,7 @@ static class GpuBench
     [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int FCreateCs(IntPtr dev, IntPtr code, IntPtr size, IntPtr link, out IntPtr cs);
     [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int FCreateQuery(IntPtr dev, ref QueryDesc d, out IntPtr q);
     [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate void FEnd(IntPtr ctx, IntPtr asyncObj);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate void FFlush(IntPtr ctx);
     [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int FGetData(IntPtr ctx, IntPtr asyncObj, IntPtr data, uint size, uint flags);
     [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate void FDispatch(IntPtr ctx, uint x, uint y, uint z);
     [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate void FUpdate(IntPtr ctx, IntPtr res, uint sub, IntPtr box, IntPtr src, uint rowPitch, uint depthPitch);
@@ -146,8 +149,13 @@ void main(uint3 g : SV_GroupID, uint3 t : SV_GroupThreadID)
 
     const uint Groups = 4096;                               // x 256 threads = ~1M threads per dispatch
 
-    static IntPtr dev, ctx, query, tsDisjoint, tsStart, tsEnd; static uint groupsNow = Groups;
-    static FEnd fBegin, fEnd; static FGetData fGetData; static FDispatch fDispatch; static FUpdate fUpdate;
+    // Batches in flight: the GPU always has the next batch queued while the CPU reads the queries of an older one
+    const int Depth = 3;
+    const double BatchSecs = 0.1, WindowSecs = 0.5;          // one batch ~100 ms of GPU work; scored in 0.5 s windows
+
+    static IntPtr dev, ctx, qbuf; static uint groupsNow = Groups;
+    static IntPtr[] qEvent = new IntPtr[Depth], qDisjoint = new IntPtr[Depth], qStart = new IntPtr[Depth], qEnd = new IntPtr[Depth];
+    static FEnd fBegin, fEnd; static FFlush fFlush; static FGetData fGetData; static FDispatch fDispatch; static FUpdate fUpdate;
     static FSetShader fSetShader; static FSetUavs fSetUavs; static FSetViews fSetSrvs, fSetCbs;
     static Stopwatch clock = Stopwatch.StartNew();
     static double lastProgress = -1, totalSecs, doneSecs;
@@ -226,74 +234,157 @@ void main(uint3 g : SV_GroupID, uint3 t : SV_GroupThreadID)
         Marshal.FreeHGlobal(p);
     }
 
-    // Polls an async object until its data is there (S_OK); GetData with flags 0 also flushes the command buffer.
-    static void Wait(IntPtr obj, IntPtr data, uint size)
+    // Waits until an async object has its data (S_OK). The command buffer was flushed at submit time, so the polls do
+    // not flush again; the GPU still has the other queued batches to run meanwhile, so 1 ms sleeps cost nothing.
+    static void Wait(IntPtr obj, uint size)
     {
         while (true)
         {
-            int hr = fGetData(ctx, obj, data, size, 0);
+            int hr = fGetData(ctx, obj, qbuf, size, 1);       // D3D11_ASYNC_GETDATA_DONOTFLUSH
             if (hr == 0) return;
             if (hr < 0) throw new Exception("GPU device lost (0x" + hr.ToString("X8") + ")");
-            Thread.Sleep(0);
+            Thread.Sleep(1);
         }
     }
 
-    // Submits `batch` dispatches, waits for the GPU and returns the seconds the GPU spent on them. GPU timestamps, not
-    // the wall clock: some drivers finish the wait only on the next Windows timer tick (15.6 ms), which made every
-    // batch look up to that much longer - the score of those GPUs came out 15-40 % too low. Wall clock only when the
-    // timestamps are unusable (disjoint, e.g. a clock change in between).
+    static void Submit(int slot, int batch)
+    {
+        fBegin(ctx, qDisjoint[slot]);
+        fEnd(ctx, qStart[slot]);
+        for (int i = 0; i < batch; i++) fDispatch(ctx, groupsNow, 1, 1);
+        fEnd(ctx, qEnd[slot]);
+        fEnd(ctx, qDisjoint[slot]);
+        fEnd(ctx, qEvent[slot]);
+        fFlush(ctx);
+    }
+
+    // Waits for the batch in `slot`; returns the seconds the GPU spent on it, or -1 when the timestamps are unusable
+    // (disjoint: e.g. a clock change in between). GPU timestamps, not the wall clock: some drivers finish a wait only on
+    // the next Windows timer tick (15.6 ms), which made those GPUs score 15-40 % too low.
+    static double Collect(int slot)
+    {
+        Wait(qEvent[slot], 4);
+        Wait(qDisjoint[slot], 16);
+        long freq = Marshal.ReadInt64(qbuf, 0);
+        bool disjoint = Marshal.ReadInt32(qbuf, 8) != 0;
+        Wait(qStart[slot], 8);
+        long a = Marshal.ReadInt64(qbuf, 0);
+        Wait(qEnd[slot], 8);
+        long b = Marshal.ReadInt64(qbuf, 0);
+        if (disjoint || freq <= 0 || b <= a) return -1;
+        return (double)(b - a) / freq;
+    }
+
+    // One batch on its own (calibration, stress test): GPU seconds, wall seconds when the timestamps are unusable.
     static double RunBatch(int batch)
     {
         double t0 = clock.Elapsed.TotalSeconds;
-        fBegin(ctx, tsDisjoint);
-        fEnd(ctx, tsStart);
-        for (int i = 0; i < batch; i++) fDispatch(ctx, groupsNow, 1, 1);
-        fEnd(ctx, tsEnd);
-        fEnd(ctx, tsDisjoint);
-        fEnd(ctx, query);
-        IntPtr buf = Marshal.AllocHGlobal(16);
-        try
-        {
-            Wait(query, buf, 4);
-            double wall = clock.Elapsed.TotalSeconds - t0;
-            Wait(tsDisjoint, buf, 16);
-            long freq = Marshal.ReadInt64(buf, 0);
-            bool disjoint = Marshal.ReadInt32(buf, 8) != 0;
-            Wait(tsStart, buf, 8);
-            long a = Marshal.ReadInt64(buf, 0);
-            Wait(tsEnd, buf, 8);
-            long b = Marshal.ReadInt64(buf, 0);
-            if (disjoint || freq <= 0 || b <= a) return wall;
-            return Math.Min(wall, (double)(b - a) / freq);
-        }
-        finally { Marshal.FreeHGlobal(buf); }
+        Submit(0, batch);
+        double g = Collect(0);
+        double wall = clock.Elapsed.TotalSeconds - t0;
+        return g > 0 ? Math.Min(g, wall) : wall;
     }
 
-    static void Progress(string phase, double inPhase)
+    static void Progress(string phase, double inPhase, bool warm, bool force)
     {
         double f = (doneSecs + inPhase) / totalSecs;
-        if (f - lastProgress >= 0.01)
+        if (force || f - lastProgress >= 0.01)
         {
             lastProgress = f;
-            Json("{\"progress\":" + Num(Math.Min(1.0, f)) + ",\"phase\":\"" + phase + "\"}");
+            Json("{\"progress\":" + Num(Math.Min(1.0, f)) + ",\"phase\":\"" + phase + "\",\"warm\":" + (warm ? "true" : "false") + "}");
         }
     }
 
-    // Runs `secs` of batches (each ~120 ms); returns work units per second.
-    static double Measure(string phase, double secs, double workPerDispatch)
+    static double Median(List<double> v)
     {
-        RunBatch(1);                                         // warm-up
+        List<double> s = new List<double>(v);
+        s.Sort();
+        int n = s.Count;
+        return n == 0 ? 0 : (n % 2 == 1 ? s[n / 2] : 0.5 * (s[n / 2 - 1] + s[n / 2]));
+    }
+
+    // Statistics of one measured phase
+    class PhaseResult { public double Rate, Cv, Busy, Warm; }
+
+    // Runs `secs` of batches with Depth batches in flight. Warm-up first (clocks, temperature and power limit settle;
+    // not scored): at least `minWarm` seconds, then until two 0.5 s windows in a row agree within 1 %, at most 40 % of the
+    // phase. The rate is the median of the 0.5 s windows after it (work units per GPU second), robust against a
+    // single hiccup (a background task, a disjoint timestamp).
+    static PhaseResult Measure(string phase, double secs, double workPerDispatch, double minWarm)
+    {
+        RunBatch(1);
         double t = RunBatch(1);
-        int batch = Math.Max(1, Math.Min(2000, (int)(0.12 / Math.Max(t, 1e-5))));
-        double total = 0, work = 0, start = clock.Elapsed.TotalSeconds;
-        while (clock.Elapsed.TotalSeconds - start < secs)
+        int batch = Math.Max(1, Math.Min(4000, (int)(BatchSecs / Math.Max(t, 1e-6))));
+        List<double> warmWin = new List<double>(), stable = new List<double>();
+        double start = clock.Elapsed.TotalSeconds, warmEnd = -1, wWork = 0, wTime = 0, busy = 0, lastDone = -1;
+        int submitted = 0, collected = 0;
+        bool warm = true;
+        Progress(phase, 0, true, true);
+        while (true)
         {
-            double dt = RunBatch(batch);
-            total += dt; work += batch * workPerDispatch;
-            Progress(phase, clock.Elapsed.TotalSeconds - start);
+            double el = clock.Elapsed.TotalSeconds - start;
+            if (el < secs && submitted - collected < Depth)
+            {
+                Submit(submitted % Depth, batch);
+                submitted++;
+                continue;
+            }
+            if (submitted == collected) break;
+            double g = Collect(collected % Depth);
+            collected++;
+            double now = clock.Elapsed.TotalSeconds;
+            // timestamps unusable (some drivers report every interval as disjoint): with the queue full, the time
+            // between two completions is the GPU time of the later batch
+            if (g <= 0) g = lastDone >= 0 && submitted - collected >= Depth - 1 ? now - lastDone : -1;
+            lastDone = now;
+            if (g <= 0) continue;
+            if (!warm) busy += g;
+            wWork += batch * workPerDispatch; wTime += g;
+            if (wTime >= WindowSecs)
+            {
+                double r = wWork / wTime;
+                wWork = wTime = 0;
+                el = clock.Elapsed.TotalSeconds - start;
+                if (warm)
+                {
+                    warmWin.Add(r);
+                    int n = warmWin.Count;
+                    bool settled = n >= 2 && Math.Abs(warmWin[n - 1] - warmWin[n - 2]) <= 0.01 * warmWin[n - 1];
+                    if ((el >= minWarm && settled) || el >= 0.4 * secs)
+                    {
+                        warm = false;
+                        warmEnd = el;
+                        Progress(phase, el, false, true);
+                    }
+                }
+                else stable.Add(r);
+            }
+            Progress(phase, Math.Min(secs, clock.Elapsed.TotalSeconds - start), warm, false);
         }
         doneSecs += secs;
-        return work / total;
+        if (stable.Count == 0) stable = warmWin;                  // run far too short to settle
+        PhaseResult res = new PhaseResult();
+        res.Rate = Median(stable);
+        double mean = 0, sq = 0;
+        foreach (double r in stable) mean += r;
+        mean /= Math.Max(1, stable.Count);
+        foreach (double r in stable) sq += (r - mean) * (r - mean);
+        res.Cv = stable.Count > 1 && mean > 0 ? 100.0 * Math.Sqrt(sq / (stable.Count - 1)) / mean : 0;
+        double stableWall = clock.Elapsed.TotalSeconds - start - Math.Max(0, warmEnd);
+        res.Busy = warmEnd >= 0 && stableWall > 0 ? Math.Min(100.0, 100.0 * busy / stableWall) : 0;
+        res.Warm = Math.Max(0, warmEnd);
+        return res;
+    }
+
+    // One FMA dispatch is calibrated to DispatchMin..DispatchMax seconds (about 15 ms): long enough that the gaps
+    // between dispatches do not count, far below the 2 s driver timeout (TDR) on any GPU, slow or fast.
+    const double DispatchMin = 0.010, DispatchTarget = 0.015, DispatchMax = 0.030;
+
+    static uint NextIters(uint iters, double t)
+    {
+        long want = (long)(iters * DispatchTarget / Math.Max(t, 1e-6));
+        if (t < DispatchMin) want = Math.Max(want, iters + 1);
+        return (uint)Math.Max(4, Math.Min(1 << 22, Math.Min(want, iters * 64L)));
     }
 
     // Runs the self-checking kernel until the parent kills the process.
@@ -320,12 +411,12 @@ void main(uint3 g : SV_GroupID, uint3 t : SV_GroupThreadID)
             SetConstants(cb, new uint[] { iters, zbits, 0, 0 }, fc);
             RunBatch(1);
             double t = RunBatch(1);
-            if (t > 0.006) break;
-            iters = (uint)Math.Min(1 << 20, Math.Max(iters * 2L, (long)(iters * 0.008 / Math.Max(t, 1e-5))));
+            if (t > DispatchMin) break;
+            iters = NextIters(iters, t);
         }
         SetConstants(cb, new uint[] { iters, zbits, 0, 0 }, fc);
         double one = RunBatch(1);
-        int batch = Math.Max(1, Math.Min(2000, (int)(0.12 / Math.Max(one, 1e-5))));
+        int batch = Math.Max(1, Math.Min(2000, (int)(BatchSecs / Math.Max(one, 1e-5))));
         IntPtr mapped = Marshal.AllocHGlobal(16);
         double start = clock.Elapsed.TotalSeconds, lastRep = 0; double checks = 0;
         while (true)
@@ -399,16 +490,19 @@ void main(uint3 g : SV_GroupID, uint3 t : SV_GroupThreadID)
         uint level;
         Check(D3D11CreateDevice(best, 0, IntPtr.Zero, 0, IntPtr.Zero, 0, 7, out dev, out level, out ctx), "D3D11CreateDevice");
         if (level < 0xB000) throw new Exception("Direct3D feature level 11_0 is required");
-        fBegin = Slot<FEnd>(ctx, 27); fEnd = Slot<FEnd>(ctx, 28); fGetData = Slot<FGetData>(ctx, 29); fDispatch = Slot<FDispatch>(ctx, 41);
+        fBegin = Slot<FEnd>(ctx, 27); fEnd = Slot<FEnd>(ctx, 28); fFlush = Slot<FFlush>(ctx, 111); fGetData = Slot<FGetData>(ctx, 29); fDispatch = Slot<FDispatch>(ctx, 41);
         fUpdate = Slot<FUpdate>(ctx, 48); fSetShader = Slot<FSetShader>(ctx, 69); fSetUavs = Slot<FSetUavs>(ctx, 68);
         fSetSrvs = Slot<FSetViews>(ctx, 67); fSetCbs = Slot<FSetViews>(ctx, 71);
-        QueryDesc qd = new QueryDesc(); qd.Query = 0;        // D3D11_QUERY_EVENT
-        Check(Slot<FCreateQuery>(dev, 24)(dev, ref qd, out query), "CreateQuery");
-        qd.Query = 3;                                        // D3D11_QUERY_TIMESTAMP_DISJOINT
-        Check(Slot<FCreateQuery>(dev, 24)(dev, ref qd, out tsDisjoint), "CreateQuery(disjoint)");
-        qd.Query = 2;                                        // D3D11_QUERY_TIMESTAMP
-        Check(Slot<FCreateQuery>(dev, 24)(dev, ref qd, out tsStart), "CreateQuery(timestamp)");
-        Check(Slot<FCreateQuery>(dev, 24)(dev, ref qd, out tsEnd), "CreateQuery(timestamp)");
+        FCreateQuery mkQuery = Slot<FCreateQuery>(dev, 24);
+        QueryDesc qd = new QueryDesc();
+        for (int i = 0; i < Depth; i++)
+        {
+            qd.Query = 0; Check(mkQuery(dev, ref qd, out qEvent[i]), "CreateQuery(event)");
+            qd.Query = 3; Check(mkQuery(dev, ref qd, out qDisjoint[i]), "CreateQuery(disjoint)");
+            qd.Query = 2; Check(mkQuery(dev, ref qd, out qStart[i]), "CreateQuery(timestamp)");
+            Check(mkQuery(dev, ref qd, out qEnd[i]), "CreateQuery(timestamp)");
+        }
+        qbuf = Marshal.AllocHGlobal(16);
 
         IntPtr cb = MakeBuffer(48, 4, 0, 0);
         if (stress) return Stress(cb, fault);
@@ -421,27 +515,29 @@ void main(uint3 g : SV_GroupID, uint3 t : SV_GroupThreadID)
         IntPtr outBuf = MakeBuffer(outElems * 16, 0x80, 0x40, 16);
         IntPtr outUav = MakeUav(outBuf, outElems);
         float[] fc = new float[] { 0.9999f, 0.9998f, 0.9997f, 0.9996f, 0.0001f, 0.0002f, 0.0003f, 0.0004f };
-        // calibrate iterations so that one dispatch takes about 8 ms (far below the 2 s driver timeout)
         uint iters = 64;
         fSetShader(ctx, csFma, IntPtr.Zero, 0);
         fSetUavs(ctx, 0, 1, new IntPtr[] { outUav }, IntPtr.Zero);
         fSetCbs(ctx, 0, 1, new IntPtr[] { cb });
-        for (int round = 0; round < 10; round++)
+        double tDisp = 0;
+        for (int round = 0; round < 12; round++)
         {
             SetConstants(cb, new uint[] { iters, 0, 0, 0 }, fc);
             RunBatch(1);
-            double t = RunBatch(1);
-            if (t > 0.006) break;
-            iters = (uint)Math.Min(1 << 20, Math.Max(iters * 2L, (long)(iters * 0.008 / Math.Max(t, 1e-5))));
+            tDisp = RunBatch(1);
+            if (tDisp >= DispatchMin && tDisp <= DispatchMax) break;
+            iters = NextIters(iters, tDisp);
         }
         SetConstants(cb, new uint[] { iters, 0, 0, 0 }, fc);
         double flopsPerDispatch = (double)outElems * iters * FlopsPerThreadIter;
-        double flops = Measure("fma", fmaSecs, flopsPerDispatch);
+        PhaseResult fma = Measure("fma", fmaSecs, flopsPerDispatch, Math.Max(3.0, fmaSecs * 0.12));
 
         // ---- memory bandwidth (copy kernel, read + write traffic)
-        long bytes = Math.Min(256L << 20, Math.Max(32L << 20, bestMem / 8));
-        uint elems = Groups * 256 * 4;                           // power of two, >= 64 MB
-        while ((long)elems * 32 <= bytes) elems *= 2;
+        // two buffers well above any GPU cache (96 MB L2 / 128 MB Infinity Cache today): 512 MB each with 8 GB of
+        // VRAM or more (one pass then takes >= 0.5 ms even on the fastest cards), never below 64 MB
+        long perBuf = Math.Min(512L << 20, Math.Max(64L << 20, bestMem / 16));
+        uint elems = Groups * 256 * 4;                           // power of two, 64 MB
+        while ((long)elems * 32 <= perBuf) elems *= 2;
         groupsNow = elems / 1024;                            // one pass: every group moves 1024 float4
         IntPtr src = MakeBuffer(elems * 16, 0x88, 0x40, 16);
         IntPtr dst = MakeBuffer(elems * 16, 0x88, 0x40, 16);
@@ -451,10 +547,13 @@ void main(uint3 g : SV_GroupID, uint3 t : SV_GroupThreadID)
         fSetUavs(ctx, 0, 1, new IntPtr[] { IntPtr.Zero }, IntPtr.Zero);
         fSetSrvs(ctx, 0, 1, new IntPtr[] { srcSrv });
         fSetUavs(ctx, 0, 1, new IntPtr[] { dstUav }, IntPtr.Zero);
-        double bw = Measure("bandwidth", bwSecs, 2.0 * elems * 16);
+        PhaseResult bw = Measure("bandwidth", bwSecs, 2.0 * elems * 16, Math.Max(1.5, bwSecs * 0.08));
 
         Json("{\"result\":{\"adapter\":\"" + Esc(bestName) + "\",\"adapter_index\":" + idx + ",\"vendor\":" + bestVendor + ",\"vram_mb\":" + (bestMem >> 20) +
-             ",\"gflops\":" + Num(flops / 1e9) + ",\"bandwidth_gbs\":" + Num(bw / 1e9) + ",\"seconds\":" + Num(seconds) + "}}");
+             ",\"gflops\":" + Num(fma.Rate / 1e9) + ",\"bandwidth_gbs\":" + Num(bw.Rate / 1e9) + ",\"seconds\":" + Num(seconds) +
+             ",\"fma_cv\":" + Num(fma.Cv) + ",\"bw_cv\":" + Num(bw.Cv) + ",\"fma_busy\":" + Num(fma.Busy) + ",\"bw_busy\":" + Num(bw.Busy) +
+             ",\"fma_warm\":" + Num(fma.Warm) + ",\"bw_warm\":" + Num(bw.Warm) + ",\"dispatch_ms\":" + Num(tDisp * 1000) +
+             ",\"bw_buffer_mb\":" + ((long)elems * 16 >> 20) + "}}");
         return 0;
     }
 }

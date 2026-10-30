@@ -55,7 +55,7 @@ REF = {
     "cpu": {"single_int": 5.52e6, "single_float": 14.95e6, "multi_int": 48.9e6, "multi_float": 125.1e6},
     "ram": {"read": 60.5, "write": 82.2, "copy": 29.8, "latency": 44.2},
     "ssd": {"seq_read": 7280.0, "seq_write": 5700.0, "rnd_read": 72.6, "rnd_write": 225.5},
-    "gpu": {"gflops": 46500.0, "bandwidth": 750.0},
+    "gpu": {"gflops": 48070.0, "bandwidth": 780.0},
 }
 LOWER_IS_BETTER = {("ram", "latency")}
 
@@ -1209,8 +1209,9 @@ def gpu_exe():
     return None
 
 
-def _gpu_once(ctl, exe, secs, prog):
-    """One GpuBench.exe run -> result dict, or a string (why it failed)."""
+def _gpu_once(ctl, exe, secs, prog, marks=None):
+    """One GpuBench.exe run -> result dict, or a string (why it failed). marks: gets (time, phase, warm) whenever the
+    helper's phase or warm-up state changes, and (time, "", False) at the end."""
     proc = subprocess.Popen([exe, "--seconds", str(secs)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             creationflags=0x08000000)               # CREATE_NO_WINDOW
     state = {"result": None, "err": None}
@@ -1222,7 +1223,10 @@ def _gpu_once(ctl, exe, secs, prog):
             except ValueError:
                 continue
             if "progress" in d:
-                prog(float(d["progress"]), str(d.get("phase", "")))
+                ph, warm = str(d.get("phase", "")), bool(d.get("warm"))
+                if marks is not None and (not marks or marks[-1][1:] != (ph, warm)):
+                    marks.append((time.time(), ph, warm))
+                prog(float(d["progress"]), ph + (" warm-up" if warm else ""))
             elif "result" in d:
                 state["result"] = d["result"]
             elif "error" in d:
@@ -1237,6 +1241,8 @@ def _gpu_once(ctl, exe, secs, prog):
                 raise RuntimeError("GPU helper timed out")
             time.sleep(0.1)
         th.join(2)
+        if marks is not None:
+            marks.append((time.time(), "", False))
         r = state["result"]
         if not r:
             err = state["err"] or (proc.stderr.read().decode("utf-8", "replace")[:200] if proc.stderr else "")
@@ -1259,22 +1265,39 @@ def run_gpu(ctl):
     ctl.sensors.start()
     ctl.progress(0.0, "GPU")
     vals = {"gflops": [], "bandwidth": []}
-    info = {}
+    info, marks, stab = {}, [], {"gflops_cv": [], "bandwidth_cv": [], "busy": []}
     try:
         for rnd in range(rounds):
             ctl.check()
-            r = _gpu_once(ctl, exe, secs, lambda f, ph, rnd=rnd: ctl.progress((rnd + f) / rounds, "GPU " + ph))
+            r = _gpu_once(ctl, exe, secs, lambda f, ph, rnd=rnd: ctl.progress((rnd + f) / rounds, "GPU " + ph), marks)
             if isinstance(r, str):
                 return {"test": "gpu", "ts": time.time(), "skipped": r}
             vals["gflops"].append(float(r["gflops"]))
             vals["bandwidth"].append(float(r["bandwidth_gbs"]))
             info = {"adapter": r.get("adapter", ""), "vram_mb": r.get("vram_mb")}
+            for k, src in (("gflops_cv", "fma_cv"), ("bandwidth_cv", "bw_cv"), ("busy", "fma_busy"), ("busy", "bw_busy")):
+                if r.get(src) is not None:
+                    stab[k].append(float(r[src]))
         ctl.progress(1.0, "done")
         metrics, spread = {}, {}
         for name, v in vals.items():
             metrics[name], spread[name] = agg(v, "mean")
+        # The two phases load the card very differently (shader math: up to the power limit; memory copy: the shader
+        # cores mostly wait, typically about half the power): sensor figures per phase, scored part only.
+        rows = ctl.sensors.since(t0)
+        phases = {}
+        for ph in ("fma", "bandwidth"):
+            spans = [(a[0], b[0]) for a, b in zip(marks, marks[1:]) if a[1] == ph and not a[2]]
+            sel = [x for x in rows if any(lo <= x["t"] < hi for lo, hi in spans)]
+            if sel:
+                s = summarize("gpu", sel)
+                phases[ph] = {k: s.get(k) for k in ("power_avg", "power_max", "clock_avg", "temp_max", "samples")}
+        if phases:
+            info["phases"] = phases
+        info["stability"] = {"gflops_cv": max(stab["gflops_cv"], default=None),
+                             "bandwidth_cv": max(stab["bandwidth_cv"], default=None),
+                             "busy": min(stab["busy"], default=None)}
         if ctl.detailed:
-            rows = ctl.sensors.since(t0)
             ser = make_series(rows, ("gpu_clock", "gpu_temp", "gpu_power"), t0)
             ssum = summarize("gpu", rows)
             info["sustain"] = {"secs": round(time.time() - t0, 1), "series": ser,
