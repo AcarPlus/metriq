@@ -54,8 +54,8 @@ DURATION = {"quick": {"cpu": 60, "ram": 16, "ssd": 30, "gpu": 60},
 REF = {
     "cpu": {"single_int": 5.52e6, "single_float": 14.95e6, "multi_int": 48.9e6, "multi_float": 125.1e6},
     "ram": {"read": 60.5, "write": 82.2, "copy": 29.8, "latency": 44.2},
-    "ssd": {"seq_read": 4700.0, "seq_write": 5220.0, "rnd_read": 72.6, "rnd_write": 225.5},
-    "gpu": {"gflops": 37100.0, "bandwidth": 970.0},
+    "ssd": {"seq_read": 7280.0, "seq_write": 5700.0, "rnd_read": 72.6, "rnd_write": 225.5},
+    "gpu": {"gflops": 46500.0, "bandwidth": 750.0},
 }
 LOWER_IS_BETTER = {("ram", "latency")}
 
@@ -213,7 +213,8 @@ def extract(rd, drive=""):
             elif ty == 5 and v >= 0:
                 if lab == "gpu power":
                     cand["gpu_power"].append((0, v))
-                elif lab in ("gpu board power", "total board power", "gpu chip power", "gpu total board power"):
+                elif lab in ("gpu board power", "total board power", "gpu chip power", "gpu total board power",
+                             "gpu asic power", "gpu ppt"):                 # the last two: AMD cards
                     cand["gpu_power"].append((1, v))
             elif ty == 6 and v > 0 and lab in ("gpu clock", "gpu core clock"):
                 cand["gpu_clock"].append((0 if lab == "gpu clock" else 1, v))
@@ -401,8 +402,9 @@ def make_series(rows, keys, t0, maxpts=90):
 class Ctl:
     """What a test gets: cancel flag, progress callback, sensor log, mode."""
 
-    def __init__(self, progress=None, sensors=None, stop=None, mode="quick", emit=None):
+    def __init__(self, progress=None, sensors=None, stop=None, mode="quick", emit=None, cfg=None):
         self.stop = stop if stop is not None else threading.Event()
+        self.cfg = cfg or {}
         self._progress = progress
         self.emit = emit or (lambda *m: None)
         self.sensors = sensors or SensorLog()
@@ -895,6 +897,11 @@ F_NO_BUFFERING, F_WRITE_THROUGH, F_DELETE_ON_CLOSE, F_OVERLAPPED = 0x20000000, 0
 ERROR_IO_PENDING = 997
 
 
+IOCTL_STORAGE_QUERY_PROPERTY = 0x2D1400
+BUS_TYPES = {1: "SCSI", 2: "ATAPI", 3: "ATA", 7: "USB", 8: "RAID", 10: "SAS", 11: "SATA", 12: "SD", 13: "MMC",
+             14: "Virtual", 15: "VHD", 16: "Storage Spaces", 17: "NVMe", 18: "SCM", 19: "UFS"}
+
+
 class _OVL(ctypes.Structure):
     _fields_ = [("Internal", ctypes.c_size_t), ("InternalHigh", ctypes.c_size_t), ("Offset", ctypes.c_uint32),
                 ("OffsetHigh", ctypes.c_uint32), ("hEvent", ctypes.c_void_p)]
@@ -905,6 +912,80 @@ def free_space_gb(path=None):
         return shutil.disk_usage(path or tempfile.gettempdir()).free / 1e9
     except OSError:
         return 0.0
+
+
+def _storage_query(k, h, prop_id, size=1024):
+    """IOCTL_STORAGE_QUERY_PROPERTY (PropertyStandardQuery) -> raw bytes, or None."""
+    q = (ctypes.c_uint32 * 3)(prop_id, 0, 0)
+    out = ctypes.create_string_buffer(size)
+    got = ctypes.c_uint32(0)
+    if not k.DeviceIoControl(h, IOCTL_STORAGE_QUERY_PROPERTY, q, ctypes.sizeof(q), out, size, ctypes.byref(got), None):
+        return None
+    return out.raw[:got.value]
+
+
+def drive_info(drive):
+    """Model and bus of the disk behind a drive letter ("C:") -> {"model": .., "bus": "NVMe", "hdd": bool} (keys only
+    when known). Needs no admin rights (the volume is opened without read / write access)."""
+    info = {}
+    try:
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.CreateFileW.restype = ctypes.c_void_p
+        k.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_uint32,
+                                  ctypes.c_uint32, ctypes.c_void_p]
+        k.DeviceIoControl.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_uint32,
+                                      ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_void_p]
+        k.CloseHandle.argtypes = [ctypes.c_void_p]
+        h = k.CreateFileW("\\\\.\\" + drive.rstrip("\\"), 0, 3, None, 3, 0, None)    # OPEN_EXISTING, share read/write
+        if h in (None, ctypes.c_void_p(-1).value):
+            return info
+        try:
+            raw = _storage_query(k, h, 0)                          # StorageDeviceProperty
+            if raw and len(raw) >= 32:                             # STORAGE_DEVICE_DESCRIPTOR
+                def field(off):
+                    o = int.from_bytes(raw[off:off + 4], "little")
+                    if not o or o >= len(raw):
+                        return ""
+                    end = raw.find(b"\0", o)
+                    return raw[o:end if end >= 0 else len(raw)].decode("ascii", "replace").strip()
+                vendor, product = field(12), field(16)
+                if vendor and vendor.upper() not in ("NVME", "ATA") and not product.upper().startswith(vendor.upper()):
+                    product = (vendor + " " + product).strip()
+                if product:
+                    info["model"] = product
+                bus = int.from_bytes(raw[28:32], "little")
+                if bus in BUS_TYPES:
+                    info["bus"] = BUS_TYPES[bus]
+            raw = _storage_query(k, h, 7, 64)                      # StorageDeviceSeekPenaltyProperty
+            if raw and len(raw) >= 9:
+                info["hdd"] = bool(raw[8])
+        finally:
+            k.CloseHandle(h)
+    except Exception:
+        pass
+    return info
+
+
+def drive_label(drive, info=None):
+    """'D: <model> (NVMe)' for the result card and the drive picker."""
+    info = drive_info(drive) if info is None else info
+    bits = [x for x in (info.get("model"), "HDD" if info.get("hdd") else info.get("bus")) if x]
+    return drive + (" " + bits[0] if bits else "") + (" (%s)" % bits[1] if len(bits) > 1 else "")
+
+
+def fixed_drives():
+    """Letters of the local fixed drives: ["C:", "D:", ...]."""
+    out = []
+    try:
+        k = ctypes.windll.kernel32
+        mask = k.GetLogicalDrives()
+        for i in range(26):
+            d = "%s:" % chr(65 + i)
+            if mask >> i & 1 and k.GetDriveTypeW(d + "\\") == 3:      # DRIVE_FIXED
+                out.append(d)
+    except Exception:
+        pass
+    return out
 
 
 def ssd_file_gb(mode, free=None):
@@ -920,7 +1001,7 @@ def ssd_file_gb(mode, free=None):
 class _Disk:
     """Unbuffered temporary file with overlapped I/O: run() keeps `qd` requests in flight from one thread."""
 
-    def __init__(self, path, blk_max=2 << 20, nbuf=32):
+    def __init__(self, path, blk_max=2 << 20, nbuf=32, write_through=False):
         k = ctypes.WinDLL("kernel32", use_last_error=True)
         self.k = k
         k.CreateFileW.restype = ctypes.c_void_p
@@ -940,10 +1021,13 @@ class _Disk:
         k.CancelIoEx.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
         k.ResetEvent.argtypes = [ctypes.c_void_p]
         self.path, self.blk_max, self.nbuf = path, blk_max, nbuf
+        # Benchmark without write-through: NO_BUFFERING already bypasses the Windows cache, and write-through adds FUA
+        # to every write, which some NVMe drives serve at a fraction of their speed (CrystalDiskMark does not use it)
+        wt = F_WRITE_THROUGH if write_through else 0
         invalid = ctypes.c_void_p(-1).value
         self.cached = False
         self.h = k.CreateFileW(path, GENERIC_READ | GENERIC_WRITE, 0, None, CREATE_ALWAYS,
-                               F_NO_BUFFERING | F_WRITE_THROUGH | F_DELETE_ON_CLOSE | F_OVERLAPPED, None)
+                               F_NO_BUFFERING | wt | F_DELETE_ON_CLOSE | F_OVERLAPPED, None)
         if self.h in (None, invalid):
             self.cached = True                  # e.g. a RAM disk: fall back to write-through only (numbers then too high)
             self.h = k.CreateFileW(path, GENERIC_READ | GENERIC_WRITE, 0, None, CREATE_ALWAYS,
@@ -1041,22 +1125,26 @@ class _Disk:
         return nops * step / dt, nops / dt
 
 
-def ssd_tmp_dir():
-    return tempfile.gettempdir()
+def ssd_tmp_dir(drive=""):
+    """Folder of the test file: the Temp folder, or the root of `drive` ("D:") when another drive was picked."""
+    tmp = tempfile.gettempdir()
+    if not drive or drive == "auto" or os.path.splitdrive(tmp)[0].upper() == drive.upper():
+        return tmp
+    return drive + "\\"
 
 
 def run_ssd(ctl):
     t0 = time.time()
     det = ctl.detailed
     kk = 0.2 if quick() else 1.0
-    tmpdir = ssd_tmp_dir()
+    tmpdir = ssd_tmp_dir(ctl.cfg.get("bench_ssd_drive", ""))
     free = free_space_gb(tmpdir)
     drive = os.path.splitdrive(tmpdir)[0]
     if free < MIN_FREE_GB:
         return {"test": "ssd", "ts": time.time(), "skipped": "only %.1f GB free on %s (need %d GB)" %
                 (free, drive or tmpdir, MIN_FREE_GB)}
     size = int(ssd_file_gb(ctl.mode, free) * (1 << 30))
-    blk = 2 << 20
+    dinfo = drive_info(drive)
     path = os.path.join(tmpdir, "metriq_bench_%d.tmp" % os.getpid())
     disk = _Disk(path)
     ctl.sensors.start(drive)
@@ -1064,26 +1152,31 @@ def run_ssd(ctl):
     try:
         rounds = 3 if det else 1
         ph = (6.0 if det else 7.0) * kk
-        scored = (("seq_write", True, blk, False), ("seq_read", False, blk, False),
-                  ("rnd_read", False, 4096, True), ("rnd_write", True, 4096, True))
-        extras = (("seq_read_q8", False, 1 << 20, 8, False), ("seq_write_q8", True, 1 << 20, 8, False),
+        # Sequential: 1 MiB blocks with 8 requests in flight (CrystalDiskMark "SEQ1M Q8T1"); one request at a time
+        # leaves a fast NVMe drive idle between requests and shows about half of its speed. Random: 4 KiB, one at a time.
+        scored = (("seq_write", True, 1 << 20, 8, False), ("seq_read", False, 1 << 20, 8, False),
+                  ("rnd_read", False, 4096, 1, True), ("rnd_write", True, 4096, 1, True))
+        extras = (("seq_read_q1", False, 1 << 20, 1, False), ("seq_write_q1", True, 1 << 20, 1, False),
                   ("rnd_read_q4", False, 4096, 4, True), ("rnd_read_q32", False, 4096, 32, True)) if det else ()
         total = ph * (rounds * len(scored) + len(extras))
         done = [0.0]
         vals, iops = {n: [] for n, *_ in scored}, {}
         extra_v = {}
 
-        def phase(name, write, step, qd, rnd, fill=False):
+        def phase(name, write, step, qd, rnd):
             label = "SSD " + name
             b = done[0]
-            bps, ops = disk.run(write, step, qd, ph, size, rnd, ctl, lambda el: ctl.progress((b + el) / total, label),
-                                fill=fill, fill_cap=20 * kk if size <= (2 << 30) else 60.0)
+            bps, ops = disk.run(write, step, qd, ph, size, rnd, ctl, lambda el: ctl.progress((b + el) / total, label))
             done[0] += ph
             return bps / 1e6, ops
 
+        # Prepare (not scored): write the whole file once. NTFS serialises writes that grow a file, so the scored write
+        # test has to overwrite data that is already there.
+        disk.run(True, 1 << 20, 8, 0, size, False, ctl, lambda el: ctl.progress(0.0, "SSD prepare"), fill=True,
+                 fill_cap=30 * kk if size <= (2 << 30) else 90.0)
         for rnd in range(rounds):
-            for name, write, step, r in scored:
-                mbs, ops = phase(name, write, step, 1, r, fill=(name == "seq_write" and rnd == 0))
+            for name, write, step, qd, r in scored:
+                mbs, ops = phase(name, write, step, qd, r)
                 vals[name].append(mbs)
                 if r:
                     iops.setdefault(name + "_iops", []).append(ops)
@@ -1096,7 +1189,9 @@ def run_ssd(ctl):
             metrics[name], spread[name] = agg(v, "mean")
         for name, v in iops.items():
             metrics[name], _ = agg(v, "mean")
-        extra = {"drive": drive, "file_mb": size >> 20, "cached": disk.cached}
+        extra = {"drive": drive, "drive_label": drive_label(drive, dinfo), "file_mb": size >> 20,
+                 "cached": disk.cached}
+        extra.update({k: dinfo[k] for k in ("bus", "hdd") if dinfo.get(k)})
         if extra_v:
             extra["extra"] = extra_v
         return _finish("ssd", ctl, metrics, t0, extra, spread if det else None)
@@ -1356,7 +1451,8 @@ class _SsdPart:
             raise RuntimeError("only %.1f GB free on %s (need %d GB)" % (free, os.path.splitdrive(tmp)[0], MIN_FREE_GB))
         self.drive = os.path.splitdrive(tmp)[0]
         self.size = (256 << 20) if quick() else (2 << 30)
-        self.disk = _Disk(os.path.join(tmp, "metriq_stress_%d.tmp" % os.getpid()), blk_max=self.BLK, nbuf=2)
+        self.disk = _Disk(os.path.join(tmp, "metriq_stress_%d.tmp" % os.getpid()), blk_max=self.BLK, nbuf=2,
+                          write_through=True)
         self.fault = "ssd" in fault_set()
         self.th = threading.Thread(target=self._run, daemon=True)
         self.th.start()
@@ -1560,7 +1656,8 @@ def bench_main(tests, mode, cfg, q, stop, opts=None):
             last_p["t"] = now
             put("p", cur["test"], f, text)
     try:
-        ctl = Ctl(progress=progress, sensors=log, stop=stop, mode="quick" if mode == "stress" else mode, emit=put)
+        ctl = Ctl(progress=progress, sensors=log, stop=stop, mode="quick" if mode == "stress" else mode, emit=put,
+                  cfg=cfg)
         if mode == "stress":
             opts = opts or {}
             cur["test"] = "stress"
@@ -1833,7 +1930,7 @@ UNITS = {"single_int": "it/s", "single_float": "it/s", "multi_int": "it/s", "mul
          "read": "GB/s", "write": "GB/s", "copy": "GB/s", "latency": "ns", "seq_read": "MB/s", "seq_write": "MB/s",
          "rnd_read": "MB/s", "rnd_write": "MB/s", "rnd_read_iops": "IOPS", "rnd_write_iops": "IOPS",
          "gflops": "GFLOPS", "bandwidth": "GB/s", "seq_read_q8": "MB/s", "seq_write_q8": "MB/s",
-         "rnd_read_q4": "MB/s", "rnd_read_q32": "MB/s"}
+         "seq_read_q1": "MB/s", "seq_write_q1": "MB/s", "rnd_read_q4": "MB/s", "rnd_read_q32": "MB/s"}
 
 
 def fmt_value(name, v):
@@ -1843,7 +1940,8 @@ def fmt_value(name, v):
         return "%.2f M" % (v / 1e6)
     if name in ("rnd_read_iops", "rnd_write_iops"):
         return "%.0f" % v
-    if name in ("gflops", "seq_read", "seq_write", "seq_read_q8", "seq_write_q8") or v >= 1000:
+    if name in ("gflops", "seq_read", "seq_write", "seq_read_q8", "seq_write_q8", "seq_read_q1", "seq_write_q1") \
+            or v >= 1000:
         return "%.0f" % v
     return "%.1f" % v
 

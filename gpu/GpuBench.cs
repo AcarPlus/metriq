@@ -29,6 +29,9 @@ static class GpuBench
         [MarshalAs(UnmanagedType.LPStr)] string entry, [MarshalAs(UnmanagedType.LPStr)] string target,
         uint f1, uint f2, out IntPtr code, out IntPtr errors);
 
+    [DllImport("winmm.dll")]
+    static extern uint timeBeginPeriod(uint ms);
+
     [DllImport("dxgi.dll")]
     static extern int CreateDXGIFactory1(ref Guid riid, out IntPtr factory);
 
@@ -74,6 +77,10 @@ static class GpuBench
     }
 
     // ---------------------------------------------------------------- shaders
+    // Pairs of chains that multiply each other (a = a * b + k): a sequence of these cannot be folded algebraically. The
+    // DXBC carries "refactoringAllowed", so a driver may legally merge a chain like a = a * m + k (uniform m, k) into
+    // fewer instructions, and some do - the GFLOPS then came out several times too high on those GPUs only.
+    // Every value settles near k (~1e-4): no overflow, no denormals.
     const string FmaSrc = @"
 cbuffer P : register(b0) { uint iters; uint u1; uint u2; uint u3; float4 m; float4 k; };
 RWStructuredBuffer<float4> o : register(u0);
@@ -81,16 +88,16 @@ RWStructuredBuffer<float4> o : register(u0);
 void main(uint3 id : SV_DispatchThreadID)
 {
     float s = id.x * 1e-7f;
-    float4 a = float4(s + 0.1f, s + 0.2f, s + 0.3f, s + 0.4f);
-    float4 b = a + 0.5f, c = a + 1.5f, d = a + 2.5f;
+    float4 a = m - s, b = m * 0.9f - s, c = m * 0.8f - s, d = m * 0.7f - s;
+    float4 e = m * 0.6f - s, f = m * 0.5f - s, g = m * 0.4f - s, h = m * 0.3f - s;
     for (uint i = 0; i < iters; i++)
     {
-        a = a * m + k; b = b * m + k; c = c * m + k; d = d * m + k;
-        a = a * m + k; b = b * m + k; c = c * m + k; d = d * m + k;
-        a = a * m + k; b = b * m + k; c = c * m + k; d = d * m + k;
-        a = a * m + k; b = b * m + k; c = c * m + k; d = d * m + k;
+        a = a * b + k; c = c * d + k; e = e * f + k; g = g * h + k;
+        b = b * a + k; d = d * c + k; f = f * e + k; h = h * g + k;
+        a = a * b + k; c = c * d + k; e = e * f + k; g = g * h + k;
+        b = b * a + k; d = d * c + k; f = f * e + k; h = h * g + k;
     }
-    o[id.x] = a + b + c + d;
+    o[id.x] = a + b + c + d + e + f + g + h;
 }";
     // Self-checking variant: every chain is computed twice (the second copy with constants the compiler cannot fold),
     // a mismatch bumps a counter. A healthy GPU gives identical bits, an unstable overclock does not.
@@ -121,29 +128,26 @@ void main(uint3 id : SV_DispatchThreadID)
     }
     o[id.x] = a + b + c + d;
 }";
-    const double FlopsPerThreadIter = 4 * 4 * 4 * 2;     // 4 chains x 4 steps x 4 lanes x (mul + add)
+    const double FlopsPerThreadIter = 16 * 4 * 2;         // 16 float4 mad per iteration x 4 lanes x (mul + add)
 
+    // One pass per dispatch: every thread group copies 1024 consecutive float4, each load / store fully coalesced.
+    // (An older version looped several passes inside one dispatch over the same dst; a compiler may drop all but the
+    // last pass as dead stores, which inflated the bandwidth on some GPUs.)
     const string CopySrc = @"
-cbuffer P : register(b0) { uint count; uint step; uint reps; uint u3; };
 StructuredBuffer<float4> src : register(t0);
 RWStructuredBuffer<float4> dst : register(u0);
 [numthreads(256,1,1)]
-void main(uint3 id : SV_DispatchThreadID)
+void main(uint3 g : SV_GroupID, uint3 t : SV_GroupThreadID)
 {
-    for (uint r = 0; r < reps; r++)
-    for (uint i = id.x * 4; i < count; i += step * 4)
-    {
-        uint j = (i + r * 4u * 4099u) & (count - 1);          // count is a power of two: every pass reads other lines
-        float4 a = src[j], b = src[j + 1], c = src[j + 2], d = src[j + 3];
-        float f = (float)r + 1.0f;
-        dst[i] = a + f; dst[i + 1] = b + f; dst[i + 2] = c + f; dst[i + 3] = d + f;
-    }
+    uint i = g.x * 1024 + t.x;
+    float4 a = src[i], b = src[i + 256], c = src[i + 512], d = src[i + 768];
+    dst[i] = a + 1.0f; dst[i + 256] = b + 1.0f; dst[i + 512] = c + 1.0f; dst[i + 768] = d + 1.0f;
 }";
 
     const uint Groups = 4096;                               // x 256 threads = ~1M threads per dispatch
 
-    static IntPtr dev, ctx, query; static uint groupsNow = Groups;
-    static FEnd fEnd; static FGetData fGetData; static FDispatch fDispatch; static FUpdate fUpdate;
+    static IntPtr dev, ctx, query, tsDisjoint, tsStart, tsEnd; static uint groupsNow = Groups;
+    static FEnd fBegin, fEnd; static FGetData fGetData; static FDispatch fDispatch; static FUpdate fUpdate;
     static FSetShader fSetShader; static FSetUavs fSetUavs; static FSetViews fSetSrvs, fSetCbs;
     static Stopwatch clock = Stopwatch.StartNew();
     static double lastProgress = -1, totalSecs, doneSecs;
@@ -222,25 +226,47 @@ void main(uint3 id : SV_DispatchThreadID)
         Marshal.FreeHGlobal(p);
     }
 
-    // Submits `batch` dispatches and waits for the GPU; returns wall seconds.
+    // Polls an async object until its data is there (S_OK); GetData with flags 0 also flushes the command buffer.
+    static void Wait(IntPtr obj, IntPtr data, uint size)
+    {
+        while (true)
+        {
+            int hr = fGetData(ctx, obj, data, size, 0);
+            if (hr == 0) return;
+            if (hr < 0) throw new Exception("GPU device lost (0x" + hr.ToString("X8") + ")");
+            Thread.Sleep(0);
+        }
+    }
+
+    // Submits `batch` dispatches, waits for the GPU and returns the seconds the GPU spent on them. GPU timestamps, not
+    // the wall clock: some drivers finish the wait only on the next Windows timer tick (15.6 ms), which made every
+    // batch look up to that much longer - the score of those GPUs came out 15-40 % too low. Wall clock only when the
+    // timestamps are unusable (disjoint, e.g. a clock change in between).
     static double RunBatch(int batch)
     {
         double t0 = clock.Elapsed.TotalSeconds;
+        fBegin(ctx, tsDisjoint);
+        fEnd(ctx, tsStart);
         for (int i = 0; i < batch; i++) fDispatch(ctx, groupsNow, 1, 1);
+        fEnd(ctx, tsEnd);
+        fEnd(ctx, tsDisjoint);
         fEnd(ctx, query);
-        IntPtr flag = Marshal.AllocHGlobal(4);
+        IntPtr buf = Marshal.AllocHGlobal(16);
         try
         {
-            while (true)
-            {
-                int hr = fGetData(ctx, query, flag, 4, 0);
-                if (hr == 0) break;
-                if (hr < 0) throw new Exception("GPU device lost (0x" + hr.ToString("X8") + ")");
-                Thread.Sleep(0);
-            }
+            Wait(query, buf, 4);
+            double wall = clock.Elapsed.TotalSeconds - t0;
+            Wait(tsDisjoint, buf, 16);
+            long freq = Marshal.ReadInt64(buf, 0);
+            bool disjoint = Marshal.ReadInt32(buf, 8) != 0;
+            Wait(tsStart, buf, 8);
+            long a = Marshal.ReadInt64(buf, 0);
+            Wait(tsEnd, buf, 8);
+            long b = Marshal.ReadInt64(buf, 0);
+            if (disjoint || freq <= 0 || b <= a) return wall;
+            return Math.Min(wall, (double)(b - a) / freq);
         }
-        finally { Marshal.FreeHGlobal(flag); }
-        return clock.Elapsed.TotalSeconds - t0;
+        finally { Marshal.FreeHGlobal(buf); }
     }
 
     static void Progress(string phase, double inPhase)
@@ -341,13 +367,15 @@ void main(uint3 id : SV_DispatchThreadID)
             else if (args[i] == "--fault") fault = true;
         }
         if (seconds < 2) seconds = 2;
+        timeBeginPeriod(1);                                  // shorter waits for the GPU between batches
 
-        // ---- pick the adapter with the most dedicated video memory (the discrete GPU), never WARP
+        // ---- pick the adapter with the most dedicated video memory (the discrete GPU over an integrated one, which has
+        // little or none), never a software (WARP / Basic Render) or remote adapter
         Guid iidFactory = new Guid("770aae78-f26f-4dba-a829-253c83d1b387");
         IntPtr factory;
         Check(CreateDXGIFactory1(ref iidFactory, out factory), "CreateDXGIFactory1");
         IntPtr desc = Marshal.AllocHGlobal(512);
-        IntPtr best = IntPtr.Zero; string bestName = ""; long bestMem = -1; int idx = 0;
+        IntPtr best = IntPtr.Zero; string bestName = ""; long bestMem = -1; int idx = 0; uint bestVendor = 0;
         for (uint i = 0; ; i++)
         {
             IntPtr ad;
@@ -355,11 +383,13 @@ void main(uint3 id : SV_DispatchThreadID)
             Slot<FGetDesc1>(ad, 10)(ad, desc);
             string name = Marshal.PtrToStringUni(desc, 128);
             int z = name.IndexOf('\0'); if (z >= 0) name = name.Substring(0, z);
+            uint vendor = (uint)Marshal.ReadInt32(desc, 256);
             long mem = Marshal.ReadInt64(desc, 272);
             uint flags = (uint)Marshal.ReadInt32(desc, 304);
-            if (list) Json("{\"adapter\":" + i + ",\"name\":\"" + Esc(name) + "\",\"vram_mb\":" + (mem >> 20) + ",\"software\":" + ((flags & 2) != 0 ? "true" : "false") + "}");
-            bool pick = (want >= 0) ? (i == want) : ((flags & 2) == 0 && mem > bestMem);
-            if (pick) { Release(best); best = ad; bestName = name; bestMem = mem; idx = (int)i; }
+            bool soft = (flags & 3) != 0 || vendor == 0x1414;   // DXGI_ADAPTER_FLAG_REMOTE | _SOFTWARE, Microsoft
+            if (list) Json("{\"adapter\":" + i + ",\"name\":\"" + Esc(name) + "\",\"vendor\":" + vendor + ",\"vram_mb\":" + (mem >> 20) + ",\"software\":" + (soft ? "true" : "false") + "}");
+            bool pick = (want >= 0) ? (i == want) : (!soft && mem > bestMem);
+            if (pick) { Release(best); best = ad; bestName = name; bestMem = mem; idx = (int)i; bestVendor = vendor; }
             else Release(ad);
         }
         Release(factory);
@@ -369,11 +399,16 @@ void main(uint3 id : SV_DispatchThreadID)
         uint level;
         Check(D3D11CreateDevice(best, 0, IntPtr.Zero, 0, IntPtr.Zero, 0, 7, out dev, out level, out ctx), "D3D11CreateDevice");
         if (level < 0xB000) throw new Exception("Direct3D feature level 11_0 is required");
-        fEnd = Slot<FEnd>(ctx, 28); fGetData = Slot<FGetData>(ctx, 29); fDispatch = Slot<FDispatch>(ctx, 41);
+        fBegin = Slot<FEnd>(ctx, 27); fEnd = Slot<FEnd>(ctx, 28); fGetData = Slot<FGetData>(ctx, 29); fDispatch = Slot<FDispatch>(ctx, 41);
         fUpdate = Slot<FUpdate>(ctx, 48); fSetShader = Slot<FSetShader>(ctx, 69); fSetUavs = Slot<FSetUavs>(ctx, 68);
         fSetSrvs = Slot<FSetViews>(ctx, 67); fSetCbs = Slot<FSetViews>(ctx, 71);
         QueryDesc qd = new QueryDesc(); qd.Query = 0;        // D3D11_QUERY_EVENT
         Check(Slot<FCreateQuery>(dev, 24)(dev, ref qd, out query), "CreateQuery");
+        qd.Query = 3;                                        // D3D11_QUERY_TIMESTAMP_DISJOINT
+        Check(Slot<FCreateQuery>(dev, 24)(dev, ref qd, out tsDisjoint), "CreateQuery(disjoint)");
+        qd.Query = 2;                                        // D3D11_QUERY_TIMESTAMP
+        Check(Slot<FCreateQuery>(dev, 24)(dev, ref qd, out tsStart), "CreateQuery(timestamp)");
+        Check(Slot<FCreateQuery>(dev, 24)(dev, ref qd, out tsEnd), "CreateQuery(timestamp)");
 
         IntPtr cb = MakeBuffer(48, 4, 0, 0);
         if (stress) return Stress(cb, fault);
@@ -407,7 +442,7 @@ void main(uint3 id : SV_DispatchThreadID)
         long bytes = Math.Min(256L << 20, Math.Max(32L << 20, bestMem / 8));
         uint elems = Groups * 256 * 4;                           // power of two, >= 64 MB
         while ((long)elems * 32 <= bytes) elems *= 2;
-        groupsNow = elems / 1024;                            // one pass: every thread moves 4 consecutive float4
+        groupsNow = elems / 1024;                            // one pass: every group moves 1024 float4
         IntPtr src = MakeBuffer(elems * 16, 0x88, 0x40, 16);
         IntPtr dst = MakeBuffer(elems * 16, 0x88, 0x40, 16);
         IntPtr srcSrv = MakeSrv(src, elems), dstUav = MakeUav(dst, elems);
@@ -416,11 +451,9 @@ void main(uint3 id : SV_DispatchThreadID)
         fSetUavs(ctx, 0, 1, new IntPtr[] { IntPtr.Zero }, IntPtr.Zero);
         fSetSrvs(ctx, 0, 1, new IntPtr[] { srcSrv });
         fSetUavs(ctx, 0, 1, new IntPtr[] { dstUav }, IntPtr.Zero);
-        const uint reps = 8;
-        SetConstants(cb, new uint[] { elems, groupsNow * 256, reps, 0 }, fc);
-        double bw = Measure("bandwidth", bwSecs, 2.0 * elems * 16 * reps);
+        double bw = Measure("bandwidth", bwSecs, 2.0 * elems * 16);
 
-        Json("{\"result\":{\"adapter\":\"" + Esc(bestName) + "\",\"adapter_index\":" + idx + ",\"vram_mb\":" + (bestMem >> 20) +
+        Json("{\"result\":{\"adapter\":\"" + Esc(bestName) + "\",\"adapter_index\":" + idx + ",\"vendor\":" + bestVendor + ",\"vram_mb\":" + (bestMem >> 20) +
              ",\"gflops\":" + Num(flops / 1e9) + ",\"bandwidth_gbs\":" + Num(bw / 1e9) + ",\"seconds\":" + Num(seconds) + "}}");
         return 0;
     }

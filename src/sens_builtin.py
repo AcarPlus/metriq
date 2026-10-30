@@ -5,6 +5,7 @@
     RAM                                          GlobalMemoryStatusEx
     NVIDIA GPU temperature, clock, load, power,  NVML (nvml.dll comes with the NVIDIA driver)
     fan, VRAM
+    AMD GPU temperatures, clocks, power, fan     ADL (atiadlxx.dll comes with the AMD driver), Overdrive 8 cards
     other GPUs: load, VRAM                       PDH "GPU Engine" / "GPU Adapter Memory" + DXGI adapter names
 
 Readings use the names HWiNFO uses ("CPU [#0]: ...", "Total CPU Usage", "GPU Temperature" ...), so a layout made
@@ -22,6 +23,7 @@ from i18n import t
 
 FORCE_NO_NVML = bool(os.environ.get("METRIQ_NO_NVML"))      # testing: exercise the non-NVIDIA GPU path
 FORCE_NO_PDH = bool(os.environ.get("METRIQ_NO_PDH"))        # testing: exercise the psutil fallback
+FORCE_NO_ADL = bool(os.environ.get("METRIQ_NO_ADL"))        # do not load the AMD driver library
 MB = 1048576.0
 
 
@@ -299,6 +301,110 @@ class Nvml:
             f()
 
 
+# ================================================================== ADL (AMD)
+class _AdapterInfo(ctypes.Structure):
+    _fields_ = [("iSize", ctypes.c_int), ("iAdapterIndex", ctypes.c_int), ("strUDID", ctypes.c_char * 256),
+                ("iBusNumber", ctypes.c_int), ("iDeviceNumber", ctypes.c_int), ("iFunctionNumber", ctypes.c_int),
+                ("iVendorID", ctypes.c_int), ("strAdapterName", ctypes.c_char * 256),
+                ("strDisplayName", ctypes.c_char * 256), ("iPresent", ctypes.c_int), ("iExist", ctypes.c_int),
+                ("strDriverPath", ctypes.c_char * 256), ("strDriverPathExt", ctypes.c_char * 256),
+                ("strPNPString", ctypes.c_char * 256), ("iOSDisplayIndex", ctypes.c_int)]
+
+
+class Adl:
+    """AMD GPUs through ADL (atiadlxx.dll comes with the AMD driver), Overdrive 8 PM log: no admin rights needed.
+    Readings get the names HWiNFO uses for AMD cards."""
+    # ADL_PMLOG_* sensor index -> (type, label, unit, scale, plausible max)
+    SENSORS = ((8, 1, "GPU Temperature", "°C", 1, 150), (27, 1, "GPU Hot Spot Temperature", "°C", 1, 150),
+               (9, 1, "GPU Memory Junction Temperature", "°C", 1, 150), (1, 6, "GPU Clock", "MHz", 1, 10000),
+               (2, 6, "GPU Memory Clock", "MHz", 1, 10000), (23, 5, "GPU ASIC Power", "W", 1, 1500),
+               (21, 2, "GPU Core Voltage (VDDC)", "V", 0.001, 3), (14, 3, "GPU Fan1", "RPM", 1, 10000),
+               (15, 7, "GPU Fan1 Speed", "%", 1, 100), (19, 7, "GPU Core Load", "%", 1, 100))
+    MAX_SENSORS = 256
+
+    def __init__(self):
+        path = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "atiadlxx.dll")
+        if not os.path.isfile(path):
+            raise OSError("atiadlxx.dll not found")
+        self.dll = d = ctypes.WinDLL(path)
+        crt = ctypes.CDLL("msvcrt")
+        crt.malloc.restype = ctypes.c_void_p
+        crt.malloc.argtypes = [ctypes.c_size_t]
+        self._alloc = ctypes.WINFUNCTYPE(ctypes.c_void_p, ctypes.c_int)(lambda n: crt.malloc(max(1, n)))
+        for fn in ("ADL2_Main_Control_Create", "ADL2_Main_Control_Destroy", "ADL2_Adapter_NumberOfAdapters_Get",
+                   "ADL2_Adapter_AdapterInfo_Get", "ADL2_Overdrive_Caps", "ADL2_New_QueryPMLogData_Get"):
+            if not hasattr(d, fn):
+                raise OSError("ADL without %s" % fn)
+            getattr(d, fn).restype = ctypes.c_int
+        d.ADL2_Main_Control_Create.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)]
+        d.ADL2_Main_Control_Destroy.argtypes = [ctypes.c_void_p]
+        d.ADL2_Adapter_NumberOfAdapters_Get.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
+        d.ADL2_Adapter_AdapterInfo_Get.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
+        d.ADL2_Overdrive_Caps.argtypes = [ctypes.c_void_p, ctypes.c_int] + [ctypes.POINTER(ctypes.c_int)] * 3
+        d.ADL2_New_QueryPMLogData_Get.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+        self.ctx = ctypes.c_void_p()
+        rc = d.ADL2_Main_Control_Create(ctypes.cast(self._alloc, ctypes.c_void_p), 1, ctypes.byref(self.ctx))
+        if rc != 0:
+            raise OSError("ADL init error %d" % rc)
+        self.buf = (ctypes.c_int * (1 + 2 * self.MAX_SENSORS))()      # ADLPMLogDataOutput: size + (supported, value)
+        self.devs = []
+        try:
+            n = ctypes.c_int(0)
+            if d.ADL2_Adapter_NumberOfAdapters_Get(self.ctx, ctypes.byref(n)) != 0 or not 0 < n.value <= 64:
+                raise OSError("no AMD GPU")
+            infos = (_AdapterInfo * n.value)()
+            if d.ADL2_Adapter_AdapterInfo_Get(self.ctx, infos, ctypes.sizeof(infos)) != 0:
+                raise OSError("ADL adapter info failed")
+            seen = set()
+            for a in infos:
+                if a.iVendorID not in (1002, 0x1002):
+                    continue
+                key = (a.iBusNumber, a.iDeviceNumber, a.iFunctionNumber)    # one entry per display output: keep one
+                if key in seen:
+                    continue
+                sup, en, ver = ctypes.c_int(0), ctypes.c_int(0), ctypes.c_int(0)
+                if d.ADL2_Overdrive_Caps(self.ctx, a.iAdapterIndex, ctypes.byref(sup), ctypes.byref(en),
+                                         ctypes.byref(ver)) != 0 or ver.value < 8:
+                    continue
+                if not self._query(a.iAdapterIndex):
+                    continue
+                seen.add(key)
+                name = a.strAdapterName.decode("mbcs", "replace").strip() or "AMD GPU"
+                self.devs.append((a.iAdapterIndex, name))
+            if not self.devs:
+                raise OSError("no AMD GPU with Overdrive 8 sensors")
+        except Exception:
+            self.close()
+            raise
+
+    def _query(self, idx):
+        ctypes.memset(self.buf, 0, ctypes.sizeof(self.buf))
+        self.buf[0] = ctypes.sizeof(self.buf)
+        return self.dll.ADL2_New_QueryPMLogData_Get(self.ctx, idx, self.buf) == 0
+
+    def read(self, add, sensor_of, have_load=lambda name: False):
+        """sensor_of(name) -> sensor name to put the readings under (so they join the DXGI / PDH rows)."""
+        for idx, name in self.devs:
+            if not self._query(idx):
+                continue
+            s = sensor_of(name)
+            for i, rtype, label, unit, scale, vmax in self.SENSORS:
+                if label == "GPU Core Load" and have_load(name):
+                    continue
+                if self.buf[1 + 2 * i]:                                   # supported
+                    v = self.buf[2 + 2 * i] * scale
+                    if 0 <= v <= vmax:
+                        add(rtype, s, label, unit, v)
+
+    def close(self):
+        if self.ctx:
+            try:
+                self.dll.ADL2_Main_Control_Destroy(self.ctx)
+            except Exception:
+                pass
+            self.ctx = ctypes.c_void_p()
+
+
 # ================================================================== the source
 _LUID_RE = re.compile(r"luid_(0x[0-9a-f]+_0x[0-9a-f]+)", re.I)
 _ENG_RE = re.compile(r"luid_(0x[0-9a-f]+_0x[0-9a-f]+)_phys_(\d+)_eng_(\d+)", re.I)
@@ -311,7 +417,7 @@ class BuiltinSource:
         self.notes = []                       # (i18n key, kwargs): data that is not available and why
         self.cpu = f"CPU [#0]: {cpu_name()}"
         self.cores = core_map()
-        self.pdh = self.ps = self.nvml = None
+        self.pdh = self.ps = self.nvml = self.adl = None
         self.pdh_err = ""
         self.totals = {}                      # network instance -> [down bytes, up bytes]
         self.last = None
@@ -323,7 +429,12 @@ class BuiltinSource:
             except Exception as ex:
                 if any(a["vendor"] == 0x10DE for a in self.adapters):
                     self.notes.append(("na_nvml", {"err": str(ex)}))
-        if not self.nvml:
+        if not self.nvml and not FORCE_NO_ADL and any(a["vendor"] == 0x1002 for a in self.adapters):
+            try:
+                self.adl = Adl()
+            except Exception as ex:
+                self.notes.append(("na_adl", {"err": str(ex)}))
+        if not self.nvml and not self.adl:
             self.notes.append(("na_gpu_other", {}))
         try:
             if FORCE_NO_PDH:
@@ -441,6 +552,8 @@ class BuiltinSource:
             self.nvml.read(add)
             return
         if not self.pdh or ("geng" not in self.pdh.c and "gded" not in self.pdh.c):
+            if self.adl:
+                self._adl(add, {})
             return
         load = {}
         for inst, v in self.pdh.array("geng").items():
@@ -470,6 +583,22 @@ class BuiltinSource:
                 if a["vram_mb"] > 0:
                     add(8, s, "GPU Memory Allocated", "MB", used)
                     add(8, s, "GPU Memory Available", "MB", max(0.0, a["vram_mb"] - used))
+        if self.adl:
+            self._adl(add, per)
+
+    def _adl(self, add, per):
+        """AMD sensors under the same "GPU [#n]: name" as the load / VRAM rows of that card (matched by name)."""
+        names = {a["luid"].upper(): a for a in self.adapters}
+
+        def luid_of(name):
+            return next((lu for lu, a in names.items() if a["name"].lower() == name.lower()), None)
+
+        def sensor_of(name):
+            lu = luid_of(name)
+            if lu and lu not in self.gpu_order:
+                self.gpu_order.append(lu)
+            return f"GPU [#{self.gpu_order.index(lu)}]: {names[lu]['name']}" if lu else f"GPU: {name}"
+        self.adl.read(add, sensor_of, lambda name: luid_of(name) in per)
 
     # -------------------------------------------------------------- network / disk
     def _net_disk(self, add, dt):
@@ -526,3 +655,5 @@ class BuiltinSource:
                 self.nvml.close()
             except Exception:
                 pass
+        if self.adl:
+            self.adl.close()

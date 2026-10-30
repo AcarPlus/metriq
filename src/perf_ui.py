@@ -6,6 +6,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
+import config
 import gfx
 import helptexts
 import i18n
@@ -46,16 +47,18 @@ i18n.register({
         "pf_confirm_title": "Start benchmark?",
         "pf_confirm": "{tests} ({mode}) will put your PC under full load for about {secs}. Fans will get loud, "
                       "temperatures rise. On a laptop, plug in the charger.\n\nStart now?",
-        "pf_ssd_free": "Free space on the temp drive: {gb:.0f} GB. The test writes a {size:g} GB temporary file "
+        "pf_ssd_free": "Free space on {drive}: {gb:.0f} GB. The test writes a {size:g} GB temporary file "
                        "(deleted afterwards).",
-        "pf_ssd_low": "Only {gb:.1f} GB free on the temp drive: the SSD test will be skipped (needs {need} GB).",
+        "pf_ssd_low": "Only {gb:.1f} GB free on {drive}: the SSD test will be skipped (needs {need} GB).",
+        "pf_ssd_drive": "Drive", "pf_ssd_auto": "{drive} · Temp folder",
+        "pf_ssd_hdd": "This drive is a hard disk (HDD) or behind a slow bus: about 100-250 MB/s is normal there.",
         "pf_cpu_t": "CPU", "pf_ram_t": "Memory", "pf_ssd_t": "SSD", "pf_gpu_t": "Graphics card",
         "pf_cpu_d": "Integer and floating-point kernels, first on one thread, then on all threads. Detailed adds "
                     "repeated runs (median) and a 90 s sustained-load section.",
         "pf_ram_d": "Read, write and copy bandwidth with large buffers plus random-access latency. Detailed adds "
                     "repeated runs and a bandwidth curve over block sizes (cache to DRAM).",
-        "pf_ssd_d": "Sequential and random 4K read/write on a temporary file, cache bypassed. Detailed uses a larger "
-                    "file, repeated runs and queue depths 4 to 32.",
+        "pf_ssd_d": "Sequential 1 MB read/write with 8 requests in flight and random 4K read/write on a temporary "
+                    "file, cache bypassed. Detailed uses a larger file, repeated runs and more queue depths.",
         "pf_gpu_d": "Direct3D 11 compute shader: shader throughput and video memory bandwidth. Detailed runs three "
                     "times in a row and shows how clock and temperature hold up.",
         "hp_bench_cpu": "Runs integer and floating-point loops in separate processes: one process for the "
@@ -68,7 +71,8 @@ i18n.register({
                         "nanosecond figure). Records the DIMM temperatures (SPD hub), memory clock and CPU package "
                         "power. Detailed mode also measures bandwidth for small and large blocks, which shows the "
                         "cache levels and where main memory begins.",
-        "hp_bench_ssd": "Uses a temporary file in your Temp folder, written with caching disabled so the drive "
+        "hp_bench_ssd": "Uses a temporary file in your Temp folder (or on the drive picked below), written with "
+                        "caching disabled so the drive "
                         "itself is measured. Needs at least 4 GB free; the file is deleted afterwards. Records the "
                         "drive temperature and the peak read / write rate. Detailed mode uses a larger file and "
                         "also tests several queue depths.",
@@ -93,6 +97,7 @@ i18n.register({
         "pf_m_rnd_read": "4K random read", "pf_m_rnd_write": "4K random write",
         "pf_m_gflops": "Shader math", "pf_m_bandwidth": "Memory bandwidth",
         "pf_x_seq_read_q8": "Sequential read, queue depth 8", "pf_x_seq_write_q8": "Sequential write, queue depth 8",
+        "pf_x_seq_read_q1": "Sequential read, queue depth 1", "pf_x_seq_write_q1": "Sequential write, queue depth 1",
         "pf_x_rnd_read_q4": "4K random read, queue depth 4", "pf_x_rnd_read_q32": "4K random read, queue depth 32",
         "pf_pm": "±{v:.1f} %",
         "pf_temp": "max {v:.0f} °C", "pf_clock": "avg {v:.0f} MHz", "pf_power": "avg {v:.0f} W / max {m:.0f} W",
@@ -140,16 +145,19 @@ i18n.register({
         "pf_confirm_title": "Test başlatılsın mı?",
         "pf_confirm": "{tests} ({mode}), bilgisayarını yaklaşık {secs} tam yük altında çalıştıracak. Fanlar gürültülü "
                       "olur, sıcaklıklar yükselir. Dizüstü bilgisayarda şarj cihazını tak.\n\nŞimdi başlansın mı?",
-        "pf_ssd_free": "Geçici disk (Temp) üzerinde boş alan: {gb:.0f} GB. Test {size:g} GB'lık geçici bir dosya "
+        "pf_ssd_free": "{drive} üzerinde boş alan: {gb:.0f} GB. Test {size:g} GB'lık geçici bir dosya "
                        "yazar (sonra silinir).",
-        "pf_ssd_low": "Temp diskinde yalnızca {gb:.1f} GB boş alan var: SSD testi atlanacak (en az {need} GB gerekir).",
+        "pf_ssd_low": "{drive} üzerinde yalnızca {gb:.1f} GB boş alan var: SSD testi atlanacak (en az {need} GB "
+                      "gerekir).",
+        "pf_ssd_drive": "Sürücü", "pf_ssd_auto": "{drive} · Temp klasörü",
+        "pf_ssd_hdd": "Bu sürücü sabit disk (HDD) ya da yavaş bir veri yolunda: orada 100-250 MB/s normaldir.",
         "pf_cpu_t": "İşlemci", "pf_ram_t": "Bellek", "pf_ssd_t": "SSD", "pf_gpu_t": "Ekran kartı",
         "pf_cpu_d": "Tam sayı ve kayan noktalı çekirdekler; önce tek iş parçacığı, sonra tümü. Detaylı mod tekrarlı "
                     "çalıştırma (medyan) ve 90 sn'lik sürekli yük bölümü ekler.",
         "pf_ram_d": "Büyük arabelleklerle okuma, yazma ve kopyalama hızı, ayrıca rastgele erişim gecikmesi. Detaylı "
                     "mod tekrarlı çalıştırma ve blok boyutuna göre bant genişliği eğrisi (önbellekten DRAM'e) ekler.",
-        "pf_ssd_d": "Geçici dosyada sıralı ve rastgele 4K okuma/yazma, önbellek devre dışı. Detaylı mod daha büyük "
-                    "dosya, tekrarlı çalıştırma ve 4-32 kuyruk derinliği kullanır.",
+        "pf_ssd_d": "Geçici dosyada 8 istek kuyrukta 1 MB sıralı ve 4K rastgele okuma/yazma, önbellek devre dışı. "
+                    "Detaylı mod daha büyük dosya, tekrarlı çalıştırma ve daha fazla kuyruk derinliği kullanır.",
         "pf_gpu_d": "Direct3D 11 compute shader: gölgelendirici işlem gücü ve video belleği bant genişliği. Detaylı "
                     "mod üç kez art arda çalışır ve saat hızı ile sıcaklığın nasıl tuttuğunu gösterir.",
         "hp_bench_cpu": "Tam sayı ve kayan noktalı döngüleri ayrı süreçlerde çalıştırır: tek iş parçacığı puanı için "
@@ -162,7 +170,8 @@ i18n.register({
                         "değeri değil, tahmindir). DIMM sıcaklıklarını (SPD hub), bellek saatini ve CPU paket gücünü "
                         "kaydeder. Detaylı mod küçük ve büyük bloklarla da bant genişliği ölçer; bu, önbellek "
                         "katmanlarını ve ana belleğin nerede başladığını gösterir.",
-        "hp_bench_ssd": "Temp klasöründe geçici bir dosya kullanır; sürücünün kendisi ölçülsün diye önbellek "
+        "hp_bench_ssd": "Temp klasöründe (ya da aşağıda seçilen sürücüde) geçici bir dosya kullanır; sürücünün "
+                        "kendisi ölçülsün diye önbellek "
                         "kapalı yazılır. En az 4 GB boş alan gerekir; dosya sonra silinir. Sürücü sıcaklığını ve "
                         "en yüksek okuma / yazma hızını kaydeder. Detaylı mod daha büyük dosya kullanır ve birkaç "
                         "kuyruk derinliğini de dener.",
@@ -189,6 +198,7 @@ i18n.register({
         "pf_m_rnd_read": "4K rastgele okuma", "pf_m_rnd_write": "4K rastgele yazma",
         "pf_m_gflops": "Gölgelendirici matematiği", "pf_m_bandwidth": "Bellek bant genişliği",
         "pf_x_seq_read_q8": "Sıralı okuma, kuyruk derinliği 8", "pf_x_seq_write_q8": "Sıralı yazma, kuyruk derinliği 8",
+        "pf_x_seq_read_q1": "Sıralı okuma, kuyruk derinliği 1", "pf_x_seq_write_q1": "Sıralı yazma, kuyruk derinliği 1",
         "pf_x_rnd_read_q4": "4K rastgele okuma, kuyruk derinliği 4",
         "pf_x_rnd_read_q32": "4K rastgele okuma, kuyruk derinliği 32",
         "pf_pm": "±{v:.1f} %",
@@ -398,11 +408,36 @@ class PerfTab:
         lb = getattr(self, "ssd_note", None)
         if lb is None:
             return
-        free = pc.free_space_gb()
+        d = pc.ssd_tmp_dir(self.sw.api.cfg.get("bench_ssd_drive", "auto"))
+        free = pc.free_space_gb(d)
+        drive = os.path.splitdrive(d)[0] or d
         if free < pc.MIN_FREE_GB:
-            lb.config(text=t("pf_ssd_low", gb=free, need=pc.MIN_FREE_GB), fg=self.C["orange"])
+            lb.config(text=t("pf_ssd_low", gb=free, need=pc.MIN_FREE_GB, drive=drive), fg=self.C["orange"])
         else:
-            lb.config(text=t("pf_ssd_free", gb=free, size=pc.ssd_file_gb(self.mode, free)), fg=self.C["dim"])
+            lb.config(text=t("pf_ssd_free", gb=free, size=pc.ssd_file_gb(self.mode, free), drive=drive),
+                      fg=self.C["dim"])
+
+    def _ssd_picker(self, parent, bg):
+        """Drive the SSD test runs on: the Temp folder's drive (default) or another local fixed drive."""
+        tmp_drive = os.path.splitdrive(pc.ssd_tmp_dir())[0]
+        drives = [d for d in pc.fixed_drives() if d.upper() != tmp_drive.upper()]
+        if not drives:
+            return
+        keys = ["auto"] + drives
+        names = [t("pf_ssd_auto", drive=pc.drive_label(tmp_drive))] + [pc.drive_label(d) for d in drives]
+        cur = str(self.sw.api.cfg.get("bench_ssd_drive", "auto")).upper()
+        idx = next((i for i, k in enumerate(keys) if k.upper() == cur), 0)
+        row = tk.Frame(parent, bg=bg)
+        self.sw.label(row, t("pf_ssd_drive"), size=9, bg=bg).pack(side="left", padx=(0, 8))
+        cb = self.sw.combo(row, names, idx, width=min(44, max(len(n) for n in names) + 2))
+        cb.pack(side="left")
+
+        def picked(e=None):
+            self.sw.api.cfg["bench_ssd_drive"] = keys[max(0, cb.current())]
+            config.save_keys(self.sw.api.cfg, "bench_ssd_drive")
+            self._ssd_note()
+        cb.bind("<<ComboboxSelected>>", picked)
+        return row
 
     def _test_card(self, test):
         sw, C, p = self.sw, self.C, self.p
@@ -431,6 +466,9 @@ class PerfTab:
             uikit.autowrap(nl)
             sw.full(card, nl, pady=(0, 6), divider=False)
             self.ssd_note = nl
+            pick = self._ssd_picker(card.body, bg)
+            if pick is not None:
+                sw.full(card, pick, pady=(0, 6), divider=False)
         row = tk.Frame(card.body, bg=bg)
         sw.full(card, row, pady=(0, 4), divider=False)
         b = sw.button(row, t("pf_start"), lambda tt=test: self.run([tt]), bg=bg)
@@ -664,6 +702,8 @@ class PerfTab:
             extra = t("pf_scaling", v=res["scaling"], n=res.get("threads", "?"))
         if test == "gpu" and res.get("adapter"):
             extra = res["adapter"]
+        if test == "ssd" and (res.get("drive_label") or res.get("drive")):
+            extra = res.get("drive_label") or res["drive"]
         if extra:
             sw.label(c["res"], extra, dim=True, size=9, bg=bg).pack(anchor="w")
         m = Metrics(c["res"], sw, bg, acc)
@@ -684,6 +724,11 @@ class PerfTab:
             lb = sw.label(c["res"], "(!) cache", size=9, bg=bg)
             lb.config(fg=self.C["orange"])
             lb.pack(anchor="w")
+        if test == "ssd" and (res.get("hdd") or res.get("bus") in ("USB", "SD", "MMC")):
+            lb = sw.label(c["res"], t("pf_ssd_hdd"), size=9, bg=bg)
+            lb.config(fg=self.C["orange"])
+            uikit.autowrap(lb)
+            lb.pack(anchor="w", fill="x")
 
     # ------------------------------------------------------------ running
     def busy(self):
@@ -726,7 +771,7 @@ class PerfTab:
 
     def start_job(self, tests, mode, stress=None):
         """Start the benchmark process (never blocks: the process is spawned from a helper thread)."""
-        cfg = {k: self.sw.api.cfg.get(k) for k in ("backend", "lhm_url")}
+        cfg = {k: self.sw.api.cfg.get(k) for k in ("backend", "lhm_url", "bench_ssd_drive")}
         self.job_kind = "stress" if mode == "stress" else "bench"
         self.job = pc.BenchJob(tests, mode, cfg, stress)
         self._set_busy(True)
