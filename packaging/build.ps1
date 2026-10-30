@@ -54,6 +54,10 @@ if ($LASTEXITCODE -ne 0) { throw 'pip install pyinstaller failed' }
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'gpu\build.ps1')
 if ($LASTEXITCODE -ne 0) { throw 'GPU helper build failed' }
 
+# fan control service (C#, LibreHardwareMonitorLib from NuGet) -> fan\build\service\, installed by the Setup to {app}\fan
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'fan\build.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Fan service build failed' }
+
 if (Test-Path -LiteralPath (Join-Path $root 'dist\metriQ')) { Remove-Item -LiteralPath (Join-Path $root 'dist\metriQ') -Recurse -Force }
 & $vpy -m PyInstaller --noconfirm --clean --distpath (Join-Path $root 'dist') --workpath (Join-Path $root 'build\pyinstaller') (Join-Path $PSScriptRoot 'metriq.spec')
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed' }

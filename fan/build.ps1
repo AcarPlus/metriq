@@ -1,9 +1,11 @@
-# Builds fan\build\probe\FanProbe.exe (read-only fan discovery, LibreHardwareMonitorLib).
-# No .NET SDK needed: downloads NuGet packages, compiles with the .NET Framework csc.exe.
+﻿# Builds the fan control service fan\build\service\FanService.exe (bundled by packaging\metriq.spec), or with
+# -Probe the hardware tools fan\build\probe\FanProbe.exe (read-only discovery) and FanWriteTest.exe.
+# All use LibreHardwareMonitorLib. No .NET SDK needed: downloads NuGet packages, compiles with the .NET Framework csc.exe.
 #
-# Usage:  powershell -ExecutionPolicy Bypass -File fan\build_probe.ps1
+# Usage:  powershell -ExecutionPolicy Bypass -File fan\build.ps1 [-Probe]
 #
 # Everything downloaded/generated goes to fan\build\ (gitignored).
+param([switch]$Probe)
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -16,10 +18,17 @@ $LhmId      = 'LibreHardwareMonitorLib'
 $Csc = 'C:\WINDOWS\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 
 $Here     = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Src      = Join-Path $Here 'probe\FanProbe.cs'
 $BuildDir = Join-Path $Here 'build'
 $PkgDir   = Join-Path $BuildDir 'packages'
-$OutDir   = Join-Path $BuildDir 'probe'
+if ($Probe) {
+    $OutDir  = Join-Path $BuildDir 'probe'
+    $Targets = @('probe\FanProbe.cs', 'probe\FanWriteTest.cs')
+    $FwRefs  = @('System.dll', 'System.Core.dll')
+} else {
+    $OutDir  = Join-Path $BuildDir 'service'
+    $Targets = @('service\FanService.cs')
+    $FwRefs  = @('System.dll', 'System.Core.dll', 'System.ServiceProcess.dll', 'System.Web.Extensions.dll')
+}
 
 if (-not (Test-Path $Csc)) { throw "csc.exe not found: $Csc" }
 New-Item -ItemType Directory -Force $PkgDir, $OutDir | Out-Null
@@ -135,17 +144,6 @@ foreach ($p in $resolved.Values) {
     }
 }
 
-# ---- compile ---------------------------------------------------------------------------
-$exe = Join-Path $OutDir 'FanProbe.exe'
-$refs = @('System.dll','System.Core.dll') + @($copied | ForEach-Object { $_ })
-$netstd = 'C:\WINDOWS\Microsoft.NET\Framework64\v4.0.30319\netstandard.dll'
-if (Test-Path $netstd) { $refs += $netstd }
-$cscArgs = @('/nologo','/target:exe','/platform:x64','/optimize+','/debug-','/warn:4',"/out:$exe") +
-           ($refs | ForEach-Object { "/reference:$_" }) + @($Src)
-Write-Host "Compiling FanProbe.cs ..."
-& $Csc @cscArgs
-if ($LASTEXITCODE -ne 0) { throw "csc failed with exit code $LASTEXITCODE" }
-
 # ---- app.config with binding redirects (generated from the DLLs actually copied) -------
 $sb = New-Object System.Text.StringBuilder
 [void]$sb.AppendLine('<?xml version="1.0" encoding="utf-8"?>')
@@ -167,9 +165,22 @@ foreach ($dllPath in ($copied | Sort-Object -Unique)) {
 [void]$sb.AppendLine('    </assemblyBinding>')
 [void]$sb.AppendLine('  </runtime>')
 [void]$sb.AppendLine('</configuration>')
-[IO.File]::WriteAllText("$exe.config", $sb.ToString(), (New-Object Text.UTF8Encoding($false)))
+$appConfig = $sb.ToString()
 
-Write-Host ""
-Write-Host "OK: $exe"
-Write-Host "Check (no admin, no hardware access):  $exe --selftest"
-Write-Host "Run   (admin PowerShell):              $exe --out fan\build\fan_probe.json"
+# ---- compile ---------------------------------------------------------------------------
+$fw = 'C:\WINDOWS\Microsoft.NET\Framework64\v4.0.30319'
+$refs = @($FwRefs | ForEach-Object { Join-Path $fw $_ }) + @($copied | ForEach-Object { $_ })
+$netstd = Join-Path $fw 'netstandard.dll'
+if (Test-Path $netstd) { $refs += $netstd }
+foreach ($t in $Targets) {
+    $src = Join-Path $Here $t
+    $exe = Join-Path $OutDir ([IO.Path]::GetFileNameWithoutExtension($t) + '.exe')
+    $cscArgs = @('/nologo','/target:exe','/platform:x64','/optimize+','/debug-','/warn:4',"/out:$exe") +
+               ($refs | ForEach-Object { "/reference:$_" }) + @($src)
+    Write-Host "Compiling $t ..."
+    & $Csc @cscArgs
+    if ($LASTEXITCODE -ne 0) { throw "csc failed with exit code $LASTEXITCODE ($t)" }
+    [IO.File]::WriteAllText("$exe.config", $appConfig, (New-Object Text.UTF8Encoding($false)))
+    Write-Host "OK: $exe"
+}
+Write-Host "Check (no admin, no hardware access):  <exe> --selftest"

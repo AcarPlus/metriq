@@ -50,6 +50,10 @@ en.InstallHwinfoTask=Also install HWiNFO64 (free, recommended: CPU / GPU tempera
 en.InstallingHwinfo=Installing HWiNFO64 (winget)...
 en.HwinfoInstallFailed=HWiNFO64 could not be installed automatically. The download page will open; install it and run this Setup again so the panel can start / stop HWiNFO.
 en.TasksFailed=The scheduled tasks for HWiNFO control could not be created. The panel still works in read-only mode.%n%nDetails: C:\ProgramData\metriQ\install_tasks.log
+en.InstallPawnioTask=Install the PawnIO driver (free, signed: needed for motherboard fan control)
+en.InstallingPawnio=Installing PawnIO (winget)...
+en.PawnioInstallFailed=PawnIO could not be installed automatically. Motherboard fan control needs it; the download page will open. Everything else works without it.
+en.FanServiceFailed=The fan control service could not be installed. Everything else works; fan control will not be available.%n%nDetails: C:\ProgramData\metriQ\fan_install.log
 tr.AutoStart=Windows'ta oturum açtığımda metriQ başlasın
 tr.HwNoticeTitle=HWiNFO ayarları
 tr.HwNoticeSub=metriQ verilerini HWiNFO64'ten okur. Aşağıdaki HWiNFO ayarları değiştirilecek.
@@ -58,14 +62,22 @@ tr.InstallHwinfoTask=HWiNFO64'ü de kur (ücretsiz, önerilir: CPU / GPU sıcakl
 tr.InstallingHwinfo=HWiNFO64 kuruluyor (winget)...
 tr.HwinfoInstallFailed=HWiNFO64 otomatik kurulamadı. İndirme sayfası açılacak; HWiNFO'yu kurup bu kurulumu yeniden çalıştırırsanız panel HWiNFO'yu açıp kapatabilir.
 tr.TasksFailed=HWiNFO denetimi için zamanlanmış görevler oluşturulamadı. Panel yine de salt okunur modda çalışır.%n%nAyrıntı: C:\ProgramData\metriQ\install_tasks.log
+tr.InstallPawnioTask=PawnIO sürücüsünü kur (ücretsiz, imzalı: anakart fan kontrolü için gerekli)
+tr.InstallingPawnio=PawnIO kuruluyor (winget)...
+tr.PawnioInstallFailed=PawnIO otomatik kurulamadı. Anakart fan kontrolü için gerekli; indirme sayfası açılacak. Diğer her şey onsuz da çalışır.
+tr.FanServiceFailed=Fan kontrol hizmeti kurulamadı. Diğer her şey çalışır; yalnızca fan kontrolü kullanılamaz.%n%nAyrıntı: C:\ProgramData\metriQ\fan_install.log
 
 [Tasks]
 Name: "installhwinfo"; Description: "{cm:InstallHwinfoTask}"; Check: HwinfoMissing
+; a kernel driver: opt-in (fan control itself is off until the user turns it on in metriQ)
+Name: "installpawnio"; Description: "{cm:InstallPawnioTask}"; Check: PawnioMissing; Flags: unchecked
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "autostart"; Description: "{cm:AutoStart}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [InstallDelete]
 Type: filesandordirs; Name: "{app}\_internal"
+; fan service files (the service is stopped in PrepareToInstall)
+Type: filesandordirs; Name: "{app}\fan"
 ; shortcuts of the pre-1.2.0 name "HWiNFO Panel" (the old program folder is removed in CurStepChanged)
 Type: files; Name: "{autoprograms}\HWiNFO Panel.lnk"
 Type: filesandordirs; Name: "{autoprograms}\HWiNFO Panel"
@@ -76,11 +88,17 @@ Type: files; Name: "{autodesktop}\HWiNFO Panel.lnk"
 #if !FileExists(SourcePath + "..\dist\metriQ\_internal\GpuBench.exe")
   #error GpuBench.exe missing in dist\metriQ: run packaging\build.ps1 first
 #endif
+#if !FileExists(SourcePath + "..\fan\build\service\FanService.exe")
+  #error FanService.exe missing: run packaging\build.ps1 (or fan\build.ps1) first
+#endif
 Source: "..\dist\metriQ\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; fan control service (LocalSystem): under Program Files, writable by administrators only
+Source: "..\fan\build\service\*"; DestDir: "{app}\fan"; Flags: ignoreversion
 ; what the scheduled tasks run: lives under Program Files (writable by administrators only)
 Source: "..\src\hidden.vbs"; DestDir: "{app}\tasks"; Flags: ignoreversion
 Source: "..\src\set_interval.ps1"; DestDir: "{app}\tasks"; Flags: ignoreversion
 Source: "register_tasks.ps1"; DestDir: "{app}\tasks"; Flags: ignoreversion
+Source: "fan_service.ps1"; DestDir: "{app}\tasks"; Flags: ignoreversion
 Source: "..\docs\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
@@ -94,6 +112,8 @@ Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags
 Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser; Check: IsUpdateRun
 
 [UninstallRun]
+; fan service first: stopping it hands every fan back to BIOS / driver
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\tasks\fan_service.ps1"" -Remove"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveMetriqFan"
 ; removes the scheduled tasks, %ProgramData%\metriQ and the autostart entry; user data in %LOCALAPPDATA% is kept
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\tasks\register_tasks.ps1"" -Remove"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveMetriqTasks"
 
@@ -124,6 +144,22 @@ begin
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im "' + OldAppExe + '"', '', SW_HIDE, ewWaitUntilTerminated, rc);
 end;
 
+// stop the fan service (it hands every fan back to BIOS / driver) so its files can be replaced; waits up to 15 s
+procedure StopFanService();
+var
+  rc, i: Integer;
+begin
+  if not Exec(ExpandConstant('{sys}\sc.exe'), 'query metriQFan', '', SW_HIDE, ewWaitUntilTerminated, rc) or (rc <> 0) then
+    Exit;                                                  // 1060: not installed
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop metriQFan', '', SW_HIDE, ewWaitUntilTerminated, rc);
+  for i := 1 to 30 do
+  begin
+    if Exec(ExpandConstant('{cmd}'), '/c sc.exe query metriQFan | find "STOPPED"', '', SW_HIDE, ewWaitUntilTerminated, rc) and (rc = 0) then
+      Exit;
+    Sleep(500);
+  end;
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   s: String;
@@ -133,6 +169,7 @@ begin
   if RegQueryStringValue(HKLM64, UninstallKey, 'Inno Setup: App Path', s) then
     OldAppDir := RemoveBackslash(s);
   StopPanel();
+  StopFanService();
   Result := '';
 end;
 
@@ -164,7 +201,33 @@ end;
 function InitializeUninstall(): Boolean;
 begin
   StopPanel();
+  StopFanService();
   Result := True;
+end;
+
+function PawnioMissing(): Boolean;
+begin
+  Result := not RegKeyExists(HKLM64, 'SYSTEM\CurrentControlSet\Services\PawnIO');
+end;
+
+function InstallPawnioWinget(): Boolean;
+var
+  winget: String;
+  rc: Integer;
+begin
+  Result := False;
+  winget := ExpandConstant('{localappdata}\Microsoft\WindowsApps\winget.exe');
+  if not FileExists(winget) then
+    winget := 'winget.exe';
+  WizardForm.StatusLabel.Caption := CustomMessage('InstallingPawnio');
+  WizardForm.ProgressGauge.Style := npbstMarquee;
+  try
+    if Exec(winget, 'install --id namazso.PawnIO -e --silent --accept-package-agreements --accept-source-agreements --disable-interactivity',
+            '', SW_HIDE, ewWaitUntilTerminated, rc) then
+      Result := not PawnioMissing();
+  finally
+    WizardForm.ProgressGauge.Style := npbstNormal;
+  end;
 end;
 
 function FindHwinfo(): String;
@@ -301,4 +364,17 @@ begin
   // rc = 3: HWiNFO64.EXE not found -> no tasks; the panel falls back to its built-in data source
   if (rc <> 0) and (rc <> 3) then
     SuppressibleMsgBox(CustomMessage('TasksFailed'), mbError, MB_OK, IDOK);
+
+  if PawnioMissing() and WizardIsTaskSelected('installpawnio') and not InstallPawnioWinget() then
+  begin
+    SuppressibleMsgBox(CustomMessage('PawnioInstallFailed'), mbInformation, MB_OK, IDOK);
+    ShellExec('open', 'https://pawnio.eu/', '', '', SW_SHOWNORMAL, ewNoWait, rc);
+  end;
+  // fan control service: installed always, does nothing until enabled in the settings
+  Params := '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\tasks\fan_service.ps1') + '"' +
+            ' -Install -Exe "' + ExpandConstant('{app}\fan\FanService.exe') + '"';
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Params, '', SW_HIDE, ewWaitUntilTerminated, rc) then
+    rc := 1;
+  if rc <> 0 then
+    SuppressibleMsgBox(CustomMessage('FanServiceFailed'), mbError, MB_OK, IDOK);
 end;
