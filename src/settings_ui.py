@@ -594,7 +594,7 @@ class SettingsWindow:
         self.row(card, t("st_bg_mini"), self.switch(card.body, self.v_bg_mini))
 
         card = self.card(p, t("st_card_display"), "gauge")
-        langs = [("auto", t("st_auto")), ("tr", "Türkçe"), ("en", "English")]
+        langs = [("auto", t("st_auto"))] + i18n.language_names()
         self.lang_vals = [v for v, _ in langs]
         cur = str(cfg.get("language", "auto")).lower()
         self.cb_lang = self.combo(card.body, [n for _, n in langs],

@@ -78,7 +78,7 @@ def total_ram_mb():
 
 
 def _dec(s):
-    return s.replace(".", ",") if i18n.language() == "tr" else s
+    return s.replace(".", ",") if i18n.decimal_comma() else s
 
 
 def fmt_mem(mb):

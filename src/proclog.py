@@ -88,7 +88,7 @@ def fmt_mb(b):
         s = f"{v:.1f}"
     else:
         s = f"{v:,.0f}".replace(",", " ")
-    return s.replace(".", ",") if i18n.language() == "tr" else s
+    return s.replace(".", ",") if i18n.decimal_comma() else s
 
 
 def estimate_text(interval, nbase, top, detail, filt, mon=procmon.MON):

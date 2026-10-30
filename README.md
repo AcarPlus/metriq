@@ -346,12 +346,37 @@ Until signing is in place, releases are unsigned (see the SmartScreen note above
   file with every sensor the data source reports and which panel rows found nothing (no user name, computer name or
   serial numbers); attach it to an issue.
 
+## Translations / Çeviriler
+
+The panel speaks **English, Türkçe, Deutsch, Español, Русский and Português (Brasil)**. *Settings > Appearance > Language*
+picks one; *Automatic* follows the Windows display language (English if metriQ does not have it). A text that has no translation
+yet is shown in English, so a language can be added piece by piece.
+
+**Contributing a translation:** edit only `src/lang/xx.py` (`de`, `es`, `ru`, `pt`):
+
+```python
+NAME = "Deutsch"                                  # the language's own name
+STRINGS = {"st_save": "Speichern", "upd_available": "Update verfügbar: v{v}"}   # keys: tools/i18n_en.json "strings"
+HELP = {"interval": "Wie oft das Panel ..."}      # keys: tools/i18n_en.json "help" (the (i) balloons)
+```
+
+Keep the `{placeholders}` exactly as in the English text (a wrong one makes that text fall back to English), write a
+literal brace as `{{` / `}}`. Then check your file (no GUI is started):
+
+```powershell
+python tools\i18n_export.py --check de     # missing keys, extra keys, placeholder mismatches
+python tools\i18n_export.py                # only after the English texts changed: rewrites tools\i18n_en.json
+```
+
+**Çeviri:** `src/lang/xx.py` dosyasını düzenleyin, `python tools\i18n_export.py --check xx` ile denetleyin;
+çevrilmeyen metinler İngilizce görünür. Türkçe ve İngilizce metinler `src/*.py` içindeki `i18n.register(...)` bloklarındadır.
+
 ## Development
 
 `backend.py` (data source selection), `hwsm.py` (HWiNFO shared memory reader), `sens_lhm.py` (LibreHardwareMonitor),
 `sens_builtin.py` (built-in: PDH, NVML, DXGI), `presentmon.py` (optional FPS),
 `layout.py` (rows, matching, auto-detection), `config.py` (settings, monitors),
-`hwctl.py` (HWiNFO detection and tasks), `i18n.py` (strings), `panel.py` (UI), `settings_ui.py` (settings window),
+`hwctl.py` (HWiNFO detection and tasks), `i18n.py` (strings), `lang/` (translations), `panel.py` (UI), `settings_ui.py` (settings window),
 `winicon.py` (taskbar identity), `version.py`, `packaging/` (PyInstaller spec, Inno Setup script, build script),
 `gfx.py` (anti-aliased icons and cards; needs the optional `pip install pillow`, without it the panel draws plain canvas shapes),
 `src\make_icon.py` (regenerates `metriq.ico`). License: [MIT](LICENSE).

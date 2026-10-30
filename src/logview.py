@@ -153,7 +153,7 @@ _STATE = {"win": None}
 
 # ====================================================================== small helpers
 def _comma():
-    return i18n.language() == "tr"
+    return i18n.decimal_comma()
 
 
 def fnum(v, unit="", decimals=None):
@@ -200,7 +200,7 @@ def rows_text(n):
 
 def fmt_count(n):
     s = f"{n:,}"
-    return s.replace(",", "." if _comma() else ",")
+    return s.replace(",", i18n.thousands_sep())
 
 
 def nice_step(span, target):

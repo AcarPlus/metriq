@@ -21,7 +21,7 @@ INTERVAL_MIN, INTERVAL_MAX = 0.5, 30.0
 
 DEFAULTS = {
     "backend": "auto",               # "auto" | "hwinfo" | "lhm" | "builtin" (sensor data source, see README)
-    "language": "auto",              # "auto" (Windows UI language) | "tr" | "en"
+    "language": "auto",              # "auto" (Windows UI language) | "en" "tr" "de" "es" "ru" "pt"
     "monitor": "auto",               # "auto" | monitor index (see tools/list_monitors.py)
     "window_mode": "maximized",      # "maximized" | "fullscreen" | "window"
     "columns": "auto",               # "auto" | 1..4 (auto: 1 on portrait screens, else 2 or 3 by aspect ratio)

@@ -3,7 +3,7 @@
     helptexts.info_icon(parent, "interval")      # Label with a themed (i) image; hovering explains the setting
     helptexts.text("hdr_min")                    # the text itself (for tooltips on the panel canvas)
 
-Texts live in i18n under "hp_<key>" (Turkish and English); keep them short, friendly and free of jargon.
+Texts live in i18n under "hp_<key>" (English / Turkish) and in src/lang/xx.py HELP["<key>"]; keep them short, friendly and free of jargon.
 """
 import tkinter as tk
 

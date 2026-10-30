@@ -1,4 +1,5 @@
-"""UI strings (English / Turkish). Use ``t("key")``; the language is chosen once with ``set_language``."""
+"""UI strings (English / Turkish in this package, de / es / ru / pt in src/lang/). Use ``t("key")``; the language is
+chosen with ``set_language``; a missing key falls back to English."""
 import ctypes
 
 _STR = {
@@ -388,26 +389,90 @@ _STR = {
 
 _lang = "en"
 
+# Languages: English is the source and the fallback; Turkish lives in _STR (feature modules register their own
+# en / tr dicts); every other language is ONE module src/lang/<code>.py (NAME, STRINGS, HELP), imported lazily
+# when it is selected. STRINGS: {key: text} like the "en" dicts; HELP: {key without "hp_": text} (the (i) balloons).
+LANGS = ("en", "tr", "de", "es", "ru", "pt")
+_EXTRA = ("de", "es", "ru", "pt")
+_NATIVE = {"en": "English", "tr": "Türkçe"}
+_DECIMAL_COMMA = frozenset({"tr", "de", "es", "ru", "pt"})
+_WIN_LANG = {0x09: "en", 0x1F: "tr", 0x07: "de", 0x0A: "es", 0x19: "ru", 0x16: "pt"}   # primary language ids
+_MODS = {}                      # code -> imported src/lang/<code>.py (or None when it is broken / missing)
+
+
+def _mod(code):
+    """The module of an extra language (imported on first use); None for en / tr or when it cannot be imported."""
+    if code not in _EXTRA:
+        return None
+    if code not in _MODS:
+        try:
+            import importlib
+            _MODS[code] = importlib.import_module("lang." + code)
+        except Exception:
+            _MODS[code] = None
+    return _MODS[code]
+
+
+def _ext(code, key):
+    """Text of `key` in an extra language, or None. "hp_<k>" keys come from HELP["<k>"] (or STRINGS["hp_<k>"])."""
+    m = _mod(code)
+    if m is None:
+        return None
+    if key.startswith("hp_"):
+        v = (getattr(m, "HELP", None) or {}).get(key[3:])
+        if v:
+            return v
+    return (getattr(m, "STRINGS", None) or {}).get(key) or None
+
+
+def _find(code, key):
+    """Text of `key` in language `code` (None when that language has none)."""
+    if code in _EXTRA:
+        return _ext(code, key)
+    return _STR.get(code, {}).get(key) or None
+
 
 def windows_language():
-    """'tr' if the Windows display language is Turkish, otherwise 'en'."""
+    """The Windows display language when metriQ has it (en tr de es ru pt), otherwise 'en'."""
     try:
         lid = ctypes.windll.kernel32.GetUserDefaultUILanguage()
-        return "tr" if (lid & 0x3FF) == 0x1F else "en"
+        return _WIN_LANG.get(lid & 0x3FF, "en")
     except Exception:
         return "en"
 
 
 def set_language(code):
-    """code: 'auto' | 'tr' | 'en'. Returns the language actually used."""
+    """code: 'auto' | any of LANGS (also 'pt-BR' style). Unknown codes mean English. Returns the language used."""
     global _lang
-    code = (code or "auto").lower()
-    _lang = windows_language() if code == "auto" else (code if code in _STR else "en")
+    code = str(code or "auto").strip().lower().replace("_", "-").split("-")[0]
+    _lang = windows_language() if code == "auto" else (code if code in LANGS else "en")
+    _mod(_lang)                       # import it now (a broken module just falls back to English)
     return _lang
 
 
 def language():
     return _lang
+
+
+def language_names():
+    """[(code, native name)] of every language, in menu order (for the settings language picker)."""
+    out = []
+    for c in LANGS:
+        m = _mod(c)
+        out.append((c, _NATIVE.get(c) or getattr(m, "NAME", None) or c))
+    return out
+
+
+def decimal_comma():
+    """True when the current language writes decimals with a comma (1,5)."""
+    return _lang in _DECIMAL_COMMA
+
+
+def thousands_sep():
+    """Group separator of the current language (1,234 / 1.234 / 1 234)."""
+    if _lang == "ru":
+        return " "
+    return "." if _lang in _DECIMAL_COMMA else ","
 
 
 def register(strings):
@@ -417,10 +482,25 @@ def register(strings):
 
 
 def every(key):
-    """The text of `key` in all languages (a stored row name may come from the other language)."""
-    return {d[key] for d in _STR.values() if key in d}
+    """The text of `key` in all languages (a stored row name may come from another language)."""
+    out = {d[key] for d in _STR.values() if key in d}
+    for c in _EXTRA:
+        v = _ext(c, key)
+        if v:
+            out.add(v)
+    return out
 
 
 def t(key, **kw):
-    s = _STR.get(_lang, _STR["en"]).get(key) or _STR["en"].get(key) or key
-    return s.format(**kw) if kw else s
+    en = _STR["en"].get(key)
+    s = (_find(_lang, key) if _lang != "en" else None) or en or key
+    if kw:
+        try:
+            return s.format(**kw)
+        except (KeyError, ValueError, IndexError, AttributeError, TypeError):
+            # a translation with a wrong placeholder must never crash the panel: use the English text
+            try:
+                return (en or key).format(**kw)
+            except (KeyError, ValueError, IndexError, AttributeError, TypeError):
+                return en or key
+    return s
