@@ -132,7 +132,7 @@ class _ShellExecuteInfo(ctypes.Structure):
                 ("dwHotKey", wintypes.DWORD), ("hIconOrMonitor", wintypes.HANDLE), ("hProcess", wintypes.HANDLE)]
 
 
-def register_tasks_elevated(hw_exe=None, timeout_s=180):
+def register_tasks_elevated(hw_exe=None, timeout_s=180, hwnd=None):
     """Installs the scheduled tasks after the fact (e.g. HWiNFO was installed after metriQ): runs Setup's
     register_tasks.ps1 elevated (one UAC prompt) and waits for it.
     Returns "ok" | "cancelled" (UAC declined) | "no_hwinfo" | "no_script" | "error"."""
@@ -145,12 +145,15 @@ def register_tasks_elevated(hw_exe=None, timeout_s=180):
     params = f'-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{script}"'
     if user:
         params += f' -User "{user}"'
-    if hw_exe and os.path.isfile(hw_exe):
+    if hw_exe and os.path.isfile(hw_exe) and os.path.basename(hw_exe).upper() == EXE_NAME:
         params += f' -HwinfoPath "{hw_exe}"'
     sei = _ShellExecuteInfo()
     sei.cbSize = ctypes.sizeof(sei)
     sei.fMask = 0x00000040 | 0x00000100              # SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC
     sei.lpVerb, sei.lpFile, sei.lpParameters, sei.nShow = "runas", ps, params, 0
+    sei.hwnd = hwnd
+    ole = ctypes.WinDLL("ole32")
+    ole.CoInitializeEx(None, 0x2 | 0x4)              # COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE (MS docs)
     sh = ctypes.WinDLL("shell32", use_last_error=True)
     sh.ShellExecuteExW.argtypes = [ctypes.POINTER(_ShellExecuteInfo)]
     sh.ShellExecuteExW.restype = wintypes.BOOL
@@ -170,7 +173,7 @@ def register_tasks_elevated(hw_exe=None, timeout_s=180):
             return "error"
     finally:
         k.CloseHandle(sei.hProcess)
-    _tasks_cache.pop("v", None)
+        _tasks_cache.pop("v", None)
     return {0: "ok", 3: "no_hwinfo"}.get(code.value, "error")
 
 

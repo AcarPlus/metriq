@@ -806,17 +806,24 @@ class SettingsWindow:
 
     def _install_tasks(self):
         """Settings > HWiNFO: register the scheduled tasks now (UAC), then re-check them."""
-        if self.btn_tasks is None or str(self.btn_tasks.cget("state")) == "disabled":
+        if self.btn_tasks is None or getattr(self, "_tasks_busy", False):
             return
+        self._tasks_busy = True
         self.btn_tasks.config(state="disabled", text=t("st_tasks_fix_run"))
         res = {}
         exe = self.api.detect(self.v_hwpath.get().strip() or "auto")
+        try:
+            owner = self.win.winfo_id()
+        except tk.TclError:
+            owner = None
 
         def work():
             try:
-                res["v"] = hwctl.register_tasks_elevated(exe)
+                res["v"] = hwctl.register_tasks_elevated(exe, hwnd=owner)
             except Exception:
                 res["v"] = "error"
+            finally:
+                self._tasks_busy = False
         threading.Thread(target=work, daemon=True).start()
 
         def poll():

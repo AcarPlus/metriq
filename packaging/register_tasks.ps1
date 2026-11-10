@@ -63,7 +63,10 @@ function Get-SessionUser {
 }
 
 function Find-HwinfoExe([string]$hint) {
-    if ($hint -and (Test-Path -LiteralPath $hint -PathType Leaf)) { return (Resolve-Path -LiteralPath $hint).Path }
+    # the hint may come from a user-editable setting: never accept another executable for the elevated task
+    if ($hint -and (Split-Path $hint -Leaf) -ieq 'HWiNFO64.EXE' -and (Test-Path -LiteralPath $hint -PathType Leaf)) {
+        return (Resolve-Path -LiteralPath $hint).Path
+    }
     $cands = New-Object System.Collections.Generic.List[string]
     foreach ($hive in 'HKLM:', 'HKCU:') {
         foreach ($sub in 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall', 'SOFTWARE\HWiNFO64') {

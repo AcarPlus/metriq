@@ -236,8 +236,8 @@ def _fit_status_fonts(family, lx, lbl_r, sw_w, rs, fs0):
             w += gap + tkfont.Font(family=family, size=fs).measure(t("interval_lbl"))
         return lx + w
 
-    # without the label the switch may end at the spinbox's left edge (label slot + its 8 px margin)
-    for with_lbl, with_left, limit in ((True, True, lbl_r), (False, True, lbl_r + 8), (False, False, lbl_r + 8)):
+    # without the label the switch may end a few px before the spinbox; 2 px slack for the GFX rounding of the track
+    for with_lbl, with_left, limit in ((True, True, lbl_r - 2), (False, True, lbl_r + 2), (False, False, lbl_r + 2)):
         fs = fs0
         while fs < -8 and need(fs, with_lbl, with_left) > limit:
             fs += 1
