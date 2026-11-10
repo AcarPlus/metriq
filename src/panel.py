@@ -220,6 +220,32 @@ def theme_font(token, *auto):
     return want if want and want in set(tkfont.families()) else pick_font(*auto)
 
 
+def _fit_status_fonts(family, lx, lbl_r, sw_w, rs, fs0):
+    """Status bar: font size (negative = pixels) for the mode switch / interval label so that
+    [Paneldeki veriler (o) Tüm veriler] .. [interval label] do not overlap. Returns (font size, show interval label,
+    show left switch caption). Long translations or a narrow panel first shrink the text down to 8 px, then drop the
+    interval label (the spinbox keeps its tooltip), then the left caption (knob position + right caption still read)."""
+    gap = max(rs * 0.6, 8.0)
+
+    def need(fs, with_lbl, with_left):
+        fb = tkfont.Font(family=family, size=fs, weight="bold")
+        w = sw_w + rs * 0.35 + fb.measure(t("sw_all"))
+        if with_left:
+            w += fb.measure(t("sw_required")) + rs * 0.35
+        if with_lbl:
+            w += gap + tkfont.Font(family=family, size=fs).measure(t("interval_lbl"))
+        return lx + w
+
+    # without the label the switch may end at the spinbox's left edge (label slot + its 8 px margin)
+    for with_lbl, with_left, limit in ((True, True, lbl_r), (False, True, lbl_r + 8), (False, False, lbl_r + 8)):
+        fs = fs0
+        while fs < -8 and need(fs, with_lbl, with_left) > limit:
+            fs += 1
+        if need(fs, with_lbl, with_left) <= limit:
+            return fs, with_lbl, with_left
+    return fs, False, False
+
+
 def launch_command():
     """Command line that starts this panel again (used by Windows when the taskbar button is pinned)."""
     if config.FROZEN:
@@ -543,14 +569,24 @@ def main():
                                       fill=C["red"], outline="", tags="logbtn")
         s["txt"] = cv.create_text(col_name + rs * 0.8, my, text="", anchor="w",
                                   font=(F_TXT, -max(10, int(rs * 0.50)), "bold"), fill=C["fg"], tags="logbtn")
+        # right end geometry first: [interval label] [spinbox] [chart] [reset] [gear]; the switch must fit before it
+        gs = max(rs * 0.42, 8.0)
+        hit = gs * 1.45
+        gx = sx1 - spad - hit
+        rx = gx - hit * 2 - 4
+        vx = rx - hit * 2 - 4
+        spin_w = max(44.0, min(sw_span * 0.1, rs * 3.2))
+        spin_r = vx - hit - 6
+        lbl_r = spin_r - spin_w - 8                                  # right edge of the interval label
         # recording mode switch: required rows <-> all sensors
-        fs_sw = -max(9, int(rs * 0.38))
-        f_sw = (F_TXT, fs_sw, "bold")
         sw_w, sw_h = max(rs * 1.7, 22.0), max(rs * 0.8, 10.0)      # never smaller than a track that still holds a knob
         lx = px0 + pw + min(sw_span * 0.05, rs * 1.2)
-        s["sw_l"] = cv.create_text(lx, my, text=t("sw_required"), anchor="w", font=f_sw, fill=C["fg"],
-                                   tags="modebtn")
-        tx0 = lx + tkfont.Font(family=F_TXT, size=fs_sw, weight="bold").measure(t("sw_required")) + rs * 0.35
+        fs_sw, show_lbl, show_left = _fit_status_fonts(F_TXT, lx, lbl_r, sw_w, rs, -max(9, int(rs * 0.38)))
+        f_sw = (F_TXT, fs_sw, "bold")
+        s["sw_l"] = cv.create_text(lx, my, text=t("sw_required") if show_left else "", anchor="w", font=f_sw,
+                                   fill=C["fg"], tags="modebtn")
+        tx0 = lx + (tkfont.Font(family=F_TXT, size=fs_sw, weight="bold").measure(t("sw_required")) + rs * 0.35
+                    if show_left else 0)
         kmy = my
         if GFX:                                  # whole pixels: the track image and the knob stay aligned
             tx0, sw_w, sw_h = float(round(tx0)), float(round(sw_w)), float(2 * round(sw_h / 2))
@@ -572,12 +608,7 @@ def main():
                                           tags="modebtn")
         s["sw_r"] = cv.create_text(tx0 + sw_w + rs * 0.35, my, text=t("sw_all"), anchor="w", font=f_sw,
                                    fill=C["faint"], tags="modebtn")
-        # right end: [interval label] [spinbox] [reset button] [gear button]
-        gs = max(rs * 0.42, 8.0)
-        hit = gs * 1.45
-        gx = sx1 - spad - hit
-        rx = gx - hit * 2 - 4
-        vx = rx - hit * 2 - 4
+        # right end: [interval label] [spinbox] [chart] [reset button] [gear button]
         if GFX:
             s["gear_bg"] = cv.create_image(gx, my, image=gfx.button("gear", hit, gs, C["dim"], C["card"]),
                                            tags="gearbtn")
@@ -595,10 +626,9 @@ def main():
             s["view_bg"] = cv.create_oval(vx - hit, my - hit, vx + hit, my + hit, fill=C["card"], outline="",
                                           tags="viewbtn")
             draw_icon(cv, "chart", vx, my, gs, C["dim"], C["card"], tags=("viewbtn",))
-        spin_w = max(44.0, min(sw_span * 0.1, rs * 3.2))
-        spin_r = vx - hit - 6
-        cv.create_text(spin_r - spin_w - 8, my, text=t("interval_lbl"), anchor="e", font=(F_TXT, fs_sw),
-                       fill=C["dim"], tags="intlbl")
+        if show_lbl:                             # hidden when it would overlap the switch; the spinbox keeps its tooltip
+            cv.create_text(lbl_r, my, text=t("interval_lbl"), anchor="e", font=(F_TXT, fs_sw),
+                           fill=C["dim"], tags="intlbl")
         spin.config(font=(F_NUM, -max(10, int(rs * 0.52))))
         cv.create_window(spin_r, my, window=spin, anchor="e", width=spin_w, height=rs * 1.0)
         # toasts sit centred just above the bar
