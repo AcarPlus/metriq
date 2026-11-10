@@ -756,11 +756,18 @@ class SettingsWindow:
         self.row(card, t("st_sync"), self.switch(card.body, self.v_sync), help="sync")
 
         tasks = self.api.tasks()                          # cached; the schtasks query runs in the background below
-        self.lbl_tasks = tk.Label(card.body, text=t("st_tasks_ok") if tasks else t("st_tasks_no"), bg=bg,
+        self.lbl_tasks = tk.Label(card.body, text=self._tasks_text(tasks), bg=bg,
                                   fg=C["green"] if tasks else C["yellow"], font=(self.F_TXT, 10), anchor="w",
                                   justify="left")
         uikit.autowrap(self.lbl_tasks)
         self.full(card, self.lbl_tasks, pady=(8, 2))
+        # installed app: the tasks can be added later (e.g. HWiNFO was installed after metriQ) with one UAC prompt
+        self.btn_tasks = None
+        if hwctl.task_script():
+            self.btn_tasks = self.button(card.body, t("st_tasks_fix"), self._install_tasks)
+            self.full(card, self.btn_tasks, pady=(2, 6), sticky="w")
+            if tasks:
+                self.btn_tasks.grid_remove()
         self.update_detected()
         self.update_sources()
         if not self._built:
@@ -784,11 +791,51 @@ class SettingsWindow:
                 return
             try:
                 ok = res["v"]
-                self.lbl_tasks.config(text=t("st_tasks_ok") if ok else t("st_tasks_no"),
-                                      fg=self.C["green"] if ok else self.C["yellow"])
+                self.lbl_tasks.config(text=self._tasks_text(ok), fg=self.C["green"] if ok else self.C["yellow"])
+                if self.btn_tasks is not None:
+                    (self.btn_tasks.grid_remove if ok else self.btn_tasks.grid)()
             except (tk.TclError, AttributeError):
                 pass
         self.win.after(100, poll)
+
+    @staticmethod
+    def _tasks_text(ok):
+        if ok:
+            return t("st_tasks_ok")
+        return t("st_tasks_no_app") if hwctl.task_script() else t("st_tasks_no")
+
+    def _install_tasks(self):
+        """Settings > HWiNFO: register the scheduled tasks now (UAC), then re-check them."""
+        if self.btn_tasks is None or str(self.btn_tasks.cget("state")) == "disabled":
+            return
+        self.btn_tasks.config(state="disabled", text=t("st_tasks_fix_run"))
+        res = {}
+        exe = self.api.detect(self.v_hwpath.get().strip() or "auto")
+
+        def work():
+            try:
+                res["v"] = hwctl.register_tasks_elevated(exe)
+            except Exception:
+                res["v"] = "error"
+        threading.Thread(target=work, daemon=True).start()
+
+        def poll():
+            if self._closing or not self.winfo_exists():
+                return
+            if "v" not in res:
+                self.win.after(200, poll)
+                return
+            try:
+                self.btn_tasks.config(state="normal", text=t("st_tasks_fix"))
+                if res["v"] != "ok":
+                    key = {"cancelled": "st_tasks_fix_cancel", "no_hwinfo": "st_tasks_fix_nohw"}.get(res["v"],
+                                                                                                    "st_tasks_fix_err")
+                    self.lbl_tasks.config(text=t(key), fg=self.C["yellow"])
+                    return
+            except (tk.TclError, AttributeError):
+                return
+            self._refresh_tasks_bg()
+        self.win.after(200, poll)
 
     def update_sources(self):
         """Active source, what is available on this PC, and which data the active source cannot provide."""

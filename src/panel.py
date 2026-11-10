@@ -394,7 +394,7 @@ def main():
             st["pr_t"], st["pr_v"] = now, hwctl.proc_running()
         h = t("hint_no_shm") if st["pr_v"] else t("hint_not_running")
         if not st["tasks"]:
-            h += " · " + t("hint_readonly")
+            h += " · " + t("hint_readonly_app" if hwctl.task_script() else "hint_readonly")
         return h
 
     def conn_text():

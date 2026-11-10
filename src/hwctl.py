@@ -1,8 +1,9 @@
-"""Controlling HWiNFO from the panel: detection, process check, elevated scheduled tasks (see install.ps1)."""
+"""Controlling HWiNFO from the panel: detection, process check, elevated scheduled tasks (Setup / install.ps1)."""
 import ctypes
 import os
 import shutil
 import subprocess
+import sys
 from ctypes import wintypes
 
 import config
@@ -113,6 +114,64 @@ def tasks_installed(refresh=False):
         except Exception:
             _tasks_cache["v"] = False
     return _tasks_cache["v"]
+
+
+def task_script():
+    """register_tasks.ps1 of an installed metriQ (<app>/tasks, put there by Setup), or None (source checkout)."""
+    if not config.FROZEN:
+        return None
+    p = os.path.join(os.path.dirname(sys.executable), "tasks", "register_tasks.ps1")
+    return p if os.path.isfile(p) else None
+
+
+class _ShellExecuteInfo(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("fMask", ctypes.c_ulong), ("hwnd", wintypes.HWND),
+                ("lpVerb", wintypes.LPCWSTR), ("lpFile", wintypes.LPCWSTR), ("lpParameters", wintypes.LPCWSTR),
+                ("lpDirectory", wintypes.LPCWSTR), ("nShow", ctypes.c_int), ("hInstApp", wintypes.HINSTANCE),
+                ("lpIDList", ctypes.c_void_p), ("lpClass", wintypes.LPCWSTR), ("hkeyClass", wintypes.HKEY),
+                ("dwHotKey", wintypes.DWORD), ("hIconOrMonitor", wintypes.HANDLE), ("hProcess", wintypes.HANDLE)]
+
+
+def register_tasks_elevated(hw_exe=None, timeout_s=180):
+    """Installs the scheduled tasks after the fact (e.g. HWiNFO was installed after metriQ): runs Setup's
+    register_tasks.ps1 elevated (one UAC prompt) and waits for it.
+    Returns "ok" | "cancelled" (UAC declined) | "no_hwinfo" | "no_script" | "error"."""
+    script = task_script()
+    if not script:
+        return "no_script"
+    ps = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "WindowsPowerShell", "v1.0",
+                      "powershell.exe")
+    user = "\\".join(x for x in (os.environ.get("USERDOMAIN", ""), os.environ.get("USERNAME", "")) if x)
+    params = f'-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{script}"'
+    if user:
+        params += f' -User "{user}"'
+    if hw_exe and os.path.isfile(hw_exe):
+        params += f' -HwinfoPath "{hw_exe}"'
+    sei = _ShellExecuteInfo()
+    sei.cbSize = ctypes.sizeof(sei)
+    sei.fMask = 0x00000040 | 0x00000100              # SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC
+    sei.lpVerb, sei.lpFile, sei.lpParameters, sei.nShow = "runas", ps, params, 0
+    sh = ctypes.WinDLL("shell32", use_last_error=True)
+    sh.ShellExecuteExW.argtypes = [ctypes.POINTER(_ShellExecuteInfo)]
+    sh.ShellExecuteExW.restype = wintypes.BOOL
+    if not sh.ShellExecuteExW(ctypes.byref(sei)):
+        return "cancelled" if ctypes.get_last_error() == 1223 else "error"     # ERROR_CANCELLED: UAC "No"
+    if not sei.hProcess:
+        return "error"
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    k.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    k.CloseHandle.argtypes = [wintypes.HANDLE]
+    try:
+        if k.WaitForSingleObject(sei.hProcess, int(timeout_s * 1000)) != 0:
+            return "error"
+        code = wintypes.DWORD()
+        if not k.GetExitCodeProcess(sei.hProcess, ctypes.byref(code)):
+            return "error"
+    finally:
+        k.CloseHandle(sei.hProcess)
+    _tasks_cache.pop("v", None)
+    return {0: "ok", 3: "no_hwinfo"}.get(code.value, "error")
 
 
 def run_task(name):
