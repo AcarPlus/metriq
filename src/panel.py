@@ -543,11 +543,20 @@ def main():
                     if i % 2:
                         cv.create_rectangle(cx0 + inset, ry, cx1 - inset, ry + rp, fill=C["stripe"], outline="")
                     my = ry + rp / 2
-                    nm_id = cv.create_text(col_name, my, text=fit_text(fnt_name, row.name, name_avail), anchor="w",
-                                           font=f_name, fill=C["name"])
-                    procs.tag_row(cv, nm_id, row, cx0 + name_right)   # CPU / RAM / GPU / VRAM / disk rows open the process window (+ (i) balloon)
+                    hint_row = basic and row.rid == "hint_cpu_temp"      # "CPU temperature needs HWiNFO": no value, so the name may use the whole row
+                    nm_right = (fr["now"] * cw - nw - 10 if not p.with_bar else fr["now"] * cw - 10) if hint_row else name_right
+                    nm_id = cv.create_text(col_name, my, text=fit_text(fnt_name, row.name, name_avail + nm_right - name_right - (26 if hint_row else 0)),
+                                           anchor="w", font=f_name, fill=C["name"])
+                    procs.tag_row(cv, nm_id, row, cx0 + nm_right, info=not basic)   # CPU / RAM / GPU / VRAM / disk rows open the process window (+ (i) balloon)
                     if row.help:                                        # e.g. throttling: what it is, which source it needs
                         Tooltip.for_canvas(cv, nm_id, lambda k=row.help: t("hp_" + k))
+                        if basic:       # Basic: every row has the same (i); the hint row's one also opens the HWiNFO setting
+                            procs.help_icon(cv, nm_id, lambda k=row.help: t("hp_" + k), cx0 + nm_right,
+                                            show_hw_setting if row.rid == "hint_cpu_temp" else None)
+                    if basic and row.rid == "hint_cpu_temp":
+                        cv.tag_bind(nm_id, "<Button-1>", lambda e: show_hw_setting(), add="+")
+                        cv.tag_bind(nm_id, "<Enter>", lambda e: cv.config(cursor="hand2"), add="+")
+                        cv.tag_bind(nm_id, "<Leave>", lambda e: cv.config(cursor=""), add="+")
                     it = {"accent": accent}
                     if row.bar and p.with_bar:
                         bh = max(4, rh * 0.22)
@@ -555,7 +564,7 @@ def main():
                         it["bar"] = cv.create_rectangle(bar_x0, my - bh / 2, bar_x0, my + bh / 2, fill=accent,
                                                         outline="")
                         it["bargeo"] = (bar_x0, bar_x1, my - bh / 2, my + bh / 2)
-                    it["now"] = cv.create_text(col_now, my, text="–", anchor="e", font=f_num, fill=C["fg"])
+                    it["now"] = cv.create_text(col_now, my, text="" if hint_row else "–", anchor="e", font=f_num, fill=C["fg"])
                     it["unit"] = cv.create_text(col_now + 6, my, text=row.unit_eff, anchor="w", font=f_unit,
                                                 fill=C["faint"])
                     if basic:
@@ -718,7 +727,7 @@ def main():
         s["toast_geo"] = ((sx0 + sx1) / 2, sy - max(4.0, rs * 0.25), sw_span - 2 * spad)
         s["f_toast"], s["f_toast_t"] = meas_font(F_TXT, ft, "bold"), (F_TXT, ft, "bold")
         for tag, fn in (("logbtn", toggle), ("modebtn", toggle_mode), ("gearbtn", open_settings),
-                        ("uimodebtn", toggle_ui_mode), ("resetbtn", reset_stats), ("viewbtn", lambda e=None: logview.show(api)), ("updbtn", upd_click), ("updx", upd_dismiss)):
+                        ("uimodebtn", toggle_ui_mode), ("resetbtn", reset_stats), ("viewbtn", lambda e=None: logview.show(api)), ("updbtn", upd_click), ("updx", upd_dismiss), ("hwrestart", hw_restart_click)):
             cv.tag_bind(tag, "<Button-1>", fn)
             cv.tag_bind(tag, "<Enter>", lambda e: cv.config(cursor="hand2"))
             cv.tag_bind(tag, "<Leave>", lambda e: cv.config(cursor=""))
@@ -820,6 +829,13 @@ def main():
             # fell back to the built-in source: say why there are no temperatures / power (gone once HWiNFO delivers)
             # (the first sentence; what to do is in Settings > Data source)
             msgs.append((t(src.why).split(". ")[0], C["yellow"], None))
+        if st.get("stale") and st["items"]:             # persistent: stays until HWiNFO delivers again
+            if now - (st.get("hw_rst") or 0) < 40:
+                msgs.append((t("hw_restarting"), C["yellow"], None))
+                soon.append(1.0)
+            else:
+                msgs.append((t("hw_restart_btn"), C["yellow"], "hwbtn"))
+                msgs.append((t("hw_stale"), C["yellow"], "hwstale"))
         note = st.get("note")
         if note and note != "created":
             timed(note, C["yellow"], st["t0"], TOAST_ERR_S)
@@ -831,6 +847,31 @@ def main():
             soon.append(0.1)
         msgs.extend(ext)
         return msgs
+
+    def wrap_text(f, text, width):
+        """Greedy word wrap of text to `width` px with font f."""
+        lines, cur = [], ""
+        for wd in text.split(" "):
+            trial = (cur + " " + wd).strip()
+            if cur and f.measure(trial) > width:
+                lines.append(cur)
+                cur = wd
+            else:
+                cur = trial
+        return lines + [cur]
+
+    def hw_restart_click(e=None):
+        """The button of the "HWiNFO stopped sharing" notice: restart HWiNFO now. Only ever from a click."""
+        now = time.time()
+        if now - (st.get("hw_rst") or 0) < 40:
+            return
+        st["hw_rst"] = st["last_restart"] = now         # (also keeps the automatic repair of a vanished HWiNFO quiet)
+        src.hold_until = now + 90                       # statistics and the recording stay on HWiNFO through the gap
+        refresh_status()
+
+        def work():
+            st["hw_rst_res"] = hwctl.restart_hwinfo(cfg["interval"], st["hw_exe"])
+        threading.Thread(target=work, daemon=True).start()
 
     def draw_toasts(msgs):
         """Small rounded pills stacked upwards from just above the status bar; rebuilt only when they change."""
@@ -845,21 +886,30 @@ def main():
         th = f.metrics("linespace") + 10
         for text, col, kind in msgs:
             xw = f.measure("  ✕") if kind == "upd" else 0
-            tw = min(maxw - 2 * th, f.measure(text) + xw)
-            text = fit_text(f, text, tw - xw)
-            w = int(tw + th)
-            x0, y0 = int(round(cx - w / 2)), int(round(y - th))
-            fill, line = mix(C["card"], col, 0.22), mix(C["card"], col, 0.6)
-            tags = ("toast", "updbtn") if kind == "upd" else ("toast",)
-            if GFX:
-                cv.create_image(x0, y0, image=gfx.card(w, int(th), th / 2, fill, line), anchor="nw", tags=tags)
+            ph, lines = th, None
+            if kind == "hwstale":           # the long notice wraps instead of being cut off
+                lines = wrap_text(f, text, maxw - 2 * th)
+                text = "\n".join(lines)
+                ph = th + (len(lines) - 1) * f.metrics("linespace")
+                tw = max(f.measure(x) for x in lines)
             else:
-                round_rect(cv, x0, y0, x0 + w, y0 + th, th / 2, fill=fill, outline=line, tags=tags)
-            cv.create_text(x0 + th / 2, y0 + th / 2, text=text, anchor="w", font=s["f_toast_t"], fill=col, tags=tags)
+                tw = min(maxw - 2 * th, f.measure(text) + xw)
+                text = fit_text(f, text, tw - xw)
+            w = int(tw + th)
+            x0, y0 = int(round(cx - w / 2)), int(round(y - ph))
+            fill, line = mix(C["card"], col, 0.22), mix(C["card"], col, 0.6)
+            tags = ("toast", "updbtn") if kind == "upd" else ("toast", "hwrestart") if kind == "hwbtn" else ("toast",)
+            if GFX:
+                cv.create_image(x0, y0, image=gfx.card(w, int(ph), th / 2, fill, line), anchor="nw", tags=tags)
+            else:
+                round_rect(cv, x0, y0, x0 + w, y0 + ph, th / 2, fill=fill, outline=line, tags=tags)
+            cv.create_text(x0 + w / 2 if lines else x0 + th / 2, y0 + ph / 2, text=text,
+                           anchor="center" if lines else "w", justify="center", font=s["f_toast_t"], fill=col,
+                           tags=tags)
             if kind == "upd":
                 cv.create_text(x0 + w - th / 2, y0 + th / 2, text="✕", anchor="e", font=s["f_toast_t"], fill=C["dim"],
                                tags=("toast", "updx"))
-            y -= th + 6
+            y -= ph + 6
 
     def refresh_status():
         s = st["status"]
@@ -1172,7 +1222,8 @@ def main():
             w = st["settings"]
             try:
                 if w is not None and w.winfo_exists():
-                    w.rebuild_later()      # the settings pages differ between the modes
+                    if w.rebuild_later():  # the settings pages differ between the modes; a running benchmark keeps them
+                        st["mode_msg"], st["mode_note"] = t("ui_mode_deferred"), time.time()
             except tk.TclError:
                 pass
         lay_key = config.layout_key(src.active)          # the layout tab edits the active source's layout
@@ -1262,6 +1313,23 @@ def main():
             st["settings"] = settings_ui.SettingsWindow(api)
         except Exception:
             traceback.print_exc()
+
+    def show_hw_setting():
+        """Basic hint "CPU temperature needs HWiNFO": switch to Advanced and open Settings > HWiNFO."""
+        if is_basic():
+            apply_settings({"ui_mode": "advanced"})
+        open_settings()
+
+        def goto(n=0):
+            w = st["settings"]
+            try:
+                if w is not None and w.winfo_exists() and 2 in w.nav_map:
+                    w.select(2)
+                elif n < 8:
+                    root.after(250, goto, n + 1)
+            except tk.TclError:
+                pass
+        root.after(400, goto)
 
     # ------------------------------------------------------------ updates
     def upd_state():
@@ -1389,6 +1457,23 @@ def main():
             st["was_down"] = True
         frozen = (not ok) or now < st.get("warm_until", 0)
         st["frozen"] = frozen
+        # HWiNFO still runs but its shared memory stopped updating (the free version does that after 12 h): the old
+        # values would look fine, so show "-", record nothing and offer a restart (button only: never automatic)
+        stale = False
+        if ok and src.active == "hwinfo" and hwsm.monitor.stale:
+            if now - st.get("hw_ivl_t", 0) > 30:
+                st["hw_ivl_t"] = now
+                st["hw_ivl"] = hwctl.hwinfo_interval_ms(st["hw_exe"]) / 1000.0 if st.get("hw_exe") else 2.0
+            hwsm.monitor.limit = max(10.0, 3 * st.get("hw_ivl", 2.0))
+            stale = hwsm.monitor.stale and hwctl.proc_running()
+        if stale != st.get("stale"):
+            st["stale"], st["need_draw"] = stale, True
+            if not stale:
+                st["hw_rst"] = 0
+        res = st.pop("hw_rst_res", None)
+        if res == "failed":
+            st["hw_rst"] = 0
+            st["hk_msg"], st["hk_note"] = t("hw_rst_fail"), now
         if ok:
             st["down_since"] = None
         elif manage_on():
@@ -1412,13 +1497,13 @@ def main():
         st["mini"] = mini
         rows = layout.all_rows(st["sections"])        # recording / mini mode: the user's layout in both modes
         shown = layout.all_rows(st["bsections"]) if is_basic() else []      # Basic: extra rows only drawn here
-        if ok and not frozen and not st.get("thr_seen"):
+        if ok and not frozen and not stale and not st.get("thr_seen"):
             hot = throttle.active(rd)                    # HWiNFO only: the first time this session the CPU / GPU is held back
             if hot:
                 st["thr_seen"] = True
                 st["thr_msg"] = " · ".join(t("thr_toast", who=w, what=x) for w, x in hot)
                 st["thr_note"] = now
-        mm.update(rows, rd if ok else [], ok and not frozen)
+        mm.update(rows, rd if ok and not stale else [], ok and not frozen)
         # HWiNFO has not polled since the last tick: nothing new to show (the values are identical)
         poll = hwsm.last_poll if (ok and src.active == "hwinfo") else None
         same = (poll is not None and poll == st.get("poll") and not st.get("need_draw") and not st["frozen"]
@@ -1430,7 +1515,7 @@ def main():
         st["nreq"] = len(rows)
         logvals = []
         for row, islog in (() if same else [(x, True) for x in rows] + [(x, False) for x in shown]):
-            r = row.match(rd) if ok else None
+            r = row.match(rd) if ok and not stale else None
             if islog:
                 logvals.append(logger.num(r["value"], row.csv_decimals()) if r else "")
             it = st["items"].get(id(row))
@@ -1443,14 +1528,28 @@ def main():
                     s = stats.setdefault(row.key, [v, v, 0.0, 0])
                     s[0], s[1], s[2], s[3] = min(s[0], v), max(s[1], v), s[2] + v, s[3] + 1
                 continue
+            if stale:                            # frozen HWiNFO data: no values, statistics keep what they have
+                set_text(it["now"], "–", C["dim"])
+                if "status" in it:
+                    set_text(it["status"], "", C["dim"])
+                if "bar" in it:
+                    x0, x1, y0, y1 = it["bargeo"]
+                    st["last"].pop(it["bar"], None)
+                    cv.coords(it["bar"], x0, y0, x0, y1)
+                continue
             if r:
                 v = r["value"]
                 s = stats.setdefault(row.key, [v, v, 0.0, 0])
                 s[0], s[1], s[2], s[3] = min(s[0], v), max(s[1], v), s[2] + v, s[3] + 1
                 avg = s[2] / s[3]
-                col = layout.value_color(row, v, C["fg"])
-                set_text(it["unit"], row.unit_eff)
-                set_text(it["now"], row.fmt_value(v), col)
+                basic = is_basic()
+                if basic:        # Basic: value + word share one status level (temperatures green / amber / red, rest neutral)
+                    col = basicmode.color(row, v, C)
+                    bt = basicmode.value_text(row, v)
+                else:
+                    col, bt = layout.value_color(row, v, C["fg"]), None
+                set_text(it["unit"], bt[1] if bt else row.unit_eff)
+                set_text(it["now"], bt[0] if bt else row.fmt_value(v), col)
                 if "status" in it:
                     set_text(it["status"], fit_text(st["fnt_stat"], basicmode.status_text(row, v), it["stat_w"]),
                              col)
@@ -1464,12 +1563,13 @@ def main():
                 if "bar" in it:
                     x0, x1, y0, y1 = it["bargeo"]
                     bx = int(round(x0 + (x1 - x0) * layout.frac(row, v)))
-                    if st["last"].get(it["bar"]) != (bx, col):       # skip the redraw of an unchanged bar
-                        st["last"][it["bar"]] = (bx, col)
+                    bcol = it["accent"] if basic and row.status != "temp" else col    # Basic: calm accent bars
+                    if st["last"].get(it["bar"]) != (bx, bcol):      # skip the redraw of an unchanged bar
+                        st["last"][it["bar"]] = (bx, bcol)
                         cv.coords(it["bar"], x0, y0, bx, y1)
-                        cv.itemconfig(it["bar"], fill=col)
+                        cv.itemconfig(it["bar"], fill=bcol)
         logger.ext.update()                 # process sampling runs only while the recording needs it
-        if not frozen and ok and cfg["logging"] and rows and now - logger.last >= cfg["interval"] - 0.05:
+        if not frozen and not stale and ok and cfg["logging"] and rows and now - logger.last >= cfg["interval"] - 0.05:
             logger.last = now
             try:
                 if cfg.get("log_all"):
