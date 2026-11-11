@@ -126,6 +126,10 @@ i18n.register({
         "pf_hist": "History", "pf_hist_none": "No runs yet.", "pf_col_date": "Date", "pf_col_all": "Overall",
         "pf_col_mode": "Mode",
         "pf_save_csv": "Save CSV", "pf_copy": "Copy", "pf_copied": "Copied to the clipboard.",
+        "pf_share": "Share result (PNG)",
+        "pf_share_copy": "Copy image",
+        "pf_share_copied": "Image copied to the clipboard.",
+        "pf_share_err": "Could not create the image: {e}",
         "pf_saved": "Saved: {p}", "pf_showing": "Showing the run of {d}", "pf_latest": "Latest",
         "pf_hist_hint": "Select a row to show that run in the cards above.",
         "pf_quick": "short test mode (METRIQ_BENCH_QUICK)",
@@ -233,6 +237,10 @@ i18n.register({
         "pf_hist": "Geçmiş", "pf_hist_none": "Henüz çalıştırma yok.", "pf_col_date": "Tarih", "pf_col_all": "Toplam",
         "pf_col_mode": "Mod",
         "pf_save_csv": "CSV kaydet", "pf_copy": "Kopyala", "pf_copied": "Panoya kopyalandı.",
+        "pf_share": "Sonucu paylaş (PNG)",
+        "pf_share_copy": "Görseli kopyala",
+        "pf_share_copied": "Görsel panoya kopyalandı.",
+        "pf_share_err": "Görsel oluşturulamadı: {e}",
         "pf_saved": "Kaydedildi: {p}", "pf_showing": "{d} tarihli çalıştırma gösteriliyor", "pf_latest": "Sonuncu",
         "pf_hist_hint": "Bir satırı seçersen o çalıştırma yukarıdaki kartlarda görünür.",
         "pf_quick": "kısa test modu (METRIQ_BENCH_QUICK)",
@@ -530,6 +538,10 @@ class PerfTab:
         sw.button(bar, t("pf_save_csv"), self.save_csv, bg=bg).pack(side="left")
         sw.button(bar, t("pf_copy"), self.copy, bg=bg).pack(side="left", padx=(8, 0))
         sw.button(bar, t("pf_latest"), self.show_latest, bg=bg).pack(side="left", padx=(8, 0))
+        bar2 = tk.Frame(card.body, bg=bg)                 # shareable result card (PNG), see perf_card.py
+        sw.full(card, bar2, pady=(0, 2), divider=False)
+        sw.button(bar2, t("pf_share"), self.share_png, bg=bg).pack(side="left")
+        sw.button(bar2, t("pf_share_copy"), self.share_copy, bg=bg).pack(side="left", padx=(8, 0))
         self.hist_msg = sw.label(bar, "", dim=True, size=9, bg=bg)
         self.hist_msg.pack(side="left", padx=(12, 0))
         self._fill_tree()
@@ -1012,3 +1024,36 @@ class PerfTab:
         self.sw.win.clipboard_clear()
         self.sw.win.clipboard_append(pc.run_to_csv(run))
         self.hist_msg.config(text=t("pf_copied"))
+
+    # ------------------------------------------------------------ shareable result card (PNG)
+    def share_png(self):
+        run = self._current_run()
+        if not run:
+            return
+        import perf_card
+        pics = os.path.join(os.path.expanduser("~"), "Pictures", "metriQ")
+        try:
+            os.makedirs(pics, exist_ok=True)
+        except OSError:
+            pics = ""
+        name = "metriq-benchmark-%s.png" % time.strftime("%Y%m%d-%H%M", time.localtime(run["ts"]))
+        path = filedialog.asksaveasfilename(parent=self.sw.win, defaultextension=".png", initialfile=name,
+                                            initialdir=pics or None, filetypes=[("PNG", "*.png")])
+        if not path:
+            return
+        try:
+            perf_card.save(run, path)
+            self.hist_msg.config(text=t("pf_saved", p=os.path.basename(path)))
+        except Exception as ex:
+            self.hist_msg.config(text=t("pf_share_err", e=ex))
+
+    def share_copy(self):
+        run = self._current_run()
+        if not run:
+            return
+        import perf_card
+        try:
+            ok = perf_card.copy_to_clipboard(run)
+            self.hist_msg.config(text=t("pf_share_copied") if ok else t("pf_share_err", e="clipboard"))
+        except Exception as ex:
+            self.hist_msg.config(text=t("pf_share_err", e=ex))
