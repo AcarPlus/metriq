@@ -29,6 +29,8 @@ DEFAULTS = {
     "theme_overrides": {},           # any theme token on top of the theme, e.g. {"bg": "#101010", "radius": 8}
     "value_color_mode": "smooth",    # "smooth" (gradient) | "stepped" (3-5 flat colour bands)
     "value_steps": [],               # stepped: [] = 4 equal bands, or 2-4 thresholds in % of each row's range
+    "ui_mode": "basic",              # "basic" (few plain rows, plain words) | "advanced" (everything; your own layout)
+    "ui_mode_hint_shown": False,     # the one-time "Basic view is on" notice was shown
     "topmost": True,
     "diag_errors": True,             # diagnostics tab: show the error-detection section
     "fan_risk_ok": False,            # fan page: the risk notice was accepted once
@@ -275,7 +277,8 @@ def load_config():
     cfg.pop("ui_scale", None)        # removed feature: ignore old values
     cfg["backend"] = norm_backend(cfg.get("backend"))
     cfg["minimode"] = norm_minimode(cfg.get("minimode"))
-    for k in ("bg_keep_logging", "bg_keep_mini", "bg_hint_shown"):      # older / hand-edited files: anything but a boolean = default
+    cfg["ui_mode"] = norm_ui_mode(cfg.get("ui_mode"))
+    for k in ("bg_keep_logging", "bg_keep_mini", "bg_hint_shown", "ui_mode_hint_shown"):      # older / hand-edited files: anything but a boolean = default
         if not isinstance(cfg.get(k), bool):
             cfg[k] = DEFAULTS[k]
     return cfg, note
@@ -287,6 +290,11 @@ def clamp_interval(v):
     except (TypeError, ValueError):
         v = DEFAULTS["interval"]
     return round(min(INTERVAL_MAX, max(INTERVAL_MIN, v)), 1)
+
+
+def norm_ui_mode(v):
+    """'basic' | 'advanced' (a missing or unknown value means basic)."""
+    return "advanced" if str(v or "").strip().lower() == "advanced" else "basic"
 
 
 def norm_columns(v):

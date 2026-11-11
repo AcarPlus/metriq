@@ -43,8 +43,11 @@ TEXTUAL = ("@bstate", "@throttle")          # the value is a code: Min / Max / A
 class Row:
     """One panel row. Build with Row.from_cfg(dict)."""
 
-    def __init__(self, name, sensor, label, rtype, fmt, unit, limits, bar, visible=True, help=None):
+    def __init__(self, name, sensor, label, rtype, fmt, unit, limits, bar, visible=True, help=None, rid=None,
+                 status=None):
         self.name, self.sensor, self.label, self.rtype = name, sensor, label, rtype
+        self.rid = rid or None            # stable id of an auto-detected row (its i18n key), see basicmode.py
+        self.status = status or None      # Basic mode: "temp" | "usage" -> status word next to the value
         self.fmt, self.unit, self.limits, self.bar = fmt, unit, limits, bar
         self.visible = visible
         self.help = help or None          # i18n key "hp_<help>": balloon on the row name in the panel
@@ -74,7 +77,7 @@ class Row:
         visible = d.get("visible", True)
         visible = not (visible is False or visible in (0, "false", "False", "no"))
         return cls(name, d.get("sensor") or None, label, rtype, d.get("format") or None, d.get("unit") or "",
-                   limits, bar, visible, d.get("help"))
+                   limits, bar, visible, d.get("help"), d.get("rid"), d.get("status"))
 
     def match(self, rd):
         i = self._idx
@@ -331,8 +334,10 @@ _VIRTUAL = re.compile(r"virtual|vpn|loopback|hyper-v|vmware|vbox|tap-|tap |tun|b
 MAX_CORE_ROWS = 16
 
 
-def _R(name, sensor, label, rtype=None, unit=None, limits=None, fmt=None, bar=None, help=None):
+def _R(name, sensor, label, rtype=None, unit=None, limits=None, fmt=None, bar=None, help=None, rid=None):
     d = {"name": name, "label": label}
+    if rid:
+        d["rid"] = rid
     if sensor:
         d["sensor"] = sensor
     if rtype is not None:
@@ -380,9 +385,9 @@ class _Index:
         return [s for s in self.sensors if p.search(s)]
 
 
-def _row_if(ix, name, sensor_re, label_res, rtype=None, limits=None, unit=None, fmt=None):
+def _row_if(ix, name, sensor_re, label_res, rtype=None, limits=None, unit=None, fmt=None, rid=None):
     lp, r = ix.first(sensor_re, label_res, rtype)
-    return _R(name, sensor_re, lp, rtype, unit, limits, fmt) if lp else None
+    return _R(name, sensor_re, lp, rtype, unit, limits, fmt, rid=rid) if lp else None
 
 
 def _throttle_row(ix, name_key, label):
@@ -404,7 +409,7 @@ def _battery_rows(ix):
     for key, name_key, unit, limits, fmt, bar, hlp in battery.ROWS:
         probe = "state" if key == "time" else key
         if ix.first(sre, battery.LABELS[probe])[0]:
-            rows.append(_R(t(name_key), sre, battery.LABELS[key], None, unit, limits, fmt, bar, hlp))
+            rows.append(_R(t(name_key), sre, battery.LABELS[key], None, unit, limits, fmt, bar, hlp, rid=name_key))
     return rows
 
 
@@ -414,8 +419,9 @@ def _scaled(unit, lo, hi):
     return (lo * k, hi * k)
 
 
-def autodetect(rd):
-    """Default sections (config schema, current language) built from the readings. Missing rows are omitted."""
+def autodetect(rd, rids=False):
+    """Default sections (config schema, current language) built from the readings. Missing rows are omitted.
+    rids=True keeps the stable "rid" of the rows Basic mode needs (basicmode.py); stored layouts never get it."""
     ix = _Index(rd)
     sections = []
 
@@ -451,14 +457,15 @@ def autodetect(rd):
             for r in ix.readings(cpu, r"^Core #\d+$", 6)[:MAX_CORE_ROWS]:
                 n = r["label"].split("#")[1]
                 rows.append(_R(f"CPU Core {n} {t('clock')}", cpu, "^Core #" + n + "$", 6, "MHz", (1000, 6000)))
-        rows.append(_row_if(ix, t("cpu_usage"), cpu, [r"^Total CPU Usage", r"^CPU Total$"], 7, (0, 100)))
+        rows.append(_row_if(ix, t("cpu_usage"), cpu, [r"^Total CPU Usage", r"^CPU Total$"], 7, (0, 100),
+                            rid="cpu_usage"))
         rows.append(_row_if(ix, t("cpu_maxthread"), cpu, [r"^Max CPU/Thread Usage", r"^CPU Core Max$"], 7,
                             (0, 100)))
         rows.append(_throttle_row(ix, "cpu_throttle", throttle.CPU_LABEL))
     if gpu:
         rows.append(_row_if(ix, t("gpu_clock"), gpu, [r"^GPU Clock$", r"^GPU Core$"], 6, (200, 3200)))
         rows.append(_row_if(ix, t("gpu_load"), gpu, [r"^GPU Core Load", r"^GPU Utili[sz]ation", r"^GPU Load",
-                                                     r"^GPU Core$"], 7, (0, 100)))
+                                                     r"^GPU Core$"], 7, (0, 100), rid="gpu_load"))
         rows.append(_throttle_row(ix, "gpu_throttle", throttle.GPU_LABEL))
         lp, used = ix.first(gpu, [r"^GPU D3D Memory Dedicated$", r"^GPU Memory Allocated$", r"^GPU Memory Used$"], 8)
         if lp:
@@ -469,13 +476,13 @@ def autodetect(rd):
             total = round(total / 1024) * 1024
             if total < 1024:
                 total = 8192
-            rows.append(_R(t("vram"), gpu, lp, 8, "MB", (0, total)))
+            rows.append(_R(t("vram"), gpu, lp, 8, "MB", (0, total), rid="vram"))
     sysre = r"^System:"
     lp, used = ix.first(sysre, [r"^Physical Memory Used$", r"^Memory Used$"], 8)
     if lp:
         _, avail = ix.first(sysre, [r"^Physical Memory Available$", r"^Memory Available$"], 8)
         total = round((used["value"] + (avail["value"] if avail else 0)) / 1024) * 1024
-        rows.append(_R(t("ram"), sysre, lp, 8, "MB", (0, total if total >= 2048 else 16384)))
+        rows.append(_R(t("ram"), sysre, lp, 8, "MB", (0, total if total >= 2048 else 16384), rid="ram"))
     add("sec_clock", "gauge", rows)
 
     # ---------------- power
@@ -507,7 +514,7 @@ def autodetect(rd):
     if cpus:
         rows.append(_row_if(ix, t("cpu_temp"), cpu,
                             [r"^CPU \(Tctl/Tdie\)", r"^CPU \(Tdie\)", r"^CPU Package$", r"^Core \(Tctl/Tdie\)$",
-                             r"^Core \(Tdie\)$", r"^Core \(Tctl\)$"], 1, (35, 95)))
+                             r"^Core \(Tdie\)$", r"^Core \(Tctl\)$"], 1, (35, 95), rid="cpu_temp"))
         ccd_pfx = "CPU CCD" if ix.readings(cpu, r"^CPU CCD\d+ \(Tdie\)", 1) else "CCD"    # HWiNFO / LHM
         for r in ix.readings(cpu, "^" + ccd_pfx + r"(\d+) \(Tdie\)", 1):
             n = re.search(r"CCD(\d+)", r["label"]).group(1)
@@ -525,7 +532,8 @@ def autodetect(rd):
             lim = (30, 105) if re.search(r"VRM|MOS", lbl, re.I) else (30, 90)
             rows.append(_R(lbl if re.match(r"(?i)motherboard|mainboard", lbl) else t("mb", n=lbl), sre, "^" + re.escape(lbl) + "$", 1, None, lim))
     if gpu:
-        rows.append(_row_if(ix, t("gpu_temp"), gpu, [r"^GPU Temperature", r"^GPU Core$"], 1, (30, 88)))
+        rows.append(_row_if(ix, t("gpu_temp"), gpu, [r"^GPU Temperature", r"^GPU Core$"], 1, (30, 88),
+                            rid="gpu_temp"))
         rows.append(_row_if(ix, t("gpu_hot"), gpu, [r"^GPU Hot ?Spot Temperature", r"^GPU Hot ?Spot$"], 1,
                             (35, 100)))
         rows.append(_row_if(ix, t("gpu_memtemp"), gpu, [r"^GPU Memory Junction Temperature",
@@ -560,15 +568,16 @@ def autodetect(rd):
         sre = "^" + re.escape(s) + "$"
         for r in ix.readings(sre, rtype=3):
             if r["value"] > 0:
-                rows.append(_R(r["label"], sre, "^" + re.escape(r["label"]) + "$", 3, "RPM", (0, 3000)))
+                rows.append(_R(r["label"], sre, "^" + re.escape(r["label"]) + "$", 3, "RPM", (0, 3000), rid="fan"))
     if gpu:
         r = next(iter(ix.readings(gpu, r"^GPU Fan", 3)), None)
         if r:      # GPU fans legitimately stop at idle: keep the row
-            rows.append(_R(t("gpu_fan"), gpu, "^" + re.escape(r["label"]) + "$", 3, "RPM", (0, 3300)))
+            rows.append(_R(t("gpu_fan"), gpu, "^" + re.escape(r["label"]) + "$", 3, "RPM", (0, 3300),
+                           rid="gpu_fan"))
         else:      # only a duty cycle (built-in source with an NVML that has no RPM)
             r = next(iter(ix.readings(gpu, r"^GPU Fan\d* Speed$", 7)), None)
             if r:
-                rows.append(_R(t("gpu_fan"), gpu, "^" + re.escape(r["label"]) + "$", 7, "%", (0, 100)))
+                rows.append(_R(t("gpu_fan"), gpu, "^" + re.escape(r["label"]) + "$", 7, "%", (0, 100), rid="gpu_fan"))
     add("sec_fan", "fan", rows)
 
     # ---------------- network / disk
@@ -586,15 +595,15 @@ def autodetect(rd):
         lp, r = ix.first(sre, [r"^Current DL rate", r"^Download Speed$"], 8)
         unit = r["unit"] if r else "KB/s"
         rows.append(_row_if(ix, t("download"), sre, [r"^Current DL rate", r"^Download Speed$"], 8,
-                            _scaled(unit, 0, 100000)))
+                            _scaled(unit, 0, 100000), rid="download"))
         rows.append(_row_if(ix, t("upload"), sre, [r"^Current UP rate", r"^Upload Speed$"], 8,
-                            _scaled(unit, 0, 50000)))
+                            _scaled(unit, 0, 50000), rid="upload"))
     drives = ix.sensors_like(r"^Drive:")
     if drives:
         d = next((s for s in drives if re.search(r"\[C:\]", s)), drives[0])
         sre = "^" + re.escape(d) + "$"
-        rows.append(_row_if(ix, t("disk_read"), sre, r"^Read Rate$", 8, (0, 3000)))
-        rows.append(_row_if(ix, t("disk_write"), sre, r"^Write Rate$", 8, (0, 3000)))
+        rows.append(_row_if(ix, t("disk_read"), sre, r"^Read Rate$", 8, (0, 3000), rid="disk_read"))
+        rows.append(_row_if(ix, t("disk_write"), sre, r"^Write Rate$", 8, (0, 3000), rid="disk_write"))
     add("sec_net", "net", rows)
 
     # ---------------- battery (only with a system battery)
@@ -604,11 +613,15 @@ def autodetect(rd):
     pm = r"^PresentMon"
     rows = [
         _row_if(ix, t("fps"), pm, [r"^Framerate Presented \(avg\)", r"^Framerate \(avg\)", r"^Framerate$"], None,
-                (165, 30), "fps"),
+                (165, 30), "fps", rid="fps"),
         _row_if(ix, t("fps_1"), pm, [r"^Framerate Presented \(1% low\)", r"^Framerate \(1% low\)"], None,
                 (120, 20), "fps"),
         _row_if(ix, t("fps_01"), pm, [r"^Framerate Presented \(0\.1% low\)", r"^Framerate \(0\.1% low\)"], None,
                 (90, 15), "fps"),
     ]
     add("sec_fps", "fps", rows)
+    if not rids:
+        for s in sections:
+            for r in s["rows"]:
+                r.pop("rid", None)
     return sections
