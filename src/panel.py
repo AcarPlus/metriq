@@ -829,7 +829,7 @@ def main():
             # fell back to the built-in source: say why there are no temperatures / power (gone once HWiNFO delivers)
             # (the first sentence; what to do is in Settings > Data source)
             msgs.append((t(src.why).split(". ")[0], C["yellow"], None))
-        if st.get("stale") and st["items"]:             # persistent: stays until HWiNFO delivers again
+        if st.get("stale"):                              # persistent: stays until HWiNFO delivers again
             if now - (st.get("hw_rst") or 0) < 40:
                 msgs.append((t("hw_restarting"), C["yellow"], None))
                 soon.append(1.0)
@@ -1465,7 +1465,10 @@ def main():
                 st["hw_ivl_t"] = now
                 st["hw_ivl"] = hwctl.hwinfo_interval_ms(st["hw_exe"]) / 1000.0 if st.get("hw_exe") else 2.0
             hwsm.monitor.limit = max(10.0, 3 * st.get("hw_ivl", 2.0))
-            stale = hwsm.monitor.stale and hwctl.proc_running()
+            # frozen shared memory, or HWiNFO runs but has shared nothing for 20 s (e.g. the 12 h limit of the free
+            # version): only a notice with a restart button, never an automatic restart (the user decides)
+            down = (not ok and manage_on() and st.get("down_since") is not None and now - st["down_since"] > 20)
+            stale = (hwsm.monitor.stale or down) and hwctl.proc_running()
         if stale != st.get("stale"):
             st["stale"], st["need_draw"] = stale, True
             if not stale:
@@ -1477,12 +1480,12 @@ def main():
         if ok:
             st["down_since"] = None
         elif manage_on():
-            # e.g. the 12 h limit of the free version: no connection for 20 s -> restart HWiNFO (at most every 5 min)
             t0 = st.get("down_since") or now
             st["down_since"] = t0
-            # shared memory switched off in HWiNFO: fix it after 5 s instead of waiting for the generic 20 s
-            wait = 5 if (st.get("hw_exe") and not hwctl.sm_enabled(st["hw_exe"])) else 20
-            if now - t0 > wait and now - st.get("last_restart", 0) > 300:
+            # automatic repair ONLY when HWiNFO is not running (crashed / closed): start it again after 20 s
+            # (at most every 5 min). If it runs but shares nothing (12 h limit of the free version, sharing switched
+            # off) we never restart it ourselves: the stale notice above offers a button instead.
+            if not hwctl.proc_running() and now - t0 > 20 and now - st.get("last_restart", 0) > 300:
                 st["last_restart"] = now
                 if st.get("hw_exe") and hwctl.tasks_installed():
                     hwctl.repair_hwinfo(cfg["interval"], st["hw_exe"])   # restart + SensorsSM=1
