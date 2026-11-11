@@ -384,8 +384,7 @@ begin
         Break;
       end;
       // Yes = retry, No = open the download page, Cancel = continue (silent Setup: continue)
-      case SuppressibleMsgBox(FmtMessage(CustomMessage('HwinfoInstallFailed'),
-             [IntToStr(HwWingetExit), ExpandConstant('{commonappdata}\metriQ\setup.log')]),
+      case SuppressibleMsgBox(FmtMessage(CustomMessage('HwinfoInstallFailed'), [IntToStr(HwWingetExit), ExpandConstant('{commonappdata}\metriQ\setup.log')]),
              mbError, MB_YESNOCANCEL, IDCANCEL) of
         IDYES: Again := True;
         IDNO: begin
