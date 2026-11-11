@@ -1628,7 +1628,7 @@ def main():
     root.after(200, lambda: place(final=True))
 
     def show_mode_hint():
-        """First start in Basic (new install, or an older config without ui_mode): say once how to get the details."""
+        """First start in Basic (new install only; upgraded installs stay Advanced): say once how to get the details."""
         if st["closing"] or not is_basic() or cfg.get("ui_mode_hint_shown"):
             return
         cfg["ui_mode_hint_shown"] = True

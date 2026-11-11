@@ -266,8 +266,15 @@ def load_config():
         if not isinstance(user, dict):
             raise ValueError("config root must be an object")
         cfg.update(user)
+        if "ui_mode" not in user:      # an existing install keeps its familiar full view; only fresh installs start Basic
+            cfg["ui_mode"] = "advanced"
+            try:
+                _write(path, {**user, "ui_mode": "advanced"})
+            except OSError:
+                pass
     except Exception as ex:
         note = f"config.json could not be read ({ex}); using defaults"
+        cfg["ui_mode"] = "advanced"
         try:
             os.replace(path, path + ".bad")
         except OSError:
