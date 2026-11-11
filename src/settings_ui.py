@@ -493,13 +493,24 @@ class SettingsWindow:
 
     def rebuild_later(self):
         """Language / theme changed: rebuild the pages once the current event is finished (never inside the click
-        handler of a widget that is about to be destroyed)."""
-        if self._rebuild_job is None and not self._closing:
+        handler of a widget that is about to be destroyed). Rebuilding destroys the Performance page and with it a
+        running benchmark, so while one runs the rebuild waits for it to end. Returns True when it was deferred."""
+        if self._closing:
+            return False
+        if self.bench_busy():
+            if self._rebuild_job is None:
+                self._rebuild_job = self.win.after(1000, self._rebuild)
+            return True
+        if self._rebuild_job is None:
             self._rebuild_job = self.win.after_idle(self._rebuild)
+        return False
 
     def _rebuild(self):
         self._rebuild_job = None
         if self._closing or not self.winfo_exists():
+            return
+        if self.bench_busy():                      # still running: look again in a second
+            self._rebuild_job = self.win.after(1000, self._rebuild)
             return
         try:
             self.build_ui()
