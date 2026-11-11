@@ -852,7 +852,8 @@ class SettingsWindow:
             try:
                 self.btn_tasks.config(state="normal", text=t("st_tasks_fix"))
                 if res["v"] != "ok":
-                    key = {"cancelled": "st_tasks_fix_cancel", "no_hwinfo": "st_tasks_fix_nohw"}.get(res["v"],
+                    key = {"cancelled": "st_tasks_fix_cancel", "no_hwinfo": "st_tasks_fix_nohw",
+                                                                    "untrusted": "st_tasks_fix_untrusted"}.get(res["v"],
                                                                                                     "st_tasks_fix_err")
                     self.lbl_tasks.config(text=t(key), fg=self.C["yellow"])
                     return

@@ -784,6 +784,7 @@
   "st_tasks_fix_err": "Scheduled tasks: could not be installed. Details: C:\\ProgramData\\metriQ\\install_tasks.log",
   "st_tasks_fix_nohw": "Scheduled tasks: not installed — HWiNFO64.EXE was not found. Install HWiNFO64 or set its path above, then try again.",
   "st_tasks_fix_run": "Installing… confirm the Windows prompt",
+  "st_tasks_fix_untrusted": "Auto-start was not set up: this HWiNFO64 is not the signed copy installed under Program Files (for example a portable copy). Auto-start needs HWiNFO installed via Setup or winget. You can still start HWiNFO yourself.",
   "st_tasks_no": "Scheduled tasks: not installed. Run install.ps1 (see README) so the panel can start / stop HWiNFO and set its interval; until then these two options have no effect.",
   "st_tasks_no_app": "Scheduled tasks: not installed (e.g. HWiNFO was installed after metriQ). Install them so the panel can start / stop HWiNFO and set its interval; until then these two options have no effect.",
   "st_tasks_ok": "Scheduled tasks: installed (the panel can start / stop HWiNFO without a UAC prompt).",

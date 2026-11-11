@@ -5,7 +5,8 @@
     %ProgramData%\metriQ\hwinfo_interval.txt and optionally the "Start with Windows" entry.
     With -Remove it undoes all of that (used by the uninstaller).
 .NOTES
-    Exit codes: 0 ok, 3 HWiNFO64.EXE not found (tasks skipped), 1 error (see install_tasks.log).
+    Exit codes: 0 ok, 3 HWiNFO64.EXE not found (tasks skipped), 4 HWiNFO64.EXE found but not trusted (portable / unsigned /
+    outside Program Files: tasks skipped), 1 error (see install_tasks.log).
     ASCII only on purpose (Windows PowerShell 5.1 reads BOM-less files as ANSI).
 #>
 param(
@@ -62,36 +63,73 @@ function Get-SessionUser {
     return $null
 }
 
-function Find-HwinfoExe([string]$hint) {
-    # the hint may come from a user-editable setting: never accept another executable for the elevated task
-    if ($hint -and (Split-Path $hint -Leaf) -ieq 'HWiNFO64.EXE' -and (Test-Path -LiteralPath $hint -PathType Leaf)) {
-        return (Resolve-Path -LiteralPath $hint).Path
+# Security: the scheduled tasks run HWiNFO64.EXE elevated, so only a genuine, vendor-signed copy that an
+# administrator installed (under Program Files, no links on the way) may become their target. A user-writable or
+# portable copy would let any unprivileged program get administrator rights.
+$script:HwinfoSigner = 'REALiX, s.r.o.'                    # CN of HWiNFO's code signing certificate
+
+function Get-TrustedRoots {
+    $r = New-Object System.Collections.Generic.List[string]
+    foreach ($e in 'ProgramFiles', 'ProgramW6432', 'ProgramFiles(x86)') {
+        $b = [Environment]::GetEnvironmentVariable($e)
+        if ($b) { try { $f = [IO.Path]::GetFullPath($b).TrimEnd('\'); if (-not $r.Contains($f)) { $r.Add($f) } } catch { } }
     }
+    return ,$r.ToArray()
+}
+
+# $Roots / $SkipSignature exist for the dry-run test only; the scripts never pass them.
+function Test-HwinfoExe([string]$Path, [string[]]$Roots = (Get-TrustedRoots), [switch]$SkipSignature) {
+    if (-not $Path -or -not [IO.Path]::IsPathRooted($Path)) { return $false }
+    if ($Path.IndexOfAny([IO.Path]::GetInvalidPathChars()) -ge 0) { return $false }
+    if (($Path -split '[\/]') -contains '..') { return $false }
+    try {
+        $fi = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        if ($fi.PSIsContainer -or $fi.Name -ine 'HWiNFO64.EXE') { return $false }
+        $full = $fi.FullName
+        $root = $Roots | Where-Object { $full.StartsWith($_ + '\', [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
+        if (-not $root) { return $false }
+        # no junction / symlink / mount point between Program Files and the file (the file itself included)
+        $p = $full
+        while ($p -and $p.Length -gt $root.Length) {
+            if ((Get-Item -LiteralPath $p -Force -ErrorAction Stop).Attributes -band [IO.FileAttributes]::ReparsePoint) { return $false }
+            $p = Split-Path $p -Parent
+        }
+        if (-not $SkipSignature) {
+            $sig = Get-AuthenticodeSignature -LiteralPath $full
+            if ($sig.Status -ne 'Valid' -or -not $sig.SignerCertificate) { return $false }
+            if ($sig.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -ne $script:HwinfoSigner) { return $false }
+        }
+        return $true
+    } catch { return $false }
+}
+
+# Returns the trusted path, or $null. $script:HwinfoRejected is set when a HWiNFO64.EXE exists but is not trusted
+# (portable / unsigned / outside Program Files) so the caller can say why.
+function Find-HwinfoExe([string]$hint) {
+    $script:HwinfoRejected = $false
     $cands = New-Object System.Collections.Generic.List[string]
-    foreach ($hive in 'HKLM:', 'HKCU:') {
-        foreach ($sub in 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall', 'SOFTWARE\HWiNFO64') {
-            $p = Join-Path $hive $sub
-            if (-not (Test-Path $p)) { continue }
-            $keys = if ($sub -like '*Uninstall') { Get-ChildItem $p -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -like '*HWiNFO*' } } else { Get-Item $p }
-            foreach ($k in $keys) {
-                foreach ($name in $k.GetValueNames()) {
-                    $v = $k.GetValue($name)
-                    if ($v -is [string] -and $v) {
-                        $v = $v.Trim('"').Split(',')[0]
-                        if ($v.IndexOfAny([IO.Path]::GetInvalidPathChars()) -ge 0 -or -not [IO.Path]::IsPathRooted($v)) { continue }
-                        $cands.Add($v); $cands.Add((Join-Path $v 'HWiNFO64.EXE'))
-                    }
+    if ($hint) { $cands.Add($hint) }
+    foreach ($sub in 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall', 'SOFTWARE\HWiNFO64') {
+        $p = Join-Path 'HKLM:' $sub                                   # HKLM only: HKCU is writable without administrator rights
+        if (-not (Test-Path $p)) { continue }
+        $keys = if ($sub -like '*Uninstall') { Get-ChildItem $p -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -like '*HWiNFO*' } } else { Get-Item $p }
+        foreach ($k in $keys) {
+            foreach ($name in $k.GetValueNames()) {
+                $v = $k.GetValue($name)
+                if ($v -is [string] -and $v) {
+                    $v = $v.Trim('"').Split(',')[0]
+                    if ($v.IndexOfAny([IO.Path]::GetInvalidPathChars()) -ge 0 -or -not [IO.Path]::IsPathRooted($v)) { continue }
+                    $cands.Add($v); $cands.Add((Join-Path $v 'HWiNFO64.EXE'))
                 }
             }
         }
     }
-    foreach ($e in 'ProgramFiles', 'ProgramW6432', 'ProgramFiles(x86)') {
-        $b = [Environment]::GetEnvironmentVariable($e)
-        if ($b) { $cands.Add((Join-Path $b 'HWiNFO64\HWiNFO64.EXE')) }
-    }
+    foreach ($b in (Get-TrustedRoots)) { $cands.Add((Join-Path $b 'HWiNFO64\HWiNFO64.EXE')) }
     foreach ($c in $cands) {
         try {
-            if ((Test-Path -LiteralPath $c -PathType Leaf) -and ((Split-Path $c -Leaf) -ieq 'HWiNFO64.EXE')) { return (Resolve-Path -LiteralPath $c).Path }
+            if (-not ((Test-Path -LiteralPath $c -PathType Leaf) -and ((Split-Path $c -Leaf) -ieq 'HWiNFO64.EXE'))) { continue }
+            if (Test-HwinfoExe $c) { return (Get-Item -LiteralPath $c -Force).FullName }
+            $script:HwinfoRejected = $true
         } catch { }
     }
     return $null
@@ -133,6 +171,10 @@ try {
 
     $exe = Find-HwinfoExe $HwinfoPath
     if (-not $exe) {
+        if ($script:HwinfoRejected) {
+            Write-Log 'SKIPPED: HWiNFO64.EXE is not an installed, vendor-signed copy under Program Files (portable / unsigned): scheduled tasks not installed.'
+            exit 4
+        }
         Write-Log 'SKIPPED: HWiNFO64.EXE not found, scheduled tasks not installed.'
         exit 3
     }

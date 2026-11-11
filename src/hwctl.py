@@ -132,13 +132,32 @@ class _ShellExecuteInfo(ctypes.Structure):
                 ("dwHotKey", wintypes.DWORD), ("hIconOrMonitor", wintypes.HANDLE), ("hProcess", wintypes.HANDLE)]
 
 
+def under_program_files(path):
+    """True when `path` really lies below %ProgramFiles% / %ProgramFiles(x86)% (links resolved, no '..').
+    Cheap pre-check before a UAC prompt; the elevated script repeats it and also verifies the signature."""
+    try:
+        if not path or ".." in os.path.normpath(path).split(os.sep) or ".." in path.replace("/", "\\").split("\\"):
+            return False
+        real = os.path.normcase(os.path.realpath(path))
+        for env in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+            base = os.environ.get(env)
+            if (base and real.startswith(os.path.normcase(os.path.realpath(base)).rstrip("\\") + "\\")
+                    and os.path.normcase(os.path.abspath(path)) == real):
+                return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
 def register_tasks_elevated(hw_exe=None, timeout_s=180, hwnd=None):
     """Installs the scheduled tasks after the fact (e.g. HWiNFO was installed after metriQ): runs Setup's
     register_tasks.ps1 elevated (one UAC prompt) and waits for it.
-    Returns "ok" | "cancelled" (UAC declined) | "no_hwinfo" | "no_script" | "error"."""
+    Returns "ok" | "cancelled" (UAC declined) | "no_hwinfo" | "untrusted" (portable / unsigned HWiNFO) | "no_script" | "error"."""
     script = task_script()
     if not script:
         return "no_script"
+    if hw_exe and os.path.isfile(hw_exe) and not under_program_files(hw_exe):
+        return "untrusted"                            # portable copy: do not even ask for administrator rights
     ps = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "WindowsPowerShell", "v1.0",
                       "powershell.exe")
     user = "\\".join(x for x in (os.environ.get("USERDOMAIN", ""), os.environ.get("USERNAME", "")) if x)
@@ -146,7 +165,7 @@ def register_tasks_elevated(hw_exe=None, timeout_s=180, hwnd=None):
     if user:
         params += f' -User "{user}"'
     if hw_exe and os.path.isfile(hw_exe) and os.path.basename(hw_exe).upper() == EXE_NAME:
-        params += f' -HwinfoPath "{hw_exe}"'
+        params += f' -HwinfoPath "{hw_exe}"'      # only a hint: the script re-checks location + signature itself
     sei = _ShellExecuteInfo()
     sei.cbSize = ctypes.sizeof(sei)
     sei.fMask = 0x00000040 | 0x00000100              # SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC
@@ -174,7 +193,7 @@ def register_tasks_elevated(hw_exe=None, timeout_s=180, hwnd=None):
     finally:
         k.CloseHandle(sei.hProcess)
         _tasks_cache.pop("v", None)
-    return {0: "ok", 3: "no_hwinfo"}.get(code.value, "error")
+    return {0: "ok", 3: "no_hwinfo", 4: "untrusted"}.get(code.value, "error")
 
 
 def run_task(name):

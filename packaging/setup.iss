@@ -50,6 +50,7 @@ en.InstallHwinfoTask=Also install HWiNFO64 (free, recommended: CPU / GPU tempera
 en.InstallingHwinfo=Installing HWiNFO64 (winget)...
 en.HwinfoInstallFailed=HWiNFO64 could not be installed automatically. The download page will open; install it and run this Setup again so the panel can start / stop HWiNFO.
 en.TasksFailed=The scheduled tasks for HWiNFO control could not be created. The panel still works in read-only mode.%n%nDetails: C:\ProgramData\metriQ\install_tasks.log
+en.TasksUntrusted=Automatic HWiNFO start / stop was not set up: the HWiNFO64 found on this PC is not the signed, installed version (for example a portable copy). Auto-start needs HWiNFO installed through Setup or winget. You can still start HWiNFO yourself; the panel reads it as usual.
 en.FanNoticeTitle=Fan control service
 en.FanNoticeSub=Setup installs a Windows service for metriQ's fan control.
 en.FanNoticeText=Setup registers the Windows service "metriQ Fan Control" (metriQFan, runs as LocalSystem, starts with Windows).%n%n  •  It does nothing until you turn fan control on in metriQ (Settings > Fan) and accept the warning there.%n  •  Stopping the service, pressing STOP or turning fan control off hands every fan back to BIOS / the graphics driver.%n  •  Motherboard fans need the PawnIO driver (optional task on the previous page); it is installed only if you tick it.%n%nUninstalling metriQ stops and removes the service. No data is sent anywhere.
@@ -65,6 +66,7 @@ tr.InstallHwinfoTask=HWiNFO64'ü de kur (ücretsiz, önerilir: CPU / GPU sıcakl
 tr.InstallingHwinfo=HWiNFO64 kuruluyor (winget)...
 tr.HwinfoInstallFailed=HWiNFO64 otomatik kurulamadı. İndirme sayfası açılacak; HWiNFO'yu kurup bu kurulumu yeniden çalıştırırsanız panel HWiNFO'yu açıp kapatabilir.
 tr.TasksFailed=HWiNFO denetimi için zamanlanmış görevler oluşturulamadı. Panel yine de salt okunur modda çalışır.%n%nAyrıntı: C:\ProgramData\metriQ\install_tasks.log
+tr.TasksUntrusted=HWiNFO'nun otomatik açılıp kapanması kurulmadı: bu bilgisayardaki HWiNFO64 imzalı, kurulu sürüm değil (örneğin taşınabilir kopya). Otomatik başlatma için HWiNFO'nun Kurulum ya da winget ile kurulması gerekir. HWiNFO'yu elle başlatabilirsiniz; panel yine okur.
 tr.FanNoticeTitle=Fan kontrol hizmeti
 tr.FanNoticeSub=Kurulum, metriQ'in fan kontrolü için bir Windows hizmeti ekler.
 tr.FanNoticeText=Kurulum "metriQ Fan Control" adlı bir Windows hizmeti kaydeder (metriQFan, LocalSystem olarak çalışır, Windows ile başlar).%n%n  •  metriQ'te fan kontrolünü açıp (Ayarlar > Fan) oradaki uyarıyı onaylamadıkça hiçbir şey yapmaz.%n  •  Hizmeti durdurmak, DURDUR'a basmak ya da fan kontrolünü kapatmak bütün fanları BIOS'a / ekran kartı sürücüsüne geri verir.%n  •  Anakart fanları için PawnIO sürücüsü gerekir (önceki sayfadaki isteğe bağlı görev); yalnızca işaretlerseniz kurulur.%n%nmetriQ kaldırılınca hizmet durdurulur ve silinir. Hiçbir veri bir yere gönderilmez.
@@ -371,7 +373,10 @@ begin
   if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Params, '', SW_HIDE, ewWaitUntilTerminated, rc) then
     rc := 1;
   // rc = 3: HWiNFO64.EXE not found -> no tasks; the panel falls back to its built-in data source
-  if (rc <> 0) and (rc <> 3) then
+  // rc = 4: a HWiNFO64.EXE exists but is portable / unsigned / outside Program Files -> no tasks (security rule)
+  if rc = 4 then
+    SuppressibleMsgBox(CustomMessage('TasksUntrusted'), mbInformation, MB_OK, IDOK)
+  else if (rc <> 0) and (rc <> 3) then
     SuppressibleMsgBox(CustomMessage('TasksFailed'), mbError, MB_OK, IDOK);
 
   if PawnioMissing() and WizardIsTaskSelected('installpawnio') and not InstallPawnioWinget() then

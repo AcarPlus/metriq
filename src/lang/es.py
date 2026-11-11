@@ -795,6 +795,7 @@ STRINGS = {
     "why_hw_none": "Fuente integrada: las temperaturas y el consumo requieren HWiNFO, y HWiNFO64 no está instalado. Instálelo desde hwinfo.com y vuelva a ejecutar el Setup de metriQ.",
     "why_hw_noshm": "Fuente integrada: HWiNFO se está ejecutando pero su memoria compartida está desactivada. En HWiNFO: Settings > Shared Memory Support (la versión gratuita la desactiva tras 12 horas: reinicie HWiNFO).",
     "why_hw_notasks": "Fuente integrada: HWiNFO está instalado pero no se está ejecutando, y el panel no puede iniciarlo (faltan sus tareas programadas). Vuelva a ejecutar el Setup de metriQ o inicie HWiNFO64 usted mismo.",
+    "st_tasks_fix_untrusted": "No se configuró el inicio automático: este HWiNFO64 no es la copia firmada instalada en Archivos de programa (por ejemplo, una copia portátil). El inicio automático requiere HWiNFO instalado con el instalador o winget. Aún puede iniciar HWiNFO usted mismo.",
 }
 
 # {key: text}: same keys as tools/i18n_en.json "help" (the keys there have no "hp_" prefix)
