@@ -1369,8 +1369,13 @@ class SettingsWindow:
         return d
 
     def validate(self):
+        """Index of the first page with an invalid field, or None. Only pages the current view mode shows are checked:
+        Basic hides the HWiNFO / logging pages, and a stale path stored there (e.g. a removed PresentMon) must not stop
+        the user from saving anything; such values are written back untouched."""
         bad = None
         for tab, rc in self.checks + self.lay_checks:
+            if tab not in self.nav_map:
+                continue
             if not rc() and bad is None:
                 bad = tab
         return bad
