@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from ctypes import wintypes
 
 import config
@@ -203,6 +204,32 @@ def run_task(name):
                               creationflags=NOWIN, timeout=10).returncode == 0
     except Exception:
         return False
+
+
+def restart_hwinfo(sec, exe, wait_s=8.0):
+    """The user asked to restart HWiNFO (e.g. its free version stopped the shared memory after 12 hours).
+    With the installed tasks: the SetInterval task (elevated, no UAC) restarts it and re-enables Shared Memory Support.
+    Without tasks: end a HWiNFO that this account may close, and start the copy at `exe` again (its own UAC prompt if it asks).
+    Returns "task" | "direct" | "failed". Only ever called from a button click, never on a timer."""
+    if tasks_installed():
+        return "task" if repair_hwinfo(sec, exe) else "failed"
+    if not exe or not os.path.isfile(exe) or os.path.basename(exe).upper() != EXE_NAME:
+        return "failed"
+    try:
+        subprocess.run(["taskkill", "/im", EXE_NAME], capture_output=True, creationflags=NOWIN, timeout=10)
+        t_end = time.time() + wait_s
+        while proc_running() and time.time() < t_end:
+            time.sleep(0.25)
+        if proc_running():
+            return "failed"                      # it runs with more rights than the panel: restart it by hand
+        sh = ctypes.windll.shell32.ShellExecuteW        # HWiNFO may ask for administrator rights: its own UAC prompt
+        sh.restype = ctypes.c_void_p
+        sh.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPCWSTR,
+                       ctypes.c_int]
+        ok = (sh(None, "open", exe, None, os.path.dirname(exe), 7) or 0) > 32      # SW_SHOWMINNOACTIVE
+        return "direct" if ok else "failed"
+    except Exception:
+        return "failed"
 
 
 # ------------------------------------------------------------------ HWiNFO polling interval
