@@ -57,6 +57,11 @@ Türkçe açıklama için aşağıya bakın: [Türkçe](#türkçe).
   always on top, logging, CSV format, data source and HWiNFO options, and the layout itself (show /
   hide rows, names, colour limits, bars, section titles / colours / order, "Add sensor" from the live sensor list).
   Changes apply live. The *Data source* tab also lists which data the active source cannot provide, and why.
+- **Basic / Advanced view**: metriQ starts in *Basic*, a short panel in plain words (processor, graphics card, memory,
+  network and disk, FPS, battery) with a status word such as Normal / Warm / Very hot and a one-sentence explanation on
+  hover. *Advanced* is the full panel with your own layout, MIN / MAX / AVG, recording options and fan control. Switch
+  with the Basic | Advanced button in the status bar, the `B` key or Settings > Appearance; your Advanced layout is never
+  changed by Basic. Config: `ui_mode` (`"basic"` / `"advanced"`), `ui_mode_hint_shown`.
 - **Mini mode**: a small semi-transparent strip with a few readings (FPS, CPU / GPU temperature, usage, power by
   default) on top of your game, toggled by a global hotkey (`Ctrl+Shift+M`) or `M` on the panel, see [Mini mode](#mini-mode-in-game-overlay).
 - **Multi-column layout** for wide screens: sections are distributed over 1 to 3 columns (automatic by window shape).

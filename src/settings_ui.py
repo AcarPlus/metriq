@@ -59,6 +59,14 @@ PAGES = (("st_tab_look", "look", "accent_clock", "gauge"), ("st_tab_log", "log",
          ("fn_tab", "fan", "accent_fan", "fan"),
          ("mini_tab", "mini", "accent_net", "fps"))
 
+BASIC_PAGES = ("look", "perf", "mini")       # pages (by icon) a normal user needs; Basic hides the others, fan control included
+
+
+def visible_pages(mode):
+    """Indices into PAGES shown in the sidebar for a view mode ('basic' | 'advanced')."""
+    return [i for i, p in enumerate(PAGES) if mode == "advanced" or p[1] in BASIC_PAGES]
+
+
 _bg = uikit._bg_of
 themes_keys = {"theme", "theme_overrides", "value_color_mode", "value_steps"}
 
@@ -409,8 +417,9 @@ class SettingsWindow:
         tk.Frame(outer, bg=C["border"], height=1).pack(side="bottom", fill="x")
         main = tk.Frame(outer, bg=C["bg"])
         main.pack(side="top", fill="both", expand=True)
-        items = [(t(k), icon, C[tok]) for k, icon, tok, _ in PAGES]
-        self.nav = uikit.Nav(main, C, items, self.select, (self.F_TXT, 10), (self.F_HEAD, 12, "bold"), t("st_title"),
+        self.nav_map = visible_pages(config.norm_ui_mode(cfg.get("ui_mode")))      # sidebar row -> page index
+        items = [(t(PAGES[i][0]), PAGES[i][1], C[PAGES[i][2]]) for i in self.nav_map]
+        self.nav = uikit.Nav(main, C, items, lambda j: self.select(self.nav_map[j]), (self.F_TXT, 10), (self.F_HEAD, 12, "bold"), t("st_title"),
                              bg=C["bg"])
         self.nav.pack(side="left", fill="y")
         tk.Frame(main, bg=C["border"], width=1).pack(side="left", fill="y")
@@ -524,18 +533,20 @@ class SettingsWindow:
 
     def select(self, i):
         i = max(0, min(int(i), len(self.pages) - 1))
+        if i not in self.nav_map:          # a page the current view mode hides is never built nor shown
+            i = self.nav_map[0]
         self._ensure(i)
         for pg in self.pages:
             pg["frame"].pack_forget()
         pg = self.pages[i]
         pg["frame"].pack(fill="both", expand=True)
         self.tab_index = i
-        self.nav.set_active(i)
+        self.nav.set_active(self.nav_map.index(i))
         self.title_lbl.config(text=pg["title"])
 
     def _ensure(self, i):
         """Build page i if it has not been built yet (first visit)."""
-        fn = self._lazy.pop(i, None)
+        fn = self._lazy.pop(i, None) if i in self.nav_map else None
         if fn is None:
             return
         self.win.configure(cursor="watch")
@@ -563,6 +574,12 @@ class SettingsWindow:
 
     def _tab_look(self, p, cfg):
         C = self.C
+        card = self.card(p, t("st_card_uimode"), "gauge")
+        self.v_mode = tk.StringVar(value=config.norm_ui_mode(cfg.get("ui_mode")))
+        seg = uikit.Segmented(card.body, C, [t("ui_basic"), t("ui_advanced")], 1 if self.v_mode.get() == "advanced" else 0,
+                              lambda i: self.v_mode.set("advanced" if i else "basic"), (self.F_TXT, 10))
+        self.row(card, t("st_uimode"), seg, t("st_uimode_hint"))
+
         card = self.card(p, t("st_card_window"), "fps")
         mons = self.api.monitors() or []
         self.mon_vals = ["auto"] + [m["index"] for m in mons]
@@ -1317,6 +1334,7 @@ class SettingsWindow:
             except ValueError:
                 return default
         d = {
+            "ui_mode": self.v_mode.get(),
             "language": self.lang_vals[max(0, self.cb_lang.current())],
             "columns": self.col_vals[max(0, self.cb_cols.current())],
             "monitor": self.mon_vals[max(0, self.cb_mon.current())],
@@ -1396,6 +1414,7 @@ class SettingsWindow:
             lay_cfg = copy.deepcopy(self.lay)
         lang_changed = "language" in changes
         theme_changed = bool(themes_keys & set(changes))
+        mode_changed = "ui_mode" in changes
         ok = self.api.apply(changes, lay_mode, lay_cfg)
         self.initial = new
         if lay_mode == "explicit":
@@ -1405,7 +1424,7 @@ class SettingsWindow:
         self.lay_mode = "keep"
         if closing:
             pass
-        elif lang_changed or theme_changed:
+        elif lang_changed or theme_changed or mode_changed:
             if theme_changed:          # the settings window follows the theme
                 self.C, (self.F_TXT, self.F_HEAD, self.F_NUM) = self.api.C, self.api.fonts_now()
                 self.win.configure(bg=self.C["bg"])
