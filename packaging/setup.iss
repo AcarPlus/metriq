@@ -19,8 +19,6 @@ PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 DefaultDirName={autopf}\{#AppName}
-; v1.2.0 renamed the app (was "HWiNFO Panel", folder {autopf}\HWiNFO Panel): never reuse the old install folder
-UsePreviousAppDir=no
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 DisableDirPage=auto
@@ -84,10 +82,6 @@ Name: "autostart"; Description: "{cm:AutoStart}"; GroupDescription: "{cm:Additio
 Type: filesandordirs; Name: "{app}\_internal"
 ; fan service files (the service is stopped in PrepareToInstall)
 Type: filesandordirs; Name: "{app}\fan"
-; shortcuts of the pre-1.2.0 name "HWiNFO Panel" (the old program folder is removed in CurStepChanged)
-Type: files; Name: "{autoprograms}\HWiNFO Panel.lnk"
-Type: filesandordirs; Name: "{autoprograms}\HWiNFO Panel"
-Type: files; Name: "{autodesktop}\HWiNFO Panel.lnk"
 
 [Files]
 ; the GPU benchmark helper (GpuBench.exe) is bundled into dist\metriQ\_internal by metriq.spec: fail if it is not
@@ -128,26 +122,14 @@ Type: filesandordirs; Name: "{app}"
 Type: filesandordirs; Name: "{commonappdata}\{#AppName}"
 
 [Code]
-const
-  // pre-1.2.0 name of the app (back-compat: upgrade cleanup only)
-  OldAppName = 'HWiNFO Panel';
-  OldAppExe = 'HWiNFO Panel.exe';
-  // the (unchanged) AppId GUID of [Setup]: key of the uninstall entry the old version wrote
-  UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{DD4FA703-DC9E-475A-9631-EBD77AE96BA9}_is1';
-
-var
-  OldAppDir: String;
-
 procedure StopPanel();
 var
   rc: Integer;
 begin
-  // polite first (WM_CLOSE), then forced; also the pre-1.2.0 "HWiNFO Panel.exe"
+  // polite first (WM_CLOSE), then forced
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/im "{#AppExe}"', '', SW_HIDE, ewWaitUntilTerminated, rc);
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/im "' + OldAppExe + '"', '', SW_HIDE, ewWaitUntilTerminated, rc);
   Sleep(1500);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im "{#AppExe}"', '', SW_HIDE, ewWaitUntilTerminated, rc);
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im "' + OldAppExe + '"', '', SW_HIDE, ewWaitUntilTerminated, rc);
 end;
 
 // stop the fan service (it hands every fan back to BIOS / driver) so its files can be replaced; waits up to 15 s
@@ -167,30 +149,10 @@ begin
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
-var
-  s: String;
 begin
-  // remember where the old "HWiNFO Panel" was installed (the uninstall entry is overwritten later in this Setup)
-  OldAppDir := '';
-  if RegQueryStringValue(HKLM64, UninstallKey, 'Inno Setup: App Path', s) then
-    OldAppDir := RemoveBackslash(s);
   StopPanel();
   StopFanService();
   Result := '';
-end;
-
-// upgrade from "HWiNFO Panel" (<= 1.1.x): delete its program folder (default {autopf}\HWiNFO Panel, or the folder
-// the old uninstall entry points to, but only when it really holds the old exe and is not the new folder)
-procedure RemoveOldInstall();
-var
-  d: String;
-begin
-  d := ExpandConstant('{autopf}\') + OldAppName;
-  if DirExists(d) and FileExists(AddBackslash(d) + OldAppExe) and (CompareText(d, ExpandConstant('{app}')) <> 0) then
-    DelTree(d, True, True, True);
-  if (OldAppDir <> '') and FileExists(AddBackslash(OldAppDir) + OldAppExe) and
-     (CompareText(OldAppDir, ExpandConstant('{app}')) <> 0) then
-    DelTree(OldAppDir, True, True, True);
 end;
 
 // the panel's in-app updater starts the Setup with /UPDATE
@@ -349,7 +311,6 @@ var
 begin
   if CurStep <> ssPostInstall then
     Exit;
-  RemoveOldInstall();
   hw := FindHwinfo();
   if (hw = '') and WizardIsTaskSelected('installhwinfo') then
   begin

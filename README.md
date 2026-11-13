@@ -219,8 +219,7 @@ Everything personal lives in `%LOCALAPPDATA%\metriQ\` (created on first run, nev
 | `hwinfo_interval.txt` | interval handed to the `SetInterval` task (Setup installs use `%ProgramData%\metriQ\hwinfo_interval.txt` instead) |
 | `panel.log` | traceback if the panel crashed at start |
 
-Set the environment variable `METRIQ_DIR` to use another folder (portable use; `HWINFO_PANEL_DIR`, the name before
-v1.2.0, still works).
+Set the environment variable `METRIQ_DIR` to use another folder (portable use).
 
 ### config.json
 

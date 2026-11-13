@@ -21,26 +21,14 @@ $pdDir = Join-Path $env:ProgramData 'metriQ'
 $valFile = Join-Path $pdDir 'hwinfo_interval.txt'
 $log = Join-Path $pdDir 'install_tasks.log'
 $runName = 'metriQ'
-# Pre-1.2.0 name of the app ("HWiNFO Panel"): removed on install / uninstall (back-compat cleanup only)
-$oldName = 'HWiNFO Panel'
-$oldPdDir = Join-Path $env:ProgramData $oldName
-
-function Remove-OldTasks {
-    Get-ScheduledTask -TaskPath "\$oldName\" -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
-    try { $svc = New-Object -ComObject Schedule.Service; $svc.Connect(); $svc.GetFolder('\').DeleteFolder($oldName, 0) } catch { }
-    if (Test-Path -LiteralPath $oldPdDir) { Remove-Item -LiteralPath $oldPdDir -Recurse -Force -ErrorAction SilentlyContinue }
-}
 
 if ($Remove) {
     $ErrorActionPreference = 'Continue'
     Get-ScheduledTask -TaskPath '\metriQ\' -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$false
     try { $svc = New-Object -ComObject Schedule.Service; $svc.Connect(); $svc.GetFolder('\').DeleteFolder('metriQ', 0) } catch { }
-    Remove-OldTasks
     foreach ($h in Get-ChildItem 'Registry::HKEY_USERS' -ErrorAction SilentlyContinue) {
         if ($h.PSChildName -like '*_Classes') { continue }
-        foreach ($n in \($runName, $oldName)) {
-            Remove-ItemProperty -Path "Registry::$($h.Name)\Software\Microsoft\Windows\CurrentVersion\Run" -Name $n -ErrorAction SilentlyContinue
-        }
+        Remove-ItemProperty -Path "Registry::$($h.Name)\Software\Microsoft\Windows\CurrentVersion\Run" -Name $runName -ErrorAction SilentlyContinue
     }
     if (Test-Path -LiteralPath $pdDir) { Remove-Item -LiteralPath $pdDir -Recurse -Force -ErrorAction SilentlyContinue }
     exit 0
@@ -101,19 +89,6 @@ try {
         throw "No interactive user found (got '$who')."
     }
 
-    # upgrade from "HWiNFO Panel" (<= 1.1.x): drop its scheduled tasks and ProgramData folder (the Setup removes its
-    # program folder and shortcuts); a "Start with Windows" entry of the old app is carried over to the new one
-    Remove-OldTasks
-    $carryAutostart = $false
-    try {
-        $usid0 = ([Security.Principal.NTAccount]$who).Translate([Security.Principal.SecurityIdentifier]).Value
-        $key0 = "Registry::HKEY_USERS\$usid0\Software\Microsoft\Windows\CurrentVersion\Run"
-        if ((Test-Path $key0) -and ($null -ne (Get-ItemProperty -Path $key0 -Name $oldName -ErrorAction SilentlyContinue))) {
-            $carryAutostart = $true
-            Remove-ItemProperty -Path $key0 -Name $oldName -ErrorAction SilentlyContinue
-        }
-    } catch { }
-
     # shared interval file: the only user-writable input of the tasks (validated by set_interval.ps1)
     New-Item -ItemType Directory -Force -Path $pdDir | Out-Null
     if (-not (Test-Path -LiteralPath $valFile)) { Set-Content -LiteralPath $valFile -Value '2000' -Encoding Ascii }
@@ -122,7 +97,7 @@ try {
     & icacls.exe $pdDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' | Out-Null
     & icacls.exe $valFile /grant '*S-1-5-32-545:(R,W)' | Out-Null
 
-    if (($Autostart -or $carryAutostart) -and $AppExe) {
+    if ($Autostart -and $AppExe) {
         $usid = ([Security.Principal.NTAccount]$who).Translate([Security.Principal.SecurityIdentifier]).Value
         $key = "Registry::HKEY_USERS\$usid\Software\Microsoft\Windows\CurrentVersion\Run"
         if (Test-Path $key) { Set-ItemProperty -Path $key -Name $runName -Value "`"$AppExe`"" }
