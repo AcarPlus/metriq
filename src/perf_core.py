@@ -1837,8 +1837,7 @@ def _legacy_history_paths():
     cands = []
     if not config.env_dir():                          # a test / portable data folder is its own world
         base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
-        for name in (config.APP_NAME, config.OLD_APP_NAME):
-            cands.append(os.path.join(base, name, "benchmarks.json"))
+        cands.append(os.path.join(base, config.APP_NAME, "benchmarks.json"))
         try:                                          # Microsoft Store Python: %LOCALAPPDATA% is redirected into the package
             import glob
             cands += glob.glob(os.path.join(base, "Packages", "*", "LocalCache", "Local", "*", "benchmarks.json"))

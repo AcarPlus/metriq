@@ -30,12 +30,9 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent   # repo root
 $src = Join-Path $root 'src'
 $dataDirGiven = [bool]$DataDir
-# data folder override: METRIQ_DIR (HWINFO_PANEL_DIR is the pre-1.2.0 name, still accepted)
-$envDir = if ($env:METRIQ_DIR) { $env:METRIQ_DIR } else { $env:HWINFO_PANEL_DIR }
-# pre-1.2.0 name of the app ("HWiNFO Panel"): its tasks / shortcut / program folder are removed (back-compat)
-$oldName = 'HWiNFO Panel'
+# data folder override: METRIQ_DIR
 if (-not $DataDir) {
-    $DataDir = if ($envDir) { $envDir } else { Join-Path $env:LOCALAPPDATA 'metriQ' }
+    $DataDir = if ($env:METRIQ_DIR) { $env:METRIQ_DIR } else { Join-Path $env:LOCALAPPDATA 'metriQ' }
 }
 $appId = 'metriQ.App'
 $taskDir = Join-Path $env:ProgramFiles 'metriQ'
@@ -152,12 +149,6 @@ if ($TasksOnly) {
         Copy-Item -LiteralPath (Join-Path $src 'set_interval.ps1') -Destination (Join-Path $taskDir 'set_interval.ps1') -Force
         Copy-Item -LiteralPath (Join-Path $src 'hidden.vbs') -Destination (Join-Path $taskDir 'hidden.vbs') -Force
 
-        # upgrade from "HWiNFO Panel": remove its tasks and program folder
-        Get-ScheduledTask -TaskPath "\$oldName\" -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
-        try { $svc = New-Object -ComObject Schedule.Service; $svc.Connect(); $svc.GetFolder('\').DeleteFolder($oldName, 0) } catch { }
-        $oldDir = Join-Path $env:ProgramFiles $oldName
-        if (Test-Path -LiteralPath $oldDir) { Remove-Item -LiteralPath $oldDir -Recurse -Force -ErrorAction SilentlyContinue }
-
         $vbs = Join-Path $taskDir 'hidden.vbs'
         $valFile = Join-Path $DataDir 'hwinfo_interval.txt'
         $defs = @(
@@ -207,7 +198,6 @@ Write-Host "Data folder   : $DataDir"
 
 # Start Menu shortcut
 $lnk = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\metriQ.lnk'
-$oldLnk = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\$oldName.lnk"
 if (Test-Path -LiteralPath $oldLnk) { Remove-Item -LiteralPath $oldLnk -Force }
 $ws = New-Object -ComObject WScript.Shell
 $sc = $ws.CreateShortcut($lnk)
