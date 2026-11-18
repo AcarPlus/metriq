@@ -16,6 +16,7 @@ The data comes from one of three sources: [HWiNFO](https://www.hwinfo.com/) (wid
 ## ⬇ Download
 
 **[Download the latest Setup (metriQ-Setup.exe)](../../releases/latest)** — Windows 10 / 11, no Python needed.
+Download page: **<https://acarplus.github.io/metriq/>**
 
 1. Run the Setup. It checks for HWiNFO and offers to install it for you (free, via winget) and to turn on its
    *Shared Memory Support*. You can skip it: the panel then uses its built-in data source.
@@ -27,7 +28,8 @@ The Setup is not code-signed yet, so Windows SmartScreen may show *"Windows prot
 Signing: see the [Code signing policy](#code-signing-policy).
 
 **Türkçe:** [En son Setup'ı indir](../../releases/latest) → çalıştır (HWiNFO yoksa kurmayı teklif eder) → Başlat
-menüsünden **metriQ**'i aç. Ayarlar için ⚙ ya da **S**. Ayrıntılar: [Türkçe](#türkçe).
+menüsünden **metriQ**'i aç. Ayarlar için ⚙ ya da **S**. İndirme sayfası: <https://acarplus.github.io/metriq/>.
+Ayrıntılar: [Türkçe](#türkçe).
 > HWiNFO is a trademark of its owner. This project only *reads* the sensor data that HWiNFO publishes through its
 > documented shared memory interface (or that LibreHardwareMonitor publishes through its local web server).
 

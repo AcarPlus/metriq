@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>metriQ · İndir</title>
+<meta name="description" content="metriQ: Windows için her zaman üstte duran, canlı sıcaklık, kullanım, güç, fan ve FPS gösteren ücretsiz sensör paneli.">
+<meta name="theme-color" content="#0d1117">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M5 22a11 11 0 0 1 22 0' fill='none' stroke='%2358d6c4' stroke-width='3.2' stroke-linecap='round'/%3E%3Cpath d='M16 22l6-7' stroke='%2358d6c4' stroke-width='3.2' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #0d1117; --panel: #151b23; --line: #262e38; --fg: #edf1f5; --muted: #9ba6b2; --faint: #6b7682;
+    --accent: #58d6c4; --accent-fg: #062520; --hot: #ff7b72; --warm: #f2c14e; --ok: #56d364;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f5f7f8; --panel: #ffffff; --line: #dfe4e8; --fg: #14191e; --muted: #536170; --faint: #87929d;
+      --accent: #0a7f71; --accent-fg: #ffffff; --hot: #c2352b; --warm: #a26a00; --ok: #1d7f32; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); }
+  body { font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: inherit; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 16px; }
+  header { display: flex; align-items: center; gap: 10px; padding: 22px 0; font-weight: 650; font-size: 18px; }
+  header svg { flex: none; color: var(--accent); }
+  header .gh { margin-left: auto; font-weight: 500; font-size: 14px; color: var(--muted); text-decoration: none; }
+  header .gh:hover { color: var(--fg); }
+  .hero { padding: 40px 0 28px; display: grid; gap: 28px; grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 760px) { .hero { grid-template-columns: minmax(0, 1fr) 260px; align-items: center; } }
+  h1 { font-size: clamp(30px, 6vw, 46px); line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 14px; }
+  .lead { font-size: 18px; color: var(--muted); max-width: 600px; margin: 0 0 28px; }
+  .cta { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+  .btn { display: inline-flex; align-items: center; gap: 10px; background: var(--accent); color: var(--accent-fg);
+    font-weight: 700; font-size: 18px; padding: 15px 26px; border-radius: 12px; text-decoration: none; }
+  .btn:hover { filter: brightness(1.06); }
+  .btn:focus-visible, .ghost:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+  .meta { font-size: 14px; color: var(--faint); }
+  .ghost { color: var(--muted); }
+  /* small mock of the panel: a few rows with value bars */
+  .mock { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; font-size: 14px; }
+  .mock .t { font-size: 11px; font-weight: 700; letter-spacing: .08em; color: var(--faint); margin: 2px 0 8px; }
+  .mock .t + .r { margin-top: 0; }
+  .r { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; margin-top: 9px; }
+  .r span:first-child { color: var(--muted); }
+  .r b { font-variant-numeric: tabular-nums; font-weight: 650; }
+  .bar { grid-column: 1 / -1; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .bar i { display: block; height: 100%; border-radius: 3px; }
+  .mock hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0 10px; }
+  section { padding: 26px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 20px; margin: 0 0 16px; }
+  .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .steps li { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+  .n { display: inline-flex; width: 26px; height: 26px; border-radius: 50%; align-items: center; justify-content: center;
+    background: var(--accent); color: var(--accent-fg); font-weight: 700; font-size: 14px; margin-bottom: 8px; }
+  .steps b { display: block; margin-bottom: 4px; }
+  .steps p { margin: 0; color: var(--muted); font-size: 15px; }
+  .feat { display: grid; gap: 10px 24px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin: 0; padding: 0; list-style: none; }
+  .feat li { padding-left: 22px; position: relative; color: var(--muted); }
+  .feat li::before { content: ""; position: absolute; left: 0; top: 9px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
+  .feat strong { color: var(--fg); font-weight: 600; }
+  .note { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; color: var(--muted); font-size: 15px; }
+  .note + .note { margin-top: 10px; }
+  .note b { color: var(--fg); }
+  kbd { font: 600 13px/1 ui-monospace, Consolas, monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 2px 5px; background: var(--bg); color: var(--fg); }
+  footer { padding: 28px 0 40px; color: var(--faint); font-size: 13px; border-top: 1px solid var(--line); }
+  footer p { margin: 0 0 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 22a11 11 0 0 1 22 0" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/><path d="M16 22l6-7" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/></svg>
+    metriQ
+    <a class="gh" href="https://github.com/AcarPlus/metriq">GitHub</a>
+  </header>
+
+  <div class="hero">
+    <div>
+      <h1>Bilgisayarının nabzı,<br>tek bakışta.</h1>
+      <p class="lead">metriQ, Windows'ta her zaman üstte duran küçük bir panel: işlemci ve ekran kartı sıcaklığı, kullanım, güç, fanlar, ağ, disk ve FPS canlı olarak, yeşilden kırmızıya renkle.</p>
+      <div class="cta">
+        <a class="btn" id="dl" href="https://github.com/AcarPlus/metriq/releases/latest">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M4 20h16"/></svg>
+          Windows için indir
+        </a>
+        <span class="meta" id="ver">Windows 10/11 · ücretsiz</span>
+      </div>
+    </div>
+    <div class="mock" aria-hidden="true">
+      <div class="t">SICAKLIK</div>
+      <div class="r"><span>CPU</span><b>58 °C</b><div class="bar"><i style="width:48%;background:var(--ok)"></i></div></div>
+      <div class="r"><span>GPU</span><b>71 °C</b><div class="bar"><i style="width:70%;background:var(--warm)"></i></div></div>
+      <hr>
+      <div class="t">YÜK</div>
+      <div class="r"><span>CPU kullanımı</span><b>%34</b><div class="bar"><i style="width:34%;background:var(--ok)"></i></div></div>
+      <div class="r"><span>GPU gücü</span><b>286 W</b><div class="bar"><i style="width:88%;background:var(--hot)"></i></div></div>
+      <div class="r"><span>FPS</span><b>144</b><div class="bar"><i style="width:80%;background:var(--ok)"></i></div></div>
+    </div>
+  </div>
+
+  <section>
+    <h2>Kurulum: üç adım</h2>
+    <ol class="steps">
+      <li><span class="n">1</span><b>İndir ve çalıştır</b><p>Kurulum Python gerektirmez. HWiNFO yoksa ücretsiz olarak (winget ile) kurmayı ve paylaşılan belleğini açmayı teklif eder; atlarsan yerleşik kaynak kullanılır.</p></li>
+      <li><span class="n">2</span><b>metriQ'yu aç</b><p>Başlat menüsünden aç. Panel HWiNFO'yu kendisiyle birlikte açar, kapatınca onu da kapatır.</p></li>
+      <li><span class="n">3</span><b>Kendine göre ayarla</b><p>Dişli düğmesi ya da <kbd>S</kbd>: dil, monitör, 1–3 sütun, satırlar, renkler, kayıt.</p></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Neler yapar</h2>
+    <ul class="feat">
+      <li><strong>Donanımına göre kendini kurar:</strong> çekirdek saatleri, CPU/GPU sıcaklık ve güç, RAM/VRAM, anakart, fanlar, diskler, ağ; sende olmayan satır hiç görünmez.</li>
+      <li><strong>Üç veri kaynağı:</strong> HWiNFO (en geniş), LibreHardwareMonitor (açık kaynak) ya da hiçbir şey kurmadan Windows'un kendi kaynakları.</li>
+      <li><strong>Renkli ve net:</strong> her satırda yeşilden kırmızıya renk, çubuk ve MİN / MAKS / ORT.</li>
+      <li><strong>Oyun içi mini mod:</strong> oyunun üstünde küçük yarı saydam şerit (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd>); oyuna hiçbir şey enjekte edilmez.</li>
+      <li><strong>CSV kaydı:</strong> değerleri dosyaya yazar; Türkçe Excel/LibreOffice ayarlarıyla doğrudan açılır.</li>
+      <li><strong>Dizüstü desteği:</strong> batarya bölümü ve CPU/GPU kısılma (throttling) satırı.</li>
+      <li><strong>Altı dil:</strong> Türkçe, English, Deutsch, Español, Русский, Português.</li>
+      <li><strong>Kendini günceller:</strong> yeni sürümü sorarak indirir, SHA-256 özetini doğrulayıp kurar.</li>
+    </ul>
+  </section>
+
+  <section>
+    <div class="note"><b>Windows “bilinmeyen yayıncı” uyarısı verirse:</b> kurulum dosyası henüz imzalı olmadığı için SmartScreen sorar. <b>Ek bilgi → Yine de çalıştır</b>. Akıllı Uygulama Denetimi (Smart App Control) açıksa imzasız dosyayı tamamen engelleyebilir.</div>
+    <div class="note" id="portable"><b>Kurulumsuz kullanım:</b> taşınabilir ZIP'i açıp <code>metriQ.exe</code>'yi çalıştır (salt okunur mod). İndirme: <a class="ghost" id="zip" href="https://github.com/AcarPlus/metriq/releases/latest">sürüm sayfası</a>. Tüm sürümler ve değişiklikler: <a class="ghost" href="https://github.com/AcarPlus/metriq/releases">sürümler</a>.</div>
+    <div class="note"><b>Gizlilik:</b> veriler bilgisayarından çıkmaz. Panelin tek ağ isteği güncelleme denetimidir (GitHub'a yalnızca “yeni sürüm var mı” diye sorar) ve ayarlardan kapatılabilir.</div>
+  </section>
+
+  <footer>
+    <p>metriQ açık kaynaktır (MIT) · <a href="https://github.com/AcarPlus/metriq">github.com/AcarPlus/metriq</a></p>
+    <p>HWiNFO / REALiX s.r.o. veya LibreHardwareMonitor projesiyle bağlantısı yoktur; HWiNFO sahibinin ticari markasıdır.</p>
+  </footer>
+</div>
+<script>
+  // The Setup's file name carries the version, so /releases/latest/download/<name> cannot be a stable link:
+  // ask the GitHub API for the latest release and point the button at its Setup. Fallback: the release page.
+  fetch('https://api.github.com/repos/AcarPlus/metriq/releases/latest')
+    .then((r) => (r.ok ? r.json() : null))
+    .then((rel) => {
+      if (!rel || !rel.tag_name) return;
+      const assets = rel.assets || [];
+      const setup = assets.find((a) => /setup.*\.exe$/i.test(a.name));
+      const zip = assets.find((a) => /portable.*\.zip$/i.test(a.name));
+      const mb = (a) => Math.round(a.size / 1048576) + ' MB';
+      let text = 'Sürüm ' + rel.tag_name.replace(/^v/, '');
+      if (setup) {
+        document.getElementById('dl').href = setup.browser_download_url;
+        text += ' · ' + mb(setup);
+      }
+      document.getElementById('ver').textContent = text + ' · Windows 10/11 · ücretsiz';
+      if (zip) {
+        const z = document.getElementById('zip');
+        z.href = zip.browser_download_url;
+        z.textContent = 'taşınabilir ZIP (' + mb(zip) + ')';
+      }
+    })
+    .catch(() => {});
+</script>
+</body>
+</html>
