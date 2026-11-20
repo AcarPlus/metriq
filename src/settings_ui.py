@@ -59,6 +59,14 @@ PAGES = (("st_tab_look", "look", "accent_clock", "gauge"), ("st_tab_log", "log",
          ("fn_tab", "fan", "accent_fan", "fan"),
          ("mini_tab", "mini", "accent_net", "fps"))
 
+BASIC_PAGES = ("look", "mini")       # pages (by icon) a normal user needs; Basic hides the others (benchmark and fan control included)
+
+
+def visible_pages(mode):
+    """Indices into PAGES shown in the sidebar for a view mode ('basic' | 'advanced')."""
+    return [i for i, p in enumerate(PAGES) if mode == "advanced" or p[1] in BASIC_PAGES]
+
+
 _bg = uikit._bg_of
 themes_keys = {"theme", "theme_overrides", "value_color_mode", "value_steps"}
 
@@ -409,8 +417,9 @@ class SettingsWindow:
         tk.Frame(outer, bg=C["border"], height=1).pack(side="bottom", fill="x")
         main = tk.Frame(outer, bg=C["bg"])
         main.pack(side="top", fill="both", expand=True)
-        items = [(t(k), icon, C[tok]) for k, icon, tok, _ in PAGES]
-        self.nav = uikit.Nav(main, C, items, self.select, (self.F_TXT, 10), (self.F_HEAD, 12, "bold"), t("st_title"),
+        self.nav_map = visible_pages(config.norm_ui_mode(cfg.get("ui_mode")))      # sidebar row -> page index
+        items = [(t(PAGES[i][0]), PAGES[i][1], C[PAGES[i][2]]) for i in self.nav_map]
+        self.nav = uikit.Nav(main, C, items, lambda j: self.select(self.nav_map[j]), (self.F_TXT, 10), (self.F_HEAD, 12, "bold"), t("st_title"),
                              bg=C["bg"])
         self.nav.pack(side="left", fill="y")
         tk.Frame(main, bg=C["border"], width=1).pack(side="left", fill="y")
@@ -484,13 +493,24 @@ class SettingsWindow:
 
     def rebuild_later(self):
         """Language / theme changed: rebuild the pages once the current event is finished (never inside the click
-        handler of a widget that is about to be destroyed)."""
-        if self._rebuild_job is None and not self._closing:
+        handler of a widget that is about to be destroyed). Rebuilding destroys the Performance page and with it a
+        running benchmark, so while one runs the rebuild waits for it to end. Returns True when it was deferred."""
+        if self._closing:
+            return False
+        if self.bench_busy():
+            if self._rebuild_job is None:
+                self._rebuild_job = self.win.after(1000, self._rebuild)
+            return True
+        if self._rebuild_job is None:
             self._rebuild_job = self.win.after_idle(self._rebuild)
+        return False
 
     def _rebuild(self):
         self._rebuild_job = None
         if self._closing or not self.winfo_exists():
+            return
+        if self.bench_busy():                      # still running: look again in a second
+            self._rebuild_job = self.win.after(1000, self._rebuild)
             return
         try:
             self.build_ui()
@@ -524,18 +544,20 @@ class SettingsWindow:
 
     def select(self, i):
         i = max(0, min(int(i), len(self.pages) - 1))
+        if i not in self.nav_map:          # a page the current view mode hides is never built nor shown
+            i = self.nav_map[0]
         self._ensure(i)
         for pg in self.pages:
             pg["frame"].pack_forget()
         pg = self.pages[i]
         pg["frame"].pack(fill="both", expand=True)
         self.tab_index = i
-        self.nav.set_active(i)
+        self.nav.set_active(self.nav_map.index(i))
         self.title_lbl.config(text=pg["title"])
 
     def _ensure(self, i):
         """Build page i if it has not been built yet (first visit)."""
-        fn = self._lazy.pop(i, None)
+        fn = self._lazy.pop(i, None) if i in self.nav_map else None
         if fn is None:
             return
         self.win.configure(cursor="watch")
@@ -563,6 +585,12 @@ class SettingsWindow:
 
     def _tab_look(self, p, cfg):
         C = self.C
+        card = self.card(p, t("st_card_uimode"), "gauge")
+        self.v_mode = tk.StringVar(value=config.norm_ui_mode(cfg.get("ui_mode")))
+        seg = uikit.Segmented(card.body, C, [t("ui_basic"), t("ui_advanced")], 1 if self.v_mode.get() == "advanced" else 0,
+                              lambda i: self.v_mode.set("advanced" if i else "basic"), (self.F_TXT, 10))
+        self.row(card, t("st_uimode"), seg, t("st_uimode_hint"))
+
         card = self.card(p, t("st_card_window"), "fps")
         mons = self.api.monitors() or []
         self.mon_vals = ["auto"] + [m["index"] for m in mons]
@@ -756,11 +784,18 @@ class SettingsWindow:
         self.row(card, t("st_sync"), self.switch(card.body, self.v_sync), help="sync")
 
         tasks = self.api.tasks()                          # cached; the schtasks query runs in the background below
-        self.lbl_tasks = tk.Label(card.body, text=t("st_tasks_ok") if tasks else t("st_tasks_no"), bg=bg,
+        self.lbl_tasks = tk.Label(card.body, text=self._tasks_text(tasks), bg=bg,
                                   fg=C["green"] if tasks else C["yellow"], font=(self.F_TXT, 10), anchor="w",
                                   justify="left")
         uikit.autowrap(self.lbl_tasks)
         self.full(card, self.lbl_tasks, pady=(8, 2))
+        # installed app: the tasks can be added later (e.g. HWiNFO was installed after metriQ) with one UAC prompt
+        self.btn_tasks = None
+        if hwctl.task_script():
+            self.btn_tasks = self.button(card.body, t("st_tasks_fix"), self._install_tasks)
+            self.full(card, self.btn_tasks, pady=(2, 6), sticky="w")
+            if tasks:
+                self.btn_tasks.grid_remove()
         self.update_detected()
         self.update_sources()
         if not self._built:
@@ -784,11 +819,59 @@ class SettingsWindow:
                 return
             try:
                 ok = res["v"]
-                self.lbl_tasks.config(text=t("st_tasks_ok") if ok else t("st_tasks_no"),
-                                      fg=self.C["green"] if ok else self.C["yellow"])
+                self.lbl_tasks.config(text=self._tasks_text(ok), fg=self.C["green"] if ok else self.C["yellow"])
+                if self.btn_tasks is not None:
+                    (self.btn_tasks.grid_remove if ok else self.btn_tasks.grid)()
             except (tk.TclError, AttributeError):
                 pass
         self.win.after(100, poll)
+
+    @staticmethod
+    def _tasks_text(ok):
+        if ok:
+            return t("st_tasks_ok")
+        return t("st_tasks_no_app") if hwctl.task_script() else t("st_tasks_no")
+
+    def _install_tasks(self):
+        """Settings > HWiNFO: register the scheduled tasks now (UAC), then re-check them."""
+        if self.btn_tasks is None or getattr(self, "_tasks_busy", False):
+            return
+        self._tasks_busy = True
+        self.btn_tasks.config(state="disabled", text=t("st_tasks_fix_run"))
+        res = {}
+        exe = self.api.detect(self.v_hwpath.get().strip() or "auto")
+        try:
+            owner = self.win.winfo_id()
+        except tk.TclError:
+            owner = None
+
+        def work():
+            try:
+                res["v"] = hwctl.register_tasks_elevated(exe, hwnd=owner)
+            except Exception:
+                res["v"] = "error"
+            finally:
+                self._tasks_busy = False
+        threading.Thread(target=work, daemon=True).start()
+
+        def poll():
+            if self._closing or not self.winfo_exists():
+                return
+            if "v" not in res:
+                self.win.after(200, poll)
+                return
+            try:
+                self.btn_tasks.config(state="normal", text=t("st_tasks_fix"))
+                if res["v"] != "ok":
+                    key = {"cancelled": "st_tasks_fix_cancel", "no_hwinfo": "st_tasks_fix_nohw",
+                                                                    "untrusted": "st_tasks_fix_untrusted"}.get(res["v"],
+                                                                                                    "st_tasks_fix_err")
+                    self.lbl_tasks.config(text=t(key), fg=self.C["yellow"])
+                    return
+            except (tk.TclError, AttributeError):
+                return
+            self._refresh_tasks_bg()
+        self.win.after(200, poll)
 
     def update_sources(self):
         """Active source, what is available on this PC, and which data the active source cannot provide."""
@@ -1263,6 +1346,7 @@ class SettingsWindow:
             except ValueError:
                 return default
         d = {
+            "ui_mode": self.v_mode.get(),
             "language": self.lang_vals[max(0, self.cb_lang.current())],
             "columns": self.col_vals[max(0, self.cb_cols.current())],
             "monitor": self.mon_vals[max(0, self.cb_mon.current())],
@@ -1296,8 +1380,13 @@ class SettingsWindow:
         return d
 
     def validate(self):
+        """Index of the first page with an invalid field, or None. Only pages the current view mode shows are checked:
+        Basic hides the HWiNFO / logging pages, and a stale path stored there (e.g. a removed PresentMon) must not stop
+        the user from saving anything; such values are written back untouched."""
         bad = None
         for tab, rc in self.checks + self.lay_checks:
+            if tab not in self.nav_map:
+                continue
             if not rc() and bad is None:
                 bad = tab
         return bad
@@ -1342,6 +1431,7 @@ class SettingsWindow:
             lay_cfg = copy.deepcopy(self.lay)
         lang_changed = "language" in changes
         theme_changed = bool(themes_keys & set(changes))
+        mode_changed = "ui_mode" in changes
         ok = self.api.apply(changes, lay_mode, lay_cfg)
         self.initial = new
         if lay_mode == "explicit":
@@ -1351,7 +1441,7 @@ class SettingsWindow:
         self.lay_mode = "keep"
         if closing:
             pass
-        elif lang_changed or theme_changed:
+        elif lang_changed or theme_changed or mode_changed:
             if theme_changed:          # the settings window follows the theme
                 self.C, (self.F_TXT, self.F_HEAD, self.F_NUM) = self.api.C, self.api.fonts_now()
                 self.win.configure(bg=self.C["bg"])

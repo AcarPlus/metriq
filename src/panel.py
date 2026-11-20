@@ -14,6 +14,7 @@ import types
 import webbrowser
 
 import backend
+import basicmode
 import config
 import crashscan
 import gfx
@@ -131,6 +132,7 @@ def round_rect(cv, x0, y0, x1, y1, r, **kw):
 
 GFX = gfx.AVAILABLE      # Pillow present: anti-aliased images instead of canvas primitives
 TOAST_RESET_S, TOAST_INFO_S, TOAST_ERR_S, FADE_S = 1.5, 2.0, 4.0, 0.35     # toast lifetimes (seconds), fade-out length
+TOAST_HINT_S = 9.0                 # the one-time "Basic view is on" notice
 
 
 def draw_icon(cv, kind, cx, cy, s, col, bg, tags=()):
@@ -220,6 +222,47 @@ def theme_font(token, *auto):
     return want if want and want in set(tkfont.families()) else pick_font(*auto)
 
 
+def _fit_status_bar(family, lx, lbl_r, sw_w, rs, fs0, mode_labels):
+    """Advanced status bar: font size (negative = pixels) and what to show so that
+    [Paneldeki veriler (o) Tüm veriler] .. [Basit | Gelişmiş] [interval label] do not overlap. Returns
+    (font size, show interval label, show left switch caption, show right switch caption, compact mode chip).
+    Long translations or a narrow panel shrink the text only down to a readable size (12 px or more) while dropping, in
+    order, the interval label (the spinbox keeps its tooltip), the second word of the mode chip (current mode only), the
+    left caption (knob position + right caption still read) and last the right caption. Only when even that does not fit
+    does the text go down to 8 px. The chip itself always stays (it is the way back)."""
+    gap = max(rs * 0.6, 8.0)
+    cpad = max(6.0, rs * 0.45)
+
+    def need(fs, with_lbl, with_left, with_right, compact):
+        fb = tkfont.Font(family=family, size=fs, weight="bold")
+        w = sw_w
+        if with_left:
+            w += fb.measure(t("sw_required")) + rs * 0.35
+        if with_right:
+            w += rs * 0.35 + fb.measure(t("sw_all"))
+        w += gap + (max(fb.measure(x) for x in mode_labels) + 2 * cpad if compact
+                    else sum(fb.measure(x) + 2 * cpad for x in mode_labels))
+        if with_lbl:
+            w += gap + tkfont.Font(family=family, size=fs).measure(t("interval_lbl"))
+        return lx + w
+
+    # without the label the chip may end a few px before the spinbox; 2 px slack for the GFX rounding of the track
+    stages = ((True, True, True, False, lbl_r - 2), (False, True, True, False, lbl_r + 2),
+              (False, True, True, True, lbl_r + 2), (False, False, True, False, lbl_r + 2),
+              (False, False, True, True, lbl_r + 2), (False, False, False, True, lbl_r + 2))
+    # first pass: never below a readable size (drop parts instead); only if nothing fits, shrink down to 8 px
+    readable = max(fs0, -max(12, int(rs * 0.32)))
+    fs = fs0
+    for floor in (readable, -8):
+        for with_lbl, with_left, with_right, compact, limit in stages:
+            fs = fs0
+            while fs < floor and need(fs, with_lbl, with_left, with_right, compact) > limit:
+                fs += 1
+            if need(fs, with_lbl, with_left, with_right, compact) <= limit:
+                return fs, with_lbl, with_left, with_right, compact
+    return fs, False, False, False, True
+
+
 def launch_command():
     """Command line that starts this panel again (used by Windows when the taskbar button is pinned)."""
     if config.FROZEN:
@@ -297,7 +340,8 @@ def main():
           "hw_exe": hwctl.detect_hwinfo(cfg["hwinfo_path"]), "tasks": hwctl.tasks_installed(),
           "mon": config.pick_monitor(cfg["monitor"]), "mode": str(cfg["window_mode"]).lower(),
           "upd": None, "upd_busy": False, "upd_prog": 0, "upd_err": 0, "upd_gen": 0, "upd_after": None,
-          "closing": False, "t0": time.time(), "upd_dismissed": None, "tips": {}}
+          "closing": False, "t0": time.time(), "upd_dismissed": None, "tips": {},
+          "bsections": [], "bauto_n": -1, "bauto_t": 0.0}
     upd_q = queue.Queue()          # worker threads -> Tk (drained by upd_pump via root.after)
 
     def hwinfo_managed():
@@ -368,7 +412,7 @@ def main():
             st["pr_t"], st["pr_v"] = now, hwctl.proc_running()
         h = t("hint_no_shm") if st["pr_v"] else t("hint_not_running")
         if not st["tasks"]:
-            h += " · " + t("hint_readonly")
+            h += " · " + t("hint_readonly_app" if hwctl.task_script() else "hint_readonly")
         return h
 
     def conn_text():
@@ -401,7 +445,8 @@ def main():
         st["last"].clear()
         st["need_draw"] = True
         st["empty"] = None
-        sections = st["sections"]
+        basic = is_basic()
+        sections = view_sections()
         HEAD, FOOT, STATUS = layout.HEAD, layout.FOOT, layout.STATUS    # in row heights
         sty = themes.current()
         R, sp = sty.radius, sty.spacing                  # card corner radius, row pitch factor
@@ -414,7 +459,9 @@ def main():
         # ----- column geometry (fractions of the column width); no bar column in narrow columns
         cw = p.cwc
         pad = cw * 0.035
-        if p.with_bar:
+        if basic:       # no MIN / MAX / AVG: a status word takes their place (right-aligned at the card edge)
+            fr = dict(bar0=0.40, bar1=0.54, now=0.70) if p.with_bar else dict(now=0.56)
+        elif p.with_bar:
             fr = dict(bar0=0.40, bar1=0.53, now=0.69, mn=0.795, mx=0.885)
         else:
             fr = dict(now=0.54, mn=0.725, mx=0.85)
@@ -422,13 +469,19 @@ def main():
         sample = "8888" if p.with_bar else "88888"        # narrow columns must also fit 5 digits
         nw0 = meas_font(F_NUM, fs_num).measure(sample)
         uw0 = meas_font(F_TXT, fs_small).measure("KB/s")
-        fm = min(1.0, (min(fr["mx"] - fr["mn"], 1 - pad / cw - fr["mx"]) * cw - 8) / nw0,
-                 ((fr["mn"] - fr["now"]) * cw - 14) / (nw0 + uw0))
-        fm = max(0.55, fm)
+        if basic:
+            fm = 1.0
+        else:
+            fm = min(1.0, (min(fr["mx"] - fr["mn"], 1 - pad / cw - fr["mx"]) * cw - 8) / nw0,
+                     ((fr["mn"] - fr["now"]) * cw - 14) / (nw0 + uw0))
+            fm = max(0.55, fm)
         fs_num_e, fs_small_e = -max(8, int(-fs_num * fm)), -max(8, int(-fs_small * fm))
         f_num, f_unit = (F_NUM, fs_num_e), (F_TXT, fs_small_e)
         f_col = (F_TXT, fs_small_e, "bold")
         unit_w = meas_font(F_TXT, fs_small_e).measure("KB/s")
+        fs_stat = -max(9, int(-fs_small_e * 1.15))
+        f_stat, fnt_stat = (F_TXT, fs_stat, "bold"), meas_font(F_TXT, fs_stat, "bold")
+        st["fnt_stat"] = fnt_stat
         nw = meas_font(F_NUM, fs_num_e).measure(sample)
         name_right = (fr["bar0"] * cw - 8) if p.with_bar else (fr["now"] * cw - nw - 10)
         name_avail = name_right - pad
@@ -451,7 +504,9 @@ def main():
             col_name = cx0 + pad
             bar_x0, bar_x1 = cx0 + cw * fr.get("bar0", 0), cx0 + cw * fr.get("bar1", 0)
             col_now = cx0 + cw * fr["now"]                  # right edge of the number, unit follows
-            col_min, col_max, col_avg = cx0 + cw * fr["mn"], cx0 + cw * fr["mx"], cx1 - pad
+            col_avg = cx1 - pad
+            col_min, col_max = (cx0 + cw * fr["mn"], cx0 + cw * fr["mx"]) if not basic else (0, 0)
+            stat_w = col_avg - (col_now + 6 + unit_w) - 8   # room for the status word (Basic)
             yy = m
             rp, gc = p.pitch[ci], p.gaps[ci]
             for sec in col_secs:
@@ -480,8 +535,10 @@ def main():
                     f_title = meas_font(F_HEAD, -hs, "bold")
                 cv.create_text(title_x, hy, text=fit_text(f_title, sec.title, title_avail), anchor="w",
                                font=(F_HEAD, -hs, "bold"), fill=C["fg"])
-                for hk, lbl, xx in (("now", t("col_now"), col_now + 6 + unit_w), ("min", t("col_min"), col_min),
-                                    ("max", t("col_max"), col_max), ("avg", t("col_avg"), col_avg)):
+                heads = ((("now", t("col_now"), col_now + 6 + unit_w), ("status", t("col_status"), col_avg)) if basic else
+                         (("now", t("col_now"), col_now + 6 + unit_w), ("min", t("col_min"), col_min),
+                          ("max", t("col_max"), col_max), ("avg", t("col_avg"), col_avg)))
+                for hk, lbl, xx in heads:
                     cv.create_text(xx, hy, text=lbl, anchor="e", font=f_col, fill=mix(C["dim"], accent, 0.45),
                                    tags=("hdr_" + hk,))
                 cv.create_line(cx0 + pad * 0.6, yy + hh - 1, cx1 - pad * 0.6, yy + hh - 1, fill=C["border"])
@@ -490,11 +547,20 @@ def main():
                     if i % 2:
                         cv.create_rectangle(cx0 + inset, ry, cx1 - inset, ry + rp, fill=C["stripe"], outline="")
                     my = ry + rp / 2
-                    nm_id = cv.create_text(col_name, my, text=fit_text(fnt_name, row.name, name_avail), anchor="w",
-                                           font=f_name, fill=C["name"])
-                    procs.tag_row(cv, nm_id, row, cx0 + name_right)   # CPU / RAM / GPU / VRAM / disk rows open the process window (+ (i) balloon)
+                    hint_row = basic and row.rid == "hint_cpu_temp"      # "CPU temperature needs HWiNFO": no value, so the name may use the whole row
+                    nm_right = (fr["now"] * cw - nw - 10 if not p.with_bar else fr["now"] * cw - 10) if hint_row else name_right
+                    nm_id = cv.create_text(col_name, my, text=fit_text(fnt_name, row.name, name_avail + nm_right - name_right - (26 if hint_row else 0)),
+                                           anchor="w", font=f_name, fill=C["name"])
+                    procs.tag_row(cv, nm_id, row, cx0 + nm_right, info=not basic)   # CPU / RAM / GPU / VRAM / disk rows open the process window (+ (i) balloon)
                     if row.help:                                        # e.g. throttling: what it is, which source it needs
                         Tooltip.for_canvas(cv, nm_id, lambda k=row.help: t("hp_" + k))
+                        if basic:       # Basic: every row has the same (i); the hint row's one also opens the HWiNFO setting
+                            procs.help_icon(cv, nm_id, lambda k=row.help: t("hp_" + k), cx0 + nm_right,
+                                            show_hw_setting if row.rid == "hint_cpu_temp" else None)
+                    if basic and row.rid == "hint_cpu_temp":
+                        cv.tag_bind(nm_id, "<Button-1>", lambda e: show_hw_setting(), add="+")
+                        cv.tag_bind(nm_id, "<Enter>", lambda e: cv.config(cursor="hand2"), add="+")
+                        cv.tag_bind(nm_id, "<Leave>", lambda e: cv.config(cursor=""), add="+")
                     it = {"accent": accent}
                     if row.bar and p.with_bar:
                         bh = max(4, rh * 0.22)
@@ -502,11 +568,16 @@ def main():
                         it["bar"] = cv.create_rectangle(bar_x0, my - bh / 2, bar_x0, my + bh / 2, fill=accent,
                                                         outline="")
                         it["bargeo"] = (bar_x0, bar_x1, my - bh / 2, my + bh / 2)
-                    it["now"] = cv.create_text(col_now, my, text="–", anchor="e", font=f_num, fill=C["fg"])
+                    it["now"] = cv.create_text(col_now, my, text="" if hint_row else "–", anchor="e", font=f_num, fill=C["fg"])
                     it["unit"] = cv.create_text(col_now + 6, my, text=row.unit_eff, anchor="w", font=f_unit,
                                                 fill=C["faint"])
-                    for k, xx in (("min", col_min), ("max", col_max), ("avg", col_avg)):
-                        it[k] = cv.create_text(xx, my, text="–", anchor="e", font=f_num, fill=C["dim"])
+                    if basic:
+                        if row.status:
+                            it["status"] = cv.create_text(col_avg, my, text="", anchor="e", font=f_stat, fill=C["dim"])
+                            it["stat_w"] = stat_w
+                    else:
+                        for k, xx in (("min", col_min), ("max", col_max), ("avg", col_avg)):
+                            it[k] = cv.create_text(xx, my, text="–", anchor="e", font=f_num, fill=C["dim"])
                     st["items"][id(row)] = it
                     ry += rp
                 yy += ch + gc
@@ -529,8 +600,11 @@ def main():
         else:
             round_rect(cv, sx0, sy, sx1, sy + sb_h, R, fill=C["card"], outline=C["border"])
         my = sy + sb_h / 2
-        pw, ph = min(sw_span * 0.25, max(rs * 6.8, 130)), rs * 1.1
         px0 = col_name - 6
+        f_pill = (F_TXT, -max(10, int(rs * 0.50)), "bold")
+        fp_ = tkfont.Font(family=F_TXT, size=f_pill[1], weight="bold")
+        pill_fit = 6 + rs * 0.8 + max(fp_.measure(t("log_on")), fp_.measure(t("log_off"))) + rs * 0.7  # dot + text + pad
+        pw, ph = min(sw_span * 0.25, max(rs * 6.8, 130), max(pill_fit, 130)), rs * 1.1
         if GFX:
             s["pill_fn"] = lambda on: gfx.pill(pw, ph, mix(C["card"], C["green"] if on else C["red"], 0.18),
                                                C["green"] if on else C["red"], 6 + rs * 0.38, rs * 0.18)
@@ -542,71 +616,125 @@ def main():
             s["dot"] = cv.create_oval(col_name + rs * 0.2, my - rs * 0.18, col_name + rs * 0.56, my + rs * 0.18,
                                       fill=C["red"], outline="", tags="logbtn")
         s["txt"] = cv.create_text(col_name + rs * 0.8, my, text="", anchor="w",
-                                  font=(F_TXT, -max(10, int(rs * 0.50)), "bold"), fill=C["fg"], tags="logbtn")
-        # recording mode switch: required rows <-> all sensors
-        fs_sw = -max(9, int(rs * 0.38))
-        f_sw = (F_TXT, fs_sw, "bold")
-        sw_w, sw_h = max(rs * 1.7, 22.0), max(rs * 0.8, 10.0)      # never smaller than a track that still holds a knob
-        lx = px0 + pw + min(sw_span * 0.05, rs * 1.2)
-        s["sw_l"] = cv.create_text(lx, my, text=t("sw_required"), anchor="w", font=f_sw, fill=C["fg"],
-                                   tags="modebtn")
-        tx0 = lx + tkfont.Font(family=F_TXT, size=fs_sw, weight="bold").measure(t("sw_required")) + rs * 0.35
-        kmy = my
-        if GFX:                                  # whole pixels: the track image and the knob stay aligned
-            tx0, sw_w, sw_h = float(round(tx0)), float(round(sw_w)), float(2 * round(sw_h / 2))
-            kmy = round(my - sw_h / 2) + sw_h / 2
-            s["track_fn"] = lambda all_: gfx.track(sw_w, sw_h, mix(C["track"], C["ui"], 0.55) if all_ else C["track"],
-                                                   C["border"])
-            s["sw_track"] = cv.create_image(tx0, round(my - sw_h / 2), image=s["track_fn"](cfg.get("log_all", False)),
-                                            anchor="nw", tags="modebtn")
-        else:
-            s["sw_track"] = round_rect(cv, tx0, my - sw_h / 2, tx0 + sw_w, my + sw_h / 2, sw_h / 2,
-                                       fill=C["track"], outline=C["border"], tags="modebtn")
-        kr = max(2.0, sw_h / 2 - 3)
-        s["sw_geo"] = (tx0 + 3 + kr, tx0 + sw_w - 3 - kr, kmy, kr)
-        kx = s["sw_geo"][1] if cfg.get("log_all") else s["sw_geo"][0]
-        if GFX:
-            s["sw_knob"] = cv.create_image(kx, kmy, image=gfx.knob(kr, C["fg"]), tags="modebtn")
-        else:
-            s["sw_knob"] = cv.create_oval(kx - kr, my - kr, kx + kr, my + kr, fill=C["fg"], outline="",
-                                          tags="modebtn")
-        s["sw_r"] = cv.create_text(tx0 + sw_w + rs * 0.35, my, text=t("sw_all"), anchor="w", font=f_sw,
-                                   fill=C["faint"], tags="modebtn")
-        # right end: [interval label] [spinbox] [reset button] [gear button]
+                                  font=f_pill, fill=C["fg"], tags="logbtn")
+        # right end geometry first: [interval label] [spinbox] [chart] [reset] [gear]; the switch must fit before it.
+        # Basic: [chart] [gear] only (no MIN / MAX / AVG to reset, no recording-mode switch, no interval)
         gs = max(rs * 0.42, 8.0)
         hit = gs * 1.45
         gx = sx1 - spad - hit
         rx = gx - hit * 2 - 4
         vx = rx - hit * 2 - 4
+        if basic:
+            vx = rx
+        spin_w = max(44.0, min(sw_span * 0.1, rs * 3.2))
+        spin_r = vx - hit - 6
+        lbl_r = spin_r - spin_w - 8                                  # right edge of the interval label
+        mode_labels = (t("ui_basic"), t("ui_advanced"))
+        mode_cur = 0 if basic else 1
+        fs_sw0 = -max(9, int(rs * 0.38))
+        show_right, chip_compact = True, False
+        # recording mode switch: required rows <-> all sensors (Advanced)
+        sw_w, sw_h = max(rs * 1.7, 22.0), max(rs * 0.8, 10.0)      # never smaller than a track that still holds a knob
+        lx = px0 + pw + min(sw_span * 0.05, rs * 1.2)
+        if basic:
+            fs_sw, show_lbl, show_left = fs_sw0, False, False
+            chip_r = vx - hit - 10
+            fb_ = tkfont.Font(family=F_TXT, size=fs_sw, weight="bold")
+            cpad_ = max(6.0, rs * 0.45)
+            chip_compact = chip_r - sum(fb_.measure(x) + 2 * cpad_ for x in mode_labels) < px0 + pw + 8
+        else:
+            fs_sw, show_lbl, show_left, show_right, chip_compact = _fit_status_bar(F_TXT, lx, lbl_r, sw_w, rs, fs_sw0,
+                                                                                  mode_labels)
+            chip_r = lbl_r - (tkfont.Font(family=F_TXT, size=fs_sw).measure(t("interval_lbl")) + max(rs * 0.6, 8.0)
+                              if show_lbl else 0)
+        f_sw = (F_TXT, fs_sw, "bold")
+        if not basic:
+            s["sw_l"] = cv.create_text(lx, my, text=t("sw_required") if show_left else "", anchor="w", font=f_sw,
+                                       fill=C["fg"], tags="modebtn")
+            tx0 = lx + (tkfont.Font(family=F_TXT, size=fs_sw, weight="bold").measure(t("sw_required")) + rs * 0.35
+                        if show_left else 0)
+            kmy = my
+            if GFX:                                  # whole pixels: the track image and the knob stay aligned
+                tx0, sw_w, sw_h = float(round(tx0)), float(round(sw_w)), float(2 * round(sw_h / 2))
+                kmy = round(my - sw_h / 2) + sw_h / 2
+                s["track_fn"] = lambda all_: gfx.track(sw_w, sw_h, mix(C["track"], C["ui"], 0.55) if all_ else C["track"],
+                                                       C["border"])
+                s["sw_track"] = cv.create_image(tx0, round(my - sw_h / 2), image=s["track_fn"](cfg.get("log_all", False)),
+                                                anchor="nw", tags="modebtn")
+            else:
+                s["sw_track"] = round_rect(cv, tx0, my - sw_h / 2, tx0 + sw_w, my + sw_h / 2, sw_h / 2,
+                                           fill=C["track"], outline=C["border"], tags="modebtn")
+            kr = max(2.0, sw_h / 2 - 3)
+            s["sw_geo"] = (tx0 + 3 + kr, tx0 + sw_w - 3 - kr, kmy, kr)
+            kx = s["sw_geo"][1] if cfg.get("log_all") else s["sw_geo"][0]
+            if GFX:
+                s["sw_knob"] = cv.create_image(kx, kmy, image=gfx.knob(kr, C["fg"]), tags="modebtn")
+            else:
+                s["sw_knob"] = cv.create_oval(kx - kr, my - kr, kx + kr, my + kr, fill=C["fg"], outline="",
+                                              tags="modebtn")
+            s["sw_r"] = cv.create_text(tx0 + sw_w + rs * 0.35, my, text=t("sw_all") if show_right else "", anchor="w",
+                                       font=f_sw, fill=C["faint"], tags="modebtn")
+        # Basic | Advanced toggle: both words with the current one lit; only the current word when space is short
+        fb_chip = tkfont.Font(family=F_TXT, size=fs_sw, weight="bold")
+        cpad = max(6.0, rs * 0.45)
+        seg = [mode_cur] if chip_compact else [0, 1]
+        seg_w = [fb_chip.measure(mode_labels[i]) + 2 * cpad for i in seg]
+        ch_h = ph * 0.92
+        chx0, chy0 = chip_r - sum(seg_w), my - ch_h / 2
+        acc_chip = themes.accent("gauge")
+        if GFX:
+            cv.create_image(int(round(chx0)), int(round(chy0)),
+                            image=gfx.card(int(round(sum(seg_w))), int(round(ch_h)), ch_h / 2, C["track"], C["border"]),
+                            anchor="nw", tags="uimodebtn")
+        else:
+            round_rect(cv, chx0, chy0, chx0 + sum(seg_w), chy0 + ch_h, ch_h / 2, fill=C["track"], outline=C["border"],
+                       tags="uimodebtn")
+        xx = chx0
+        for i, w_ in zip(seg, seg_w):
+            on = i == mode_cur
+            if on:
+                ix0, iy0, iw, ih = int(round(xx + 2)), int(round(chy0 + 2)), int(round(w_ - 4)), int(round(ch_h - 4))
+                fill_, line_ = mix(C["card"], acc_chip, 0.30), mix(C["card"], acc_chip, 0.75)
+                if GFX:
+                    cv.create_image(ix0, iy0, image=gfx.card(iw, ih, ih / 2, fill_, line_), anchor="nw",
+                                    tags="uimodebtn")
+                else:
+                    round_rect(cv, ix0, iy0, ix0 + iw, iy0 + ih, ih / 2, fill=fill_, outline=line_, tags="uimodebtn")
+            cv.create_text(xx + w_ / 2, my, text=mode_labels[i], anchor="center", font=f_sw,
+                           fill=C["fg"] if on else C["faint"], tags="uimodebtn")
+            xx += w_
+        # right end: [interval label] [spinbox] [chart] [reset button] [gear button]
         if GFX:
             s["gear_bg"] = cv.create_image(gx, my, image=gfx.button("gear", hit, gs, C["dim"], C["card"]),
                                            tags="gearbtn")
-            s["reset_bg"] = cv.create_image(rx, my, image=gfx.button("reset", hit, gs, C["dim"], C["card"]),
-                                            tags="resetbtn")
+            if not basic:
+                s["reset_bg"] = cv.create_image(rx, my, image=gfx.button("reset", hit, gs, C["dim"], C["card"]),
+                                                tags="resetbtn")
             s["view_bg"] = cv.create_image(vx, my, image=gfx.button("chart", hit, gs, C["dim"], C["card"]),
                                            tags="viewbtn")
         else:
             s["gear_bg"] = cv.create_oval(gx - hit, my - hit, gx + hit, my + hit, fill=C["card"], outline="",
                                           tags="gearbtn")
             draw_icon(cv, "gear", gx, my, gs, C["dim"], C["card"], tags=("gearbtn",))
-            s["reset_bg"] = cv.create_oval(rx - hit, my - hit, rx + hit, my + hit, fill=C["card"], outline="",
-                                           tags="resetbtn")
-            draw_icon(cv, "reset", rx, my, gs, C["dim"], C["card"], tags=("resetbtn",))
+            if not basic:
+                s["reset_bg"] = cv.create_oval(rx - hit, my - hit, rx + hit, my + hit, fill=C["card"], outline="",
+                                               tags="resetbtn")
+                draw_icon(cv, "reset", rx, my, gs, C["dim"], C["card"], tags=("resetbtn",))
             s["view_bg"] = cv.create_oval(vx - hit, my - hit, vx + hit, my + hit, fill=C["card"], outline="",
                                           tags="viewbtn")
             draw_icon(cv, "chart", vx, my, gs, C["dim"], C["card"], tags=("viewbtn",))
-        spin_w = max(44.0, min(sw_span * 0.1, rs * 3.2))
-        spin_r = vx - hit - 6
-        cv.create_text(spin_r - spin_w - 8, my, text=t("interval_lbl"), anchor="e", font=(F_TXT, fs_sw),
-                       fill=C["dim"], tags="intlbl")
-        spin.config(font=(F_NUM, -max(10, int(rs * 0.52))))
-        cv.create_window(spin_r, my, window=spin, anchor="e", width=spin_w, height=rs * 1.0)
+        if show_lbl:                             # hidden when it would overlap the switch; the spinbox keeps its tooltip
+            cv.create_text(lbl_r, my, text=t("interval_lbl"), anchor="e", font=(F_TXT, fs_sw),
+                           fill=C["dim"], tags="intlbl")
+        if not basic:                            # Basic: no interval box (the recording keeps its interval)
+            spin.config(font=(F_NUM, -max(10, int(rs * 0.52))))
+            cv.create_window(spin_r, my, window=spin, anchor="e", width=spin_w, height=rs * 1.0)
         # toasts sit centred just above the bar
         ft = -max(10, int(rs * 0.42))
         s["toast_geo"] = ((sx0 + sx1) / 2, sy - max(4.0, rs * 0.25), sw_span - 2 * spad)
         s["f_toast"], s["f_toast_t"] = meas_font(F_TXT, ft, "bold"), (F_TXT, ft, "bold")
         for tag, fn in (("logbtn", toggle), ("modebtn", toggle_mode), ("gearbtn", open_settings),
-                        ("resetbtn", reset_stats), ("viewbtn", lambda e=None: logview.show(api)), ("updbtn", upd_click), ("updx", upd_dismiss)):
+                        ("uimodebtn", toggle_ui_mode), ("resetbtn", reset_stats), ("viewbtn", lambda e=None: logview.show(api)), ("updbtn", upd_click), ("updx", upd_dismiss), ("hwrestart", hw_restart_click)):
             cv.tag_bind(tag, "<Button-1>", fn)
             cv.tag_bind(tag, "<Enter>", lambda e: cv.config(cursor="hand2"))
             cv.tag_bind(tag, "<Leave>", lambda e: cv.config(cursor=""))
@@ -646,7 +774,8 @@ def main():
         # hover help (after the binds above, which replace earlier <Enter> / <Leave> handlers of the same tags)
         for tag, key in (("hdr_now", "hdr_now"), ("hdr_min", "hdr_min"), ("hdr_max", "hdr_max"),
                          ("hdr_avg", "hdr_avg"), ("logbtn", "logbtn"), ("modebtn", "modebtn"),
-                         ("resetbtn", "resetbtn"), ("viewbtn", "viewbtn"), ("gearbtn", "gearbtn"), ("intlbl", "interval_lbl")):
+                         ("resetbtn", "resetbtn"), ("viewbtn", "viewbtn"), ("gearbtn", "gearbtn"), ("intlbl", "interval_lbl"),
+                         ("uimodebtn", "uimodebtn")):
             help_tip(tag, key)
         refresh_status()
 
@@ -680,7 +809,7 @@ def main():
         def timed(text, col, t0, dur):
             """A notice shown for dur seconds from t0; its last FADE_S seconds fade towards the card colour."""
             left = dur - (now - t0)
-            if left <= 0:
+            if left <= 0 or not text:
                 return
             if left >= FADE_S:
                 soon.append(left - FADE_S + 0.01)
@@ -693,6 +822,7 @@ def main():
         timed(t("log_err"), C["red"], st.get("log_err", 0), TOAST_ERR_S)
         timed(st.get("hk_msg", ""), C["yellow"], st.get("hk_note", 0), TOAST_ERR_S)
         timed(st.get("thr_msg", ""), C["yellow"], st.get("thr_note", 0), TOAST_ERR_S)
+        timed(st.get("mode_msg", ""), themes.accent("gauge"), st.get("mode_note", 0), TOAST_HINT_S)
         ap = st.get("applying")
         hint = current_hint()
         if ap and now - ap[0] < 12:
@@ -706,6 +836,13 @@ def main():
             # fell back to the built-in source: say why there are no temperatures / power (gone once HWiNFO delivers)
             # (the first sentence; what to do is in Settings > Data source)
             msgs.append((t(src.why).split(". ")[0], C["yellow"], None))
+        if st.get("stale"):                              # persistent: stays until HWiNFO delivers again
+            if now - (st.get("hw_rst") or 0) < 40:
+                msgs.append((t("hw_restarting"), C["yellow"], None))
+                soon.append(1.0)
+            else:
+                msgs.append((t("hw_restart_btn"), C["yellow"], "hwbtn"))
+                msgs.append((t("hw_stale"), C["yellow"], "hwstale"))
         note = st.get("note")
         if note and note != "created":
             timed(note, C["yellow"], st["t0"], TOAST_ERR_S)
@@ -717,6 +854,31 @@ def main():
             soon.append(0.1)
         msgs.extend(ext)
         return msgs
+
+    def wrap_text(f, text, width):
+        """Greedy word wrap of text to `width` px with font f."""
+        lines, cur = [], ""
+        for wd in text.split(" "):
+            trial = (cur + " " + wd).strip()
+            if cur and f.measure(trial) > width:
+                lines.append(cur)
+                cur = wd
+            else:
+                cur = trial
+        return lines + [cur]
+
+    def hw_restart_click(e=None):
+        """The button of the "HWiNFO stopped sharing" notice: restart HWiNFO now. Only ever from a click."""
+        now = time.time()
+        if now - (st.get("hw_rst") or 0) < 40:
+            return
+        st["hw_rst"] = st["last_restart"] = now         # (also keeps the automatic repair of a vanished HWiNFO quiet)
+        src.hold_until = now + 90                       # statistics and the recording stay on HWiNFO through the gap
+        refresh_status()
+
+        def work():
+            st["hw_rst_res"] = hwctl.restart_hwinfo(cfg["interval"], st["hw_exe"])
+        threading.Thread(target=work, daemon=True).start()
 
     def draw_toasts(msgs):
         """Small rounded pills stacked upwards from just above the status bar; rebuilt only when they change."""
@@ -731,21 +893,30 @@ def main():
         th = f.metrics("linespace") + 10
         for text, col, kind in msgs:
             xw = f.measure("  ✕") if kind == "upd" else 0
-            tw = min(maxw - 2 * th, f.measure(text) + xw)
-            text = fit_text(f, text, tw - xw)
-            w = int(tw + th)
-            x0, y0 = int(round(cx - w / 2)), int(round(y - th))
-            fill, line = mix(C["card"], col, 0.22), mix(C["card"], col, 0.6)
-            tags = ("toast", "updbtn") if kind == "upd" else ("toast",)
-            if GFX:
-                cv.create_image(x0, y0, image=gfx.card(w, int(th), th / 2, fill, line), anchor="nw", tags=tags)
+            ph, lines = th, None
+            if kind == "hwstale":           # the long notice wraps instead of being cut off
+                lines = wrap_text(f, text, maxw - 2 * th)
+                text = "\n".join(lines)
+                ph = th + (len(lines) - 1) * f.metrics("linespace")
+                tw = max(f.measure(x) for x in lines)
             else:
-                round_rect(cv, x0, y0, x0 + w, y0 + th, th / 2, fill=fill, outline=line, tags=tags)
-            cv.create_text(x0 + th / 2, y0 + th / 2, text=text, anchor="w", font=s["f_toast_t"], fill=col, tags=tags)
+                tw = min(maxw - 2 * th, f.measure(text) + xw)
+                text = fit_text(f, text, tw - xw)
+            w = int(tw + th)
+            x0, y0 = int(round(cx - w / 2)), int(round(y - ph))
+            fill, line = mix(C["card"], col, 0.22), mix(C["card"], col, 0.6)
+            tags = ("toast", "updbtn") if kind == "upd" else ("toast", "hwrestart") if kind == "hwbtn" else ("toast",)
+            if GFX:
+                cv.create_image(x0, y0, image=gfx.card(w, int(ph), th / 2, fill, line), anchor="nw", tags=tags)
+            else:
+                round_rect(cv, x0, y0, x0 + w, y0 + ph, th / 2, fill=fill, outline=line, tags=tags)
+            cv.create_text(x0 + w / 2 if lines else x0 + th / 2, y0 + ph / 2, text=text,
+                           anchor="center" if lines else "w", justify="center", font=s["f_toast_t"], fill=col,
+                           tags=tags)
             if kind == "upd":
                 cv.create_text(x0 + w - th / 2, y0 + th / 2, text="✕", anchor="e", font=s["f_toast_t"], fill=C["dim"],
                                tags=("toast", "updx"))
-            y -= th + 6
+            y -= ph + 6
 
     def refresh_status():
         s = st["status"]
@@ -757,19 +928,21 @@ def main():
             if s.get("pill_on") != on:
                 s["pill_on"] = on
                 cv.itemconfig(s["pill"], image=s["pill_fn"](on))
-            if s.get("track_all") != all_:
+            if "sw_track" in s and s.get("track_all") != all_:
                 s["track_all"] = all_
                 cv.itemconfig(s["sw_track"], image=s["track_fn"](all_))
         else:
             cv.itemconfig(s["pill"], fill=mix(C["card"], C["green"] if on else C["red"], 0.18))
             cv.itemconfig(s["dot"], fill=C["green"] if on else C["red"])
-            cv.itemconfig(s["sw_track"], fill=mix(C["track"], C["ui"], 0.55) if all_ else C["track"])
+            if "sw_track" in s:
+                cv.itemconfig(s["sw_track"], fill=mix(C["track"], C["ui"], 0.55) if all_ else C["track"])
         sk = (on, all_, i18n._lang)
         if s.get("static_key") != sk:
             s["static_key"] = sk
             cv.itemconfig(s["txt"], text=t("log_on") if on else t("log_off"))
-            cv.itemconfig(s["sw_l"], fill=C["faint"] if all_ else C["fg"])
-            cv.itemconfig(s["sw_r"], fill=C["fg"] if all_ else C["faint"])
+            if "sw_l" in s:
+                cv.itemconfig(s["sw_l"], fill=C["faint"] if all_ else C["fg"])
+                cv.itemconfig(s["sw_r"], fill=C["fg"] if all_ else C["faint"])
         draw_toasts(status_msgs())
         if st.get("soon_after"):
             try:
@@ -785,6 +958,8 @@ def main():
 
     def animate_knob(target_x, steps=8):
         s = st["status"]
+        if "sw_geo" not in s:                       # Basic: no recording-mode switch
+            return
         x0, x1, my, kr = s["sw_geo"]
         cur = cv.coords(s["sw_knob"])
         if not cur:
@@ -813,7 +988,7 @@ def main():
         logger.last = 0
         save_cfg("log_all")
         s = st["status"]
-        if s:
+        if s and "sw_geo" in s:
             animate_knob(s["sw_geo"][1] if cfg["log_all"] else s["sw_geo"][0])
         refresh_status()
 
@@ -878,6 +1053,14 @@ def main():
         if root.focus_get() is not spin:
             mm.toggle()
 
+    def toggle_ui_mode(e=None):
+        """Basic <-> Advanced, live (status bar chip and the B key)."""
+        apply_settings({"ui_mode": "advanced" if is_basic() else "basic"})
+
+    def key_ui_mode(e):
+        if root.focus_get() is not spin:
+            toggle_ui_mode()
+
     spin.config(command=set_interval)
     spin.bind("<Return>", lambda e: (set_interval(), cv.focus_set()))
     spin.bind("<FocusOut>", set_interval)
@@ -891,6 +1074,8 @@ def main():
     root.bind("<KeyPress-V>", key_viewer)
     root.bind("<KeyPress-m>", key_mini)
     root.bind("<KeyPress-M>", key_mini)
+    root.bind("<KeyPress-b>", key_ui_mode)
+    root.bind("<KeyPress-B>", key_ui_mode)
     cv.bind("<Button-1>", lambda e: cv.focus_set(), add="+")
     root.bind("<F11>", lambda e: root.attributes("-fullscreen", not root.attributes("-fullscreen")))
     root.bind("<Escape>", lambda e: root.attributes("-fullscreen", False))
@@ -910,6 +1095,26 @@ def main():
         st["sections_cfg"] = cfg_list
         st["sections"] = layout.build_sections(cfg_list)
 
+    def is_basic():
+        return cfg.get("ui_mode") != "advanced"
+
+    def view_sections():
+        """What the panel shows: Basic = the curated plain rows (built from the auto-detected layout, the stored
+        layout is not touched), Advanced = the user's layout."""
+        return st["bsections"] if is_basic() else st["sections"]
+
+    def ensure_basic(rd):
+        """(Re)build the Basic rows when the set of readings changed in size (same rule as the auto layout).
+        True when the rows changed."""
+        if not is_basic() or len(rd) == st["bauto_n"] or (st["bauto_n"] >= 0 and time.time() - st["bauto_t"] <= 5):
+            return False
+        st["bauto_n"], st["bauto_t"] = len(rd), time.time()
+        new = layout.build_sections(basicmode.view(layout.autodetect(rd, rids=True), rd))
+        if [r.key for r in layout.all_rows(new)] == [r.key for r in layout.all_rows(st["bsections"])]:
+            return False
+        st["bsections"] = new
+        return True
+
     def load_layout():
         """The layout configured for the active data source, or auto-detection."""
         lay = cfg.get(config.layout_key(src.active), "auto")
@@ -928,6 +1133,7 @@ def main():
         """Another data source is active: switch to its layout, new statistics, new CSV file."""
         st["gen"] = src.gen
         load_layout()
+        st["bauto_n"] = -1                           # Basic rows are detected again for the new source
         st["was_down"] = False
         st["warm_until"] = 0
         stats.clear()
@@ -958,8 +1164,8 @@ def main():
                 changed = True
         if changed:
             logger.close()
-            if st["size"]:
-                build(*st["size"])
+        if (ensure_basic(rd) or changed) and st["size"]:
+            build(*st["size"])
 
     # ------------------------------------------------------------ settings window
     def read_now():
@@ -1009,6 +1215,24 @@ def main():
                 rd = read_now()
                 if rd:
                     ensure_layout(rd)
+            st["bauto_n"] = -1             # ... and so are the names of the Basic rows
+            rd = read_now()
+            if rd:
+                ensure_basic(rd)
+        if "ui_mode" in real:              # Basic <-> Advanced: only the view changes, the stored layout is untouched
+            need_build = True
+            st["bauto_n"], st["mode_msg"] = -1, ""
+            if is_basic():
+                rd = read_now()
+                if rd:
+                    ensure_basic(rd)
+            w = st["settings"]
+            try:
+                if w is not None and w.winfo_exists():
+                    if w.rebuild_later():  # the settings pages differ between the modes; a running benchmark keeps them
+                        st["mode_msg"], st["mode_note"] = t("ui_mode_deferred"), time.time()
+            except tk.TclError:
+                pass
         lay_key = config.layout_key(src.active)          # the layout tab edits the active source's layout
         if lay_mode == "auto":
             cfg[lay_key] = "auto"
@@ -1050,7 +1274,7 @@ def main():
             logger.close()                 # next row starts a new file with the new folder / format / mode
             logger.delim, logger.dec = config.csv_format(cfg)
             logger.last = 0
-        if "log_all" in real and st["status"]:
+        if "log_all" in real and st["status"] and "sw_geo" in st["status"]:
             animate_knob(st["status"]["sw_geo"][1] if cfg["log_all"] else st["status"]["sw_geo"][0])
         if "interval" in real or ("sync_hwinfo_interval" in real and cfg["sync_hwinfo_interval"]) or                 ("backend" in real and sync_on()):
             spin.delete(0, "end")
@@ -1096,6 +1320,23 @@ def main():
             st["settings"] = settings_ui.SettingsWindow(api)
         except Exception:
             traceback.print_exc()
+
+    def show_hw_setting():
+        """Basic hint "CPU temperature needs HWiNFO": switch to Advanced and open Settings > HWiNFO."""
+        if is_basic():
+            apply_settings({"ui_mode": "advanced"})
+        open_settings()
+
+        def goto(n=0):
+            w = st["settings"]
+            try:
+                if w is not None and w.winfo_exists() and 2 in w.nav_map:
+                    w.select(2)
+                elif n < 8:
+                    root.after(250, goto, n + 1)
+            except tk.TclError:
+                pass
+        root.after(400, goto)
 
     # ------------------------------------------------------------ updates
     def upd_state():
@@ -1223,15 +1464,35 @@ def main():
             st["was_down"] = True
         frozen = (not ok) or now < st.get("warm_until", 0)
         st["frozen"] = frozen
+        # HWiNFO still runs but its shared memory stopped updating (the free version does that after 12 h): the old
+        # values would look fine, so show "-", record nothing and offer a restart (button only: never automatic)
+        stale = False
+        if ok and src.active == "hwinfo" and hwsm.monitor.stale:
+            if now - st.get("hw_ivl_t", 0) > 30:
+                st["hw_ivl_t"] = now
+                st["hw_ivl"] = hwctl.hwinfo_interval_ms(st["hw_exe"]) / 1000.0 if st.get("hw_exe") else 2.0
+            hwsm.monitor.limit = max(10.0, 3 * st.get("hw_ivl", 2.0))
+            # frozen shared memory, or HWiNFO runs but has shared nothing for 20 s (e.g. the 12 h limit of the free
+            # version): only a notice with a restart button, never an automatic restart (the user decides)
+            down = (not ok and manage_on() and st.get("down_since") is not None and now - st["down_since"] > 20)
+            stale = (hwsm.monitor.stale or down) and hwctl.proc_running()
+        if stale != st.get("stale"):
+            st["stale"], st["need_draw"] = stale, True
+            if not stale:
+                st["hw_rst"] = 0
+        res = st.pop("hw_rst_res", None)
+        if res == "failed":
+            st["hw_rst"] = 0
+            st["hk_msg"], st["hk_note"] = t("hw_rst_fail"), now
         if ok:
             st["down_since"] = None
         elif manage_on():
-            # e.g. the 12 h limit of the free version: no connection for 20 s -> restart HWiNFO (at most every 5 min)
             t0 = st.get("down_since") or now
             st["down_since"] = t0
-            # shared memory switched off in HWiNFO: fix it after 5 s instead of waiting for the generic 20 s
-            wait = 5 if (st.get("hw_exe") and not hwctl.sm_enabled(st["hw_exe"])) else 20
-            if now - t0 > wait and now - st.get("last_restart", 0) > 300:
+            # automatic repair ONLY when HWiNFO is not running (crashed / closed): start it again after 20 s
+            # (at most every 5 min). If it runs but shares nothing (12 h limit of the free version, sharing switched
+            # off) we never restart it ourselves: the stale notice above offers a button instead.
+            if not hwctl.proc_running() and now - t0 > 20 and now - st.get("last_restart", 0) > 300:
                 st["last_restart"] = now
                 if st.get("hw_exe") and hwctl.tasks_installed():
                     hwctl.repair_hwinfo(cfg["interval"], st["hw_exe"])   # restart + SensorsSM=1
@@ -1244,14 +1505,15 @@ def main():
         if st.get("mini") and not mini:
             st["last"].clear()                  # restored: the canvas content is stale, redraw everything once
         st["mini"] = mini
-        rows = layout.all_rows(st["sections"])
-        if ok and not frozen and not st.get("thr_seen"):
+        rows = layout.all_rows(st["sections"])        # recording / mini mode: the user's layout in both modes
+        shown = layout.all_rows(st["bsections"]) if is_basic() else []      # Basic: extra rows only drawn here
+        if ok and not frozen and not stale and not st.get("thr_seen"):
             hot = throttle.active(rd)                    # HWiNFO only: the first time this session the CPU / GPU is held back
             if hot:
                 st["thr_seen"] = True
                 st["thr_msg"] = " · ".join(t("thr_toast", who=w, what=x) for w, x in hot)
                 st["thr_note"] = now
-        mm.update(rows, rd if ok else [], ok and not frozen)
+        mm.update(rows, rd if ok and not stale else [], ok and not frozen)
         # HWiNFO has not polled since the last tick: nothing new to show (the values are identical)
         poll = hwsm.last_poll if (ok and src.active == "hwinfo") else None
         same = (poll is not None and poll == st.get("poll") and not st.get("need_draw") and not st["frozen"]
@@ -1262,9 +1524,10 @@ def main():
         st["nall"] = len(rd) if ok else st.get("nall", 0)
         st["nreq"] = len(rows)
         logvals = []
-        for row in (() if same else rows):
-            r = row.match(rd) if ok else None
-            logvals.append(logger.num(r["value"], row.csv_decimals()) if r else "")
+        for row, islog in (() if same else [(x, True) for x in rows] + [(x, False) for x in shown]):
+            r = row.match(rd) if ok and not stale else None
+            if islog:
+                logvals.append(logger.num(r["value"], row.csv_decimals()) if r else "")
             it = st["items"].get(id(row))
             if not it or frozen:
                 continue        # frozen: last values stay on screen, stats / bars do not move
@@ -1275,15 +1538,34 @@ def main():
                     s = stats.setdefault(row.key, [v, v, 0.0, 0])
                     s[0], s[1], s[2], s[3] = min(s[0], v), max(s[1], v), s[2] + v, s[3] + 1
                 continue
+            if stale:                            # frozen HWiNFO data: no values, statistics keep what they have
+                set_text(it["now"], "–", C["dim"])
+                if "status" in it:
+                    set_text(it["status"], "", C["dim"])
+                if "bar" in it:
+                    x0, x1, y0, y1 = it["bargeo"]
+                    st["last"].pop(it["bar"], None)
+                    cv.coords(it["bar"], x0, y0, x0, y1)
+                continue
             if r:
                 v = r["value"]
                 s = stats.setdefault(row.key, [v, v, 0.0, 0])
                 s[0], s[1], s[2], s[3] = min(s[0], v), max(s[1], v), s[2] + v, s[3] + 1
                 avg = s[2] / s[3]
-                col = layout.value_color(row, v, C["fg"])
-                set_text(it["unit"], row.unit_eff)
-                set_text(it["now"], row.fmt_value(v), col)
+                basic = is_basic()
+                if basic:        # Basic: value + word share one status level (temperatures green / amber / red, rest neutral)
+                    col = basicmode.color(row, v, C)
+                    bt = basicmode.value_text(row, v)
+                else:
+                    col, bt = layout.value_color(row, v, C["fg"]), None
+                set_text(it["unit"], bt[1] if bt else row.unit_eff)
+                set_text(it["now"], bt[0] if bt else row.fmt_value(v), col)
+                if "status" in it:
+                    set_text(it["status"], fit_text(st["fnt_stat"], basicmode.status_text(row, v), it["stat_w"]),
+                             col)
                 for k, val in (("min", s[0]), ("max", s[1]), ("avg", avg)):
+                    if k not in it:
+                        continue
                     if row.textual:
                         set_text(it[k], "")                  # a state / reason code: no min / max / average
                         continue
@@ -1291,12 +1573,13 @@ def main():
                 if "bar" in it:
                     x0, x1, y0, y1 = it["bargeo"]
                     bx = int(round(x0 + (x1 - x0) * layout.frac(row, v)))
-                    if st["last"].get(it["bar"]) != (bx, col):       # skip the redraw of an unchanged bar
-                        st["last"][it["bar"]] = (bx, col)
+                    bcol = it["accent"] if basic and row.status != "temp" else col    # Basic: calm accent bars
+                    if st["last"].get(it["bar"]) != (bx, bcol):      # skip the redraw of an unchanged bar
+                        st["last"][it["bar"]] = (bx, bcol)
                         cv.coords(it["bar"], x0, y0, bx, y1)
-                        cv.itemconfig(it["bar"], fill=col)
+                        cv.itemconfig(it["bar"], fill=bcol)
         logger.ext.update()                 # process sampling runs only while the recording needs it
-        if not frozen and ok and cfg["logging"] and rows and now - logger.last >= cfg["interval"] - 0.05:
+        if not frozen and not stale and ok and cfg["logging"] and rows and now - logger.last >= cfg["interval"] - 0.05:
             logger.last = now
             try:
                 if cfg.get("log_all"):
@@ -1453,6 +1736,16 @@ def main():
         hwctl.run_task(hwctl.TASK_START)
     # when opened from a shortcut Windows puts the window on the clicked screen: move it, then maximise
     root.after(200, lambda: place(final=True))
+
+    def show_mode_hint():
+        """First start in Basic (new install only; upgraded installs stay Advanced): say once how to get the details."""
+        if st["closing"] or not is_basic() or cfg.get("ui_mode_hint_shown"):
+            return
+        cfg["ui_mode_hint_shown"] = True
+        save_cfg("ui_mode_hint_shown")
+        st["mode_msg"], st["mode_note"] = t("ui_mode_hint"), time.time()
+        refresh_status()
+    root.after(1800, show_mode_hint)
     root.after(400, tick)
     root.after(300, upd_pump)
     root.after(150, tray_poll)

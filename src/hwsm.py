@@ -32,6 +32,37 @@ def _s(b):
 
 _cache = None
 last_poll = None            # HWiNFO's poll counter of the last read (consumers compare it to skip unchanged data)
+signature = None            # header signature of the last read: b"HWiS" while HWiNFO delivers, b"DEAD" once it stopped
+
+SIG_DEAD = 0x44414544       # "DEAD": the free version stops the shared memory after 12 hours of running
+
+
+class Staleness:
+    """Is the shared memory frozen? True when HWiNFO flagged it dead (header signature "DEAD"), or when its poll
+    timestamp has not advanced for `limit` seconds. A frozen memory still looks fine to a reader (the old values stay),
+    so without this check the panel would show and record stale numbers.
+    update(sig, poll, now) is called on every read; `stale` is the current verdict. Pure logic: unit-tested in
+    tools/check_stale.py."""
+
+    def __init__(self, limit=10.0):
+        self.limit = limit
+        self.reset()
+
+    def reset(self):
+        self.poll = None
+        self.t_change = None
+        self.dead = False
+        self.stale = False
+
+    def update(self, sig, poll, now):
+        self.dead = sig == SIG_DEAD
+        if self.t_change is None or poll != self.poll:
+            self.poll, self.t_change = poll, now
+        self.stale = self.dead or (now - self.t_change > self.limit)
+        return self.stale
+
+
+monitor = Staleness()
 
 
 def available():
@@ -47,6 +78,7 @@ def read_all():
     """All readings, or RuntimeError if the shared memory is not available."""
     h = _k.OpenFileMappingW(FILE_MAP_READ, False, SHM_NAME)
     if not h:
+        monitor.reset()
         raise RuntimeError("HWiNFO shared memory not available (error %d)" % ctypes.get_last_error())
     p = _k.MapViewOfFile(h, FILE_MAP_READ, 0, 0, 0)
     if not p:
@@ -58,8 +90,10 @@ def read_all():
     finally:
         _k.UnmapViewOfFile(p)
         _k.CloseHandle(h)
-    global _cache, last_poll
+    global _cache, last_poll, signature
     last_poll = poll
+    signature = struct.pack("<I", sig)
+    monitor.update(sig, poll, time.time())
     key = (sc, rc, so, ss, ro, rs)
     if _cache is not None and _cache[0] == key and _cache[1] == poll and time.time() - _cache[3] < 5.0:
         return [dict(d) for d in _cache[2]]          # HWiNFO has not polled since the last read: same values

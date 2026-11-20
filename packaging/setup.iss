@@ -46,8 +46,9 @@ en.HwNoticeSub=metriQ reads its data from HWiNFO64. The following HWiNFO setting
 en.HwNoticeText=For metriQ to work, Setup changes these HWiNFO64 settings (HWiNFO64.INI):%n%n  •  Shared Memory Support: on  (the panel reads the sensors from it)%n  •  Sensors-only mode: on%n  •  Start minimised to the tray (sensors window and main window): on%n  •  Closing the sensors window only minimises it: on%n  •  Welcome / progress dialogs at start: off%n%nHWiNFO then runs quietly in the background: the panel starts it when it opens and closes it when you close the panel. If HWiNFO is running now, Setup closes it politely first.%n%nAll other HWiNFO settings stay as they are. You can change these in HWiNFO at any time; the panel switches the ones it needs back on.
 en.InstallHwinfoTask=Also install HWiNFO64 (free, recommended: CPU / GPU temperatures, fans, FPS)
 en.InstallingHwinfo=Installing HWiNFO64 (winget)...
-en.HwinfoInstallFailed=HWiNFO64 could not be installed automatically. The download page will open; install it and run this Setup again so the panel can start / stop HWiNFO.
+en.HwinfoInstallFailed=HWiNFO64 could not be installed automatically (winget exit code: %1).%n%nYes = try again%nNo = open the HWiNFO download page (install it yourself, then Settings > HWiNFO > "Install tasks" in metriQ)%nCancel = continue without HWiNFO%n%nWithout HWiNFO, metriQ still works with its built-in data source (CPU / RAM / disk / network load); temperatures, fans and power need HWiNFO.%n%nDetails: %2
 en.TasksFailed=The scheduled tasks for HWiNFO control could not be created. The panel still works in read-only mode.%n%nDetails: C:\ProgramData\metriQ\install_tasks.log
+en.TasksUntrusted=Automatic HWiNFO start / stop was not set up: the HWiNFO64 found on this PC is not the signed, installed version (for example a portable copy). Auto-start needs HWiNFO installed through Setup or winget. You can still start HWiNFO yourself; the panel reads it as usual.
 en.FanNoticeTitle=Fan control service
 en.FanNoticeSub=Setup installs a Windows service for metriQ's fan control.
 en.FanNoticeText=Setup registers the Windows service "metriQ Fan Control" (metriQFan, runs as LocalSystem, starts with Windows).%n%n  •  It does nothing until you turn fan control on in metriQ (Settings > Fan) and accept the warning there.%n  •  Stopping the service, pressing STOP or turning fan control off hands every fan back to BIOS / the graphics driver.%n  •  Motherboard fans need the PawnIO driver (optional task on the previous page); it is installed only if you tick it.%n%nUninstalling metriQ stops and removes the service. No data is sent anywhere.
@@ -61,8 +62,9 @@ tr.HwNoticeSub=metriQ verilerini HWiNFO64'ten okur. Aşağıdaki HWiNFO ayarlar�
 tr.HwNoticeText=metriQ'in düzgün çalışması için kurulum, HWiNFO64'ün şu ayarlarını değiştirir (HWiNFO64.INI):%n%n  •  Paylaşılan bellek (Shared Memory Support): açık  (panel sensörleri buradan okur)%n  •  Yalnızca sensörler modu: açık%n  •  Açılışta sistem tepsisine küçültülmüş başla (sensör ve ana pencere): açık%n  •  Sensör penceresini kapatınca sadece simge durumuna küçült: açık%n  •  Açılıştaki karşılama / ilerleme pencereleri: kapalı%n%nBöylece HWiNFO arka planda sessizce çalışır: panel açılınca HWiNFO'yu başlatır, paneli kapatınca kapatır. HWiNFO şu an açıksa kurulum önce onu düzgünce kapatır.%n%nHWiNFO'nun diğer ayarlarına dokunulmaz. Bu ayarları HWiNFO'da istediğiniz zaman değiştirebilirsiniz; panel ihtiyaç duyduklarını yeniden açar.
 tr.InstallHwinfoTask=HWiNFO64'ü de kur (ücretsiz, önerilir: CPU / GPU sıcaklıkları, fanlar, FPS)
 tr.InstallingHwinfo=HWiNFO64 kuruluyor (winget)...
-tr.HwinfoInstallFailed=HWiNFO64 otomatik kurulamadı. İndirme sayfası açılacak; HWiNFO'yu kurup bu kurulumu yeniden çalıştırırsanız panel HWiNFO'yu açıp kapatabilir.
+tr.HwinfoInstallFailed=HWiNFO64 otomatik kurulamadı (winget çıkış kodu: %1).%n%nEvet = tekrar dene%nHayır = HWiNFO indirme sayfasını aç (kendiniz kurun, sonra metriQ'de Ayarlar > HWiNFO > "Görevleri kur")%nİptal = HWiNFO olmadan devam et%n%nHWiNFO olmadan da metriQ yerleşik veri kaynağıyla çalışır (CPU / RAM / disk / ağ yükü); sıcaklık, fan ve güç için HWiNFO gerekir.%n%nAyrıntı: %2
 tr.TasksFailed=HWiNFO denetimi için zamanlanmış görevler oluşturulamadı. Panel yine de salt okunur modda çalışır.%n%nAyrıntı: C:\ProgramData\metriQ\install_tasks.log
+tr.TasksUntrusted=HWiNFO'nun otomatik açılıp kapanması kurulmadı: bu bilgisayardaki HWiNFO64 imzalı, kurulu sürüm değil (örneğin taşınabilir kopya). Otomatik başlatma için HWiNFO'nun Kurulum ya da winget ile kurulması gerekir. HWiNFO'yu elle başlatabilirsiniz; panel yine okur.
 tr.FanNoticeTitle=Fan kontrol hizmeti
 tr.FanNoticeSub=Kurulum, metriQ'in fan kontrolü için bir Windows hizmeti ekler.
 tr.FanNoticeText=Kurulum "metriQ Fan Control" adlı bir Windows hizmeti kaydeder (metriQFan, LocalSystem olarak çalışır, Windows ile başlar).%n%n  •  metriQ'te fan kontrolünü açıp (Ayarlar > Fan) oradaki uyarıyı onaylamadıkça hiçbir şey yapmaz.%n  •  Hizmeti durdurmak, DURDUR'a basmak ya da fan kontrolünü kapatmak bütün fanları BIOS'a / ekran kartı sürücüsüne geri verir.%n  •  Anakart fanları için PawnIO sürücüsü gerekir (önceki sayfadaki isteğe bağlı görev); yalnızca işaretlerseniz kurulur.%n%nmetriQ kaldırılınca hizmet durdurulur ve silinir. Hiçbir veri bir yere gönderilmez.
@@ -215,12 +217,26 @@ begin
   if FileExists(s) then begin Result := s; Exit; end;
 end;
 
+var
+  HwWingetExit: Integer;
+
+// setup.log lives next to install_tasks.log (C:\ProgramData\metriQ)
+procedure SetupLog(const msg: String);
+var
+  dir: String;
+begin
+  dir := ExpandConstant('{commonappdata}\metriQ');
+  ForceDirectories(dir);
+  SaveStringToFile(dir + '\setup.log', GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':') + '  ' + msg + #13#10, True);
+end;
+
 function InstallHwinfoWinget(): Boolean;
 var
   winget: String;
   rc: Integer;
 begin
   Result := False;
+  HwWingetExit := -1;
   winget := ExpandConstant('{localappdata}\Microsoft\WindowsApps\winget.exe');
   if not FileExists(winget) then
     winget := 'winget.exe';
@@ -229,7 +245,13 @@ begin
   try
     if Exec(winget, 'install --id REALiX.HWiNFO -e --silent --accept-package-agreements --accept-source-agreements --disable-interactivity',
             '', SW_HIDE, ewWaitUntilTerminated, rc) then
+    begin
+      HwWingetExit := rc;
       Result := FindHwinfo() <> '';
+      SetupLog('winget install REALiX.HWiNFO: exit code ' + IntToStr(rc) + ', HWiNFO64.EXE found: ' + IntToStr(Ord(Result)));
+    end
+    else
+      SetupLog('winget install REALiX.HWiNFO: winget could not be started (' + SysErrorMessage(rc) + ')');
   finally
     WizardForm.ProgressGauge.Style := npbstNormal;
   end;
@@ -308,19 +330,32 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   Params, hw: String;
   rc: Integer;
+  Again: Boolean;
 begin
   if CurStep <> ssPostInstall then
     Exit;
   hw := FindHwinfo();
   if (hw = '') and WizardIsTaskSelected('installhwinfo') then
   begin
-    if InstallHwinfoWinget() then
-      EnsureHwinfoSettings(FindHwinfo())
-    else
-    begin
-      SuppressibleMsgBox(CustomMessage('HwinfoInstallFailed'), mbInformation, MB_OK, IDOK);
-      ShellExec('open', 'https://www.hwinfo.com/download/', '', '', SW_SHOWNORMAL, ewNoWait, rc);
-    end;
+    repeat
+      Again := False;
+      if InstallHwinfoWinget() then
+      begin
+        EnsureHwinfoSettings(FindHwinfo());
+        Break;
+      end;
+      // Yes = retry, No = open the download page, Cancel = continue (silent Setup: continue)
+      case SuppressibleMsgBox(FmtMessage(CustomMessage('HwinfoInstallFailed'), [IntToStr(HwWingetExit), ExpandConstant('{commonappdata}\metriQ\setup.log')]),
+             mbError, MB_YESNOCANCEL, IDCANCEL) of
+        IDYES: Again := True;
+        IDNO: begin
+          SetupLog('user chose the HWiNFO download page');
+          ShellExec('open', 'https://www.hwinfo.com/download/', '', '', SW_SHOWNORMAL, ewNoWait, rc);
+        end;
+      else
+        SetupLog('user continued without HWiNFO (built-in data source)');
+      end;
+    until not Again;
   end
   else if hw <> '' then
     EnsureHwinfoSettings(hw);
@@ -332,7 +367,10 @@ begin
   if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Params, '', SW_HIDE, ewWaitUntilTerminated, rc) then
     rc := 1;
   // rc = 3: HWiNFO64.EXE not found -> no tasks; the panel falls back to its built-in data source
-  if (rc <> 0) and (rc <> 3) then
+  // rc = 4: a HWiNFO64.EXE exists but is portable / unsigned / outside Program Files -> no tasks (security rule)
+  if rc = 4 then
+    SuppressibleMsgBox(CustomMessage('TasksUntrusted'), mbInformation, MB_OK, IDOK)
+  else if (rc <> 0) and (rc <> 3) then
     SuppressibleMsgBox(CustomMessage('TasksFailed'), mbError, MB_OK, IDOK);
 
   if PawnioMissing() and WizardIsTaskSelected('installpawnio') and not InstallPawnioWinget() then

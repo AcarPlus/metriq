@@ -108,6 +108,7 @@ class Manager:
         self.gen = 0                 # +1 whenever the source changes (the panel then re-detects its layout)
         self.err = ""
         self.down_since = None
+        self.hold_until = 0.0        # the user restarted HWiNFO: do not fall back to another source before this time
         self.probe_at = 0.0
         self.pm = None
         self.pm_path = None
@@ -224,7 +225,7 @@ class Manager:
             self.select("hwinfo")
         elif self.active == "builtin" and av["lhm"]:
             self.select("lhm")
-        elif self.active in ("hwinfo", "lhm") and self.down_since:
+        elif self.active in ("hwinfo", "lhm") and self.down_since and now >= self.hold_until:
             wait = 90.0 if self.active == "hwinfo" and self.managed() else FALLBACK_S
             if now - self.down_since > wait:
                 self.select("lhm" if self.active == "hwinfo" and av["lhm"] else "builtin")

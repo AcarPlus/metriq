@@ -47,6 +47,7 @@ a = Analysis(
     # scheduled tasks run (the Setup copies them to {app}\tasks, install.ps1 users do not need the bundle)
     datas=[
         (os.path.join(SRC, "metriq.ico"), "."),
+        (os.path.join(SRC, "metriq.png"), "."),          # logo on the shareable benchmark card (perf_card.py)
         (os.path.join(SRC, "hidden.vbs"), "."),
         (os.path.join(SRC, "set_interval.ps1"), "."),
         (GPU_EXE, "."),

@@ -1,8 +1,10 @@
-"""Controlling HWiNFO from the panel: detection, process check, elevated scheduled tasks (see install.ps1)."""
+"""Controlling HWiNFO from the panel: detection, process check, elevated scheduled tasks (Setup / install.ps1)."""
 import ctypes
 import os
 import shutil
 import subprocess
+import sys
+import time
 from ctypes import wintypes
 
 import config
@@ -115,6 +117,86 @@ def tasks_installed(refresh=False):
     return _tasks_cache["v"]
 
 
+def task_script():
+    """register_tasks.ps1 of an installed metriQ (<app>/tasks, put there by Setup), or None (source checkout)."""
+    if not config.FROZEN:
+        return None
+    p = os.path.join(os.path.dirname(sys.executable), "tasks", "register_tasks.ps1")
+    return p if os.path.isfile(p) else None
+
+
+class _ShellExecuteInfo(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("fMask", ctypes.c_ulong), ("hwnd", wintypes.HWND),
+                ("lpVerb", wintypes.LPCWSTR), ("lpFile", wintypes.LPCWSTR), ("lpParameters", wintypes.LPCWSTR),
+                ("lpDirectory", wintypes.LPCWSTR), ("nShow", ctypes.c_int), ("hInstApp", wintypes.HINSTANCE),
+                ("lpIDList", ctypes.c_void_p), ("lpClass", wintypes.LPCWSTR), ("hkeyClass", wintypes.HKEY),
+                ("dwHotKey", wintypes.DWORD), ("hIconOrMonitor", wintypes.HANDLE), ("hProcess", wintypes.HANDLE)]
+
+
+def under_program_files(path):
+    """True when `path` really lies below %ProgramFiles% / %ProgramFiles(x86)% (links resolved, no '..').
+    Cheap pre-check before a UAC prompt; the elevated script repeats it and also verifies the signature."""
+    try:
+        if not path or ".." in os.path.normpath(path).split(os.sep) or ".." in path.replace("/", "\\").split("\\"):
+            return False
+        real = os.path.normcase(os.path.realpath(path))
+        for env in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+            base = os.environ.get(env)
+            if (base and real.startswith(os.path.normcase(os.path.realpath(base)).rstrip("\\") + "\\")
+                    and os.path.normcase(os.path.abspath(path)) == real):
+                return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+def register_tasks_elevated(hw_exe=None, timeout_s=180, hwnd=None):
+    """Installs the scheduled tasks after the fact (e.g. HWiNFO was installed after metriQ): runs Setup's
+    register_tasks.ps1 elevated (one UAC prompt) and waits for it.
+    Returns "ok" | "cancelled" (UAC declined) | "no_hwinfo" | "untrusted" (portable / unsigned HWiNFO) | "no_script" | "error"."""
+    script = task_script()
+    if not script:
+        return "no_script"
+    if hw_exe and os.path.isfile(hw_exe) and not under_program_files(hw_exe):
+        return "untrusted"                            # portable copy: do not even ask for administrator rights
+    ps = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "WindowsPowerShell", "v1.0",
+                      "powershell.exe")
+    user = "\\".join(x for x in (os.environ.get("USERDOMAIN", ""), os.environ.get("USERNAME", "")) if x)
+    params = f'-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{script}"'
+    if user:
+        params += f' -User "{user}"'
+    if hw_exe and os.path.isfile(hw_exe) and os.path.basename(hw_exe).upper() == EXE_NAME:
+        params += f' -HwinfoPath "{hw_exe}"'      # only a hint: the script re-checks location + signature itself
+    sei = _ShellExecuteInfo()
+    sei.cbSize = ctypes.sizeof(sei)
+    sei.fMask = 0x00000040 | 0x00000100              # SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC
+    sei.lpVerb, sei.lpFile, sei.lpParameters, sei.nShow = "runas", ps, params, 0
+    sei.hwnd = hwnd
+    ole = ctypes.WinDLL("ole32")
+    ole.CoInitializeEx(None, 0x2 | 0x4)              # COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE (MS docs)
+    sh = ctypes.WinDLL("shell32", use_last_error=True)
+    sh.ShellExecuteExW.argtypes = [ctypes.POINTER(_ShellExecuteInfo)]
+    sh.ShellExecuteExW.restype = wintypes.BOOL
+    if not sh.ShellExecuteExW(ctypes.byref(sei)):
+        return "cancelled" if ctypes.get_last_error() == 1223 else "error"     # ERROR_CANCELLED: UAC "No"
+    if not sei.hProcess:
+        return "error"
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    k.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    k.CloseHandle.argtypes = [wintypes.HANDLE]
+    try:
+        if k.WaitForSingleObject(sei.hProcess, int(timeout_s * 1000)) != 0:
+            return "error"
+        code = wintypes.DWORD()
+        if not k.GetExitCodeProcess(sei.hProcess, ctypes.byref(code)):
+            return "error"
+    finally:
+        k.CloseHandle(sei.hProcess)
+        _tasks_cache.pop("v", None)
+    return {0: "ok", 3: "no_hwinfo", 4: "untrusted"}.get(code.value, "error")
+
+
 def run_task(name):
     """Elevated scheduled task: start/stop HWiNFO or change its interval without a UAC prompt."""
     try:
@@ -122,6 +204,32 @@ def run_task(name):
                               creationflags=NOWIN, timeout=10).returncode == 0
     except Exception:
         return False
+
+
+def restart_hwinfo(sec, exe, wait_s=8.0):
+    """The user asked to restart HWiNFO (e.g. its free version stopped the shared memory after 12 hours).
+    With the installed tasks: the SetInterval task (elevated, no UAC) restarts it and re-enables Shared Memory Support.
+    Without tasks: end a HWiNFO that this account may close, and start the copy at `exe` again (its own UAC prompt if it asks).
+    Returns "task" | "direct" | "failed". Only ever called from a button click, never on a timer."""
+    if tasks_installed():
+        return "task" if repair_hwinfo(sec, exe) else "failed"
+    if not exe or not os.path.isfile(exe) or os.path.basename(exe).upper() != EXE_NAME:
+        return "failed"
+    try:
+        subprocess.run(["taskkill", "/im", EXE_NAME], capture_output=True, creationflags=NOWIN, timeout=10)
+        t_end = time.time() + wait_s
+        while proc_running() and time.time() < t_end:
+            time.sleep(0.25)
+        if proc_running():
+            return "failed"                      # it runs with more rights than the panel: restart it by hand
+        sh = ctypes.windll.shell32.ShellExecuteW        # HWiNFO may ask for administrator rights: its own UAC prompt
+        sh.restype = ctypes.c_void_p
+        sh.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPCWSTR,
+                       ctypes.c_int]
+        ok = (sh(None, "open", exe, None, os.path.dirname(exe), 7) or 0) > 32      # SW_SHOWMINNOACTIVE
+        return "direct" if ok else "failed"
+    except Exception:
+        return "failed"
 
 
 # ------------------------------------------------------------------ HWiNFO polling interval

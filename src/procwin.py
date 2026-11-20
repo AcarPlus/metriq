@@ -184,20 +184,45 @@ class Controller:
         self.win = None
         self.tips = []
 
-    def tag_row(self, cv, item, row, limit=None):
+    def tag_row(self, cv, item, row, limit=None, info=True):
         """Panel hook (called for every row name): makes CPU / RAM / GPU / VRAM / disk rows open the window and
-        adds the (i) balloon icon right behind the name when there is room (limit = right edge in canvas px)."""
+        adds the (i) balloon icon right behind the name when there is room (limit = right edge in canvas px).
+        info=False: no (i) here (Basic view draws the same explanation icon on every row, see help_icon)."""
         metric = metric_for_row(row)
         if not metric:
             return
         cv.tag_bind(item, "<Button-1>", lambda e, m=metric: self.open(m))
         cv.tag_bind(item, "<Enter>", lambda e: cv.config(cursor="hand2"))
         cv.tag_bind(item, "<Leave>", lambda e: cv.config(cursor=""))
-        if metric in _INFO and procgfx.AVAILABLE:
+        if info and metric in _INFO and procgfx.AVAILABLE:
             try:
                 self._info_icon(cv, item, metric, limit)
             except Exception:
                 pass
+
+    def help_icon(self, cv, item, text_fn, limit=None, on_click=None):
+        """Basic view: the same (i) icon behind every row name; hovering explains the row in plain words."""
+        if not procgfx.AVAILABLE:
+            return
+        try:
+            x0, y0, x1, y1 = cv.bbox(item)
+            d = max(12, int(round((y1 - y0) * 0.74)))
+            cx = x1 + 6 + d / 2
+            if limit is not None and cx + d / 2 > limit:
+                return
+            C = self.api.C
+            norm = procgfx.info(d, mix(C["card"], C["green"], 0.22), C["green"], mix(C["card"], C["green"], 0.55))
+            hot = procgfx.info(d, C["green"], C["card"])
+            icon = cv.create_image(cx, (y0 + y1) / 2, image=norm, tags="uinfo")
+            cv.tag_bind(icon, "<Enter>", lambda e: (cv.itemconfig(icon, image=hot), cv.config(cursor="hand2" if on_click else "")), add="+")
+            cv.tag_bind(icon, "<Leave>", lambda e: (cv.itemconfig(icon, image=norm), cv.config(cursor="")), add="+")
+            if on_click:
+                cv.tag_bind(icon, "<Button-1>", lambda e: on_click(), add="+")
+            cv._uinfo_imgs = getattr(cv, "_uinfo_imgs", ())[-8:] + (norm, hot)
+            self.tips.append(Tooltip.for_canvas(cv, icon, text_fn))
+            self.tips = self.tips[-48:]
+        except Exception:
+            pass
 
     def _info_icon(self, cv, item, metric, limit):
         x0, y0, x1, y1 = cv.bbox(item)
