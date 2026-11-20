@@ -226,9 +226,10 @@ def _fit_status_bar(family, lx, lbl_r, sw_w, rs, fs0, mode_labels):
     """Advanced status bar: font size (negative = pixels) and what to show so that
     [Paneldeki veriler (o) Tüm veriler] .. [Basit | Gelişmiş] [interval label] do not overlap. Returns
     (font size, show interval label, show left switch caption, show right switch caption, compact mode chip).
-    Long translations or a narrow panel first shrink the text down to 8 px, then drop the interval label (the spinbox
-    keeps its tooltip), then shorten the mode chip to the current mode only, then drop the left caption (knob position +
-    right caption still read), and last the right caption. The chip itself always stays (it is the way back)."""
+    Long translations or a narrow panel shrink the text only down to a readable size (12 px or more) while dropping, in
+    order, the interval label (the spinbox keeps its tooltip), the second word of the mode chip (current mode only), the
+    left caption (knob position + right caption still read) and last the right caption. Only when even that does not fit
+    does the text go down to 8 px. The chip itself always stays (it is the way back)."""
     gap = max(rs * 0.6, 8.0)
     cpad = max(6.0, rs * 0.45)
 
@@ -249,13 +250,16 @@ def _fit_status_bar(family, lx, lbl_r, sw_w, rs, fs0, mode_labels):
     stages = ((True, True, True, False, lbl_r - 2), (False, True, True, False, lbl_r + 2),
               (False, True, True, True, lbl_r + 2), (False, False, True, False, lbl_r + 2),
               (False, False, True, True, lbl_r + 2), (False, False, False, True, lbl_r + 2))
+    # first pass: never below a readable size (drop parts instead); only if nothing fits, shrink down to 8 px
+    readable = max(fs0, -max(12, int(rs * 0.32)))
     fs = fs0
-    for with_lbl, with_left, with_right, compact, limit in stages:
-        fs = fs0
-        while fs < -8 and need(fs, with_lbl, with_left, with_right, compact) > limit:
-            fs += 1
-        if need(fs, with_lbl, with_left, with_right, compact) <= limit:
-            return fs, with_lbl, with_left, with_right, compact
+    for floor in (readable, -8):
+        for with_lbl, with_left, with_right, compact, limit in stages:
+            fs = fs0
+            while fs < floor and need(fs, with_lbl, with_left, with_right, compact) > limit:
+                fs += 1
+            if need(fs, with_lbl, with_left, with_right, compact) <= limit:
+                return fs, with_lbl, with_left, with_right, compact
     return fs, False, False, False, True
 
 
@@ -596,8 +600,11 @@ def main():
         else:
             round_rect(cv, sx0, sy, sx1, sy + sb_h, R, fill=C["card"], outline=C["border"])
         my = sy + sb_h / 2
-        pw, ph = min(sw_span * 0.25, max(rs * 6.8, 130)), rs * 1.1
         px0 = col_name - 6
+        f_pill = (F_TXT, -max(10, int(rs * 0.50)), "bold")
+        fp_ = tkfont.Font(family=F_TXT, size=f_pill[1], weight="bold")
+        pill_fit = 6 + rs * 0.8 + max(fp_.measure(t("log_on")), fp_.measure(t("log_off"))) + rs * 0.7  # dot + text + pad
+        pw, ph = min(sw_span * 0.25, max(rs * 6.8, 130), max(pill_fit, 130)), rs * 1.1
         if GFX:
             s["pill_fn"] = lambda on: gfx.pill(pw, ph, mix(C["card"], C["green"] if on else C["red"], 0.18),
                                                C["green"] if on else C["red"], 6 + rs * 0.38, rs * 0.18)
@@ -609,7 +616,7 @@ def main():
             s["dot"] = cv.create_oval(col_name + rs * 0.2, my - rs * 0.18, col_name + rs * 0.56, my + rs * 0.18,
                                       fill=C["red"], outline="", tags="logbtn")
         s["txt"] = cv.create_text(col_name + rs * 0.8, my, text="", anchor="w",
-                                  font=(F_TXT, -max(10, int(rs * 0.50)), "bold"), fill=C["fg"], tags="logbtn")
+                                  font=f_pill, fill=C["fg"], tags="logbtn")
         # right end geometry first: [interval label] [spinbox] [chart] [reset] [gear]; the switch must fit before it.
         # Basic: [chart] [gear] only (no MIN / MAX / AVG to reset, no recording-mode switch, no interval)
         gs = max(rs * 0.42, 8.0)

@@ -46,7 +46,7 @@ def one(mode, want):
 
 def defer():
     """A running benchmark must survive a view-mode switch: the settings rebuild waits for it to end."""
-    root, w = make("basic")
+    root, w = make("advanced")
     root.update()
     busy = {"v": True}
     w.perf_tab = types.SimpleNamespace(busy=lambda: busy["v"])
@@ -65,7 +65,10 @@ def defer():
     ok = deferred is True and kept and rebuilt
     print(f"defer: deferred={deferred} kept_while_busy={kept} rebuilt_after={rebuilt} {'OK' if ok else 'FAIL'}")
     w._closing = True
-    root.destroy()
+    try:
+        root.destroy()
+    except tk.TclError:                       # teardown of the rebuilt Advanced pages; the check result stands
+        pass
     return ok
 
 

@@ -59,7 +59,7 @@ PAGES = (("st_tab_look", "look", "accent_clock", "gauge"), ("st_tab_log", "log",
          ("fn_tab", "fan", "accent_fan", "fan"),
          ("mini_tab", "mini", "accent_net", "fps"))
 
-BASIC_PAGES = ("look", "perf", "mini")       # pages (by icon) a normal user needs; Basic hides the others, fan control included
+BASIC_PAGES = ("look", "mini")       # pages (by icon) a normal user needs; Basic hides the others (benchmark and fan control included)
 
 
 def visible_pages(mode):
