@@ -19,6 +19,7 @@ import tkinter as tk
 import traceback
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
+import alerts_ui
 import backend
 import config
 import crashscan_ui
@@ -57,9 +58,10 @@ PAGES = (("st_tab_look", "look", "accent_clock", "gauge"), ("st_tab_log", "log",
          ("st_tab_theme", "theme", "accent_fan", "fan"), ("cr_tab", "diag", "accent_fps", "fps"),
          ("pf_tab", "perf", "accent_power", "bolt"),
          ("fn_tab", "fan", "accent_fan", "fan"),
-         ("mini_tab", "mini", "accent_net", "fps"))
+         ("mini_tab", "mini", "accent_net", "fps"),
+         ("al_tab", "alert", "accent_temp", "temp"))
 
-BASIC_PAGES = ("look", "mini")       # pages (by icon) a normal user needs; Basic hides the others (benchmark and fan control included)
+BASIC_PAGES = ("look", "mini", "alert")      # pages (by icon) a normal user needs; Basic hides the others (benchmark and fan control included)
 
 
 def visible_pages(mode):
@@ -432,11 +434,12 @@ class SettingsWindow:
 
         # the first three pages hold the plain settings (cheap); layout, theme, diagnostics and performance are built
         # on the first visit (the layout page alone takes ~0.6 s)
-        self.lay_sf = self.layout_tool = self.lbl_lay = self.theme_tab = self.mini_tab = self.perf_tab = None
+        self.lay_sf = self.layout_tool = self.lbl_lay = self.theme_tab = self.mini_tab = self.perf_tab = self.alert_tab = None
         self.lay, self.lay_mode, self.lay_is_auto = [], "keep", None
         self._lazy = {}
         self._theme0 = ThemeTab.initial_values(cfg)
         self._mini0 = config.norm_minimode(cfg.get("minimode"))
+        self._alerts0 = alerts_ui.initial(cfg)
         self._tab_look(self._page(0).inner, cfg)
         self._tab_log(self._page(1).inner, cfg)
         self._tab_hw(self._page(2).inner, cfg)
@@ -452,6 +455,8 @@ class SettingsWindow:
         self._lazy[7] = lambda: fan_ui.add_tab(self)
         self._page(8)
         self._lazy[8] = lambda: minimode_ui.add_tab(self)
+        self._page(9)
+        self._lazy[9] = lambda: alerts_ui.add_tab(self)
 
         tk.Label(bar, text=f"{config.APP_NAME} v{version.__version__}", bg=C["bg"], fg=C["faint"],
                  font=(self.F_TXT, 9)).pack(side="left")
@@ -1370,6 +1375,7 @@ class SettingsWindow:
             "sync_hwinfo_interval": bool(self.v_sync.get()),
         }
         d["minimode"] = self.mini_tab.read() if self.mini_tab is not None else copy.deepcopy(self._mini0)    # (page not visited: unchanged)
+        d["alerts"] = self.alert_tab.read() if self.alert_tab is not None else copy.deepcopy(self._alerts0)
         if self.theme_tab is not None:
             d.update(self.theme_tab.read())
         else:                                    # theme page not visited yet: unchanged

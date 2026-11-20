@@ -4,6 +4,30 @@ NAME = "Deutsch"          # the language's own name (shown in Settings > Languag
 
 # {key: text}: same keys and same {placeholders} as tools/i18n_en.json "strings"
 STRINGS = {
+    "al_tab": "Warnungen",
+    "al_card_general": "Warnungen",
+    "al_card_rules": "Regeln",
+    "al_enable": "Regeln überwachen",
+    "al_enable_hint": "metriQ meldet sich, wenn ein Wert über seiner Grenze bleibt.",
+    "al_notify": "Windows-Benachrichtigung",
+    "al_notify_hint": "Dafür erscheint ein Symbol neben der Uhr. Bei einem Spiel im Vollbild hält Windows Benachrichtigungen eventuell zurück (Nicht stören); der Ton wird trotzdem abgespielt.",
+    "al_sound": "Ton",
+    "al_test": "Ausprobieren",
+    "al_test_btn": "Test senden",
+    "al_test_hint": "Nutzt die Schalter oben, auch vor dem Speichern.",
+    "al_rules_hint": "Eine Regel meldet sich einmal. Erneut erst, nachdem der Wert zurückgegangen ist, höchstens alle {n} Minuten. Regeln überwachen die Zeilen Ihres Panel-Layouts.",
+    "al_add": "Regel hinzufügen",
+    "al_suggested": "Vorgeschlagene Regeln",
+    "al_no_rows": "Das Panel hat noch keine Zeilen zum Überwachen.",
+    "al_missing": "{name} (nicht im Panel)",
+    "al_above": "> über",
+    "al_below": "< unter",
+    "al_now": "sofort",
+    "al_for_s": "für {n} s",
+    "al_max": "Höchstens {n} Regeln.",
+    "al_title": "metriQ-Warnung",
+    "al_msg": "{name}: {value} (Grenze {limit})",
+    "al_test_text": "So sieht eine Warnung aus.",
     "applying": "HWiNFO-Abfrageintervall wird auf {ms} ms gesetzt · Werte eingefroren…",
     "bat_level": "Akkustand",
     "bat_rate": "Laden / Entladen",
@@ -810,6 +834,7 @@ STRINGS = {
 
 # {key: text}: same keys as tools/i18n_en.json "help" (the keys there have no "hp_" prefix)
 HELP = {
+    "alerts": "Jede Regel überwacht eine Zeile des Panels, zum Beispiel CPU-Temperatur über 90 °C für 10 s. Tritt das ein, kommen eine Windows-Benachrichtigung und / oder ein Ton, und solange der Wert jenseits der Grenze liegt, steht ein roter Hinweis über der Statusleiste. metriQ muss laufen (Panel offen oder im Infobereich versteckt).",
     "b_bat_level": "Wie viel Ladung Ihr Akku noch hat.",
     "b_bat_state": "Ob der Akku lädt, entlädt oder voll ist.",
     "b_bat_time": "Etwa wie lange der Akku bei der aktuellen Nutzung hält. Nur im Akkubetrieb sichtbar.",

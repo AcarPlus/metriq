@@ -5,7 +5,7 @@
     tr = tray.Tray(ico_path)            # message window + icon on a thread of their own; the icon starts hidden
     tr.set_visible(True, tip, items)    # Tk thread: show the icon (True when Explorer accepted it)
     tr.set_info(tip, items)             # new tooltip / menu: items = [(command, text, checked)], command "-" = separator
-    tr.balloon(title, text)             # one notification next to the icon
+    tr.balloon(title, text, warn, quiet) # one notification next to the icon (warning icon / no sound)
     tr.drain()                          # Tk thread, polled with after(): commands since the last call
     tr.close()                          # removes the icon (NIM_DELETE), ends the thread
 
@@ -33,7 +33,7 @@ WM_APP = 0x8000
 WM_ICON, WM_SHOW, WM_SYNC, WM_BALLOON, WM_QUIT_TRAY = WM_APP + 1, WM_APP + 2, WM_APP + 3, WM_APP + 4, WM_APP + 5
 NIM_ADD, NIM_MODIFY, NIM_DELETE = 0, 1, 2
 NIF_MESSAGE, NIF_ICON, NIF_TIP, NIF_INFO = 0x1, 0x2, 0x4, 0x10
-NIIF_INFO = 0x1
+NIIF_INFO, NIIF_WARNING, NIIF_NOSOUND = 0x1, 0x2, 0x10
 MF_STRING, MF_SEPARATOR, MF_CHECKED = 0x0, 0x800, 0x8
 TPM_RIGHTBUTTON, TPM_BOTTOMALIGN, TPM_RETURNCMD = 0x2, 0x20, 0x100
 IMAGE_ICON, LR_LOADFROMFILE, SM_CXSMICON = 1, 0x10, 49
@@ -232,9 +232,10 @@ class Tray:
             return False
         return self.added if visible else not self.added
 
-    def balloon(self, title, text):
+    def balloon(self, title, text, warn=False, quiet=False):
+        """warn: warning icon instead of the info icon; quiet: no Windows notification sound (the caller plays one)."""
         with self._lock:
-            self._info = (title, text)
+            self._info = (title, text, (NIIF_WARNING if warn else NIIF_INFO) | (NIIF_NOSOUND if quiet else 0))
         self._post(WM_BALLOON)
 
     def _post(self, msg):
@@ -351,7 +352,8 @@ class Tray:
             nid.szTip = (tip or "")[:127]
         if info:
             nid.uFlags |= NIF_INFO
-            nid.szInfoTitle, nid.szInfo, nid.dwInfoFlags = info[0][:63], info[1][:255], NIIF_INFO
+            nid.szInfoTitle, nid.szInfo = info[0][:63], info[1][:255]
+            nid.dwInfoFlags = info[2] if len(info) > 2 else NIIF_INFO
         ok = bool(s.Shell_NotifyIconW(op, ctypes.byref(nid)))
         self.results = (self.results + [({NIM_ADD: "add", NIM_MODIFY: "modify", NIM_DELETE: "delete"}[op], ok)])[-20:]
         return ok

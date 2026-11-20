@@ -176,7 +176,7 @@ def glyph(kind, size, col):
 
 
 def nav_icon(kind, size, col):
-    """Sidebar page icon (stroked, transparent): look | log | hw | layout | theme | diag | perf | fan | mini."""
+    """Sidebar page icon (stroked, transparent): look | log | hw | layout | theme | diag | perf | fan | mini | alert."""
     if not gfx.AVAILABLE:
         return None
     n = max(12, int(round(size)))
@@ -220,6 +220,15 @@ def nav_icon(kind, size, col):
             L(0.42, 0.50, 0.50, 0.50)
             gfx._disc(d, k, n * 0.64, n * 0.50, n * 0.065, col)
             L(0.76, 0.50, 0.80, 0.50)
+        elif kind == "alert":                                # bell
+            gfx._arc(d, k, n * 0.5, n * 0.42, n * 0.20, 180, 360, w, col)
+            L(0.30, 0.42, 0.30, 0.62)
+            L(0.70, 0.42, 0.70, 0.62)
+            L(0.30, 0.62, 0.20, 0.72)
+            L(0.70, 0.62, 0.80, 0.72)
+            L(0.20, 0.72, 0.80, 0.72)
+            L(0.5, 0.14, 0.5, 0.22)
+            gfx._disc(d, k, n * 0.5, n * 0.82, n * 0.07, col)
         elif kind == "fan":                                  # three blades around a hub
             for blade in range(3):
                 a = math.radians(blade * 120 + 90)

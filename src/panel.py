@@ -12,7 +12,9 @@ import tkinter.font as tkfont
 import traceback
 import types
 import webbrowser
+import winsound
 
+import alerts
 import backend
 import basicmode
 import config
@@ -335,7 +337,8 @@ def main():
     logger.ext = proclog.Extras(cfg, logger)
     repair_csv_tails(config.log_dir(cfg))      # a recording cut short by a freeze opens cleanly again
     stats = {}          # row.key -> [min, max, sum, count]; reset at panel start and when recording starts
-    st = {"items": {}, "last": {}, "status": {}, "size": None, "ok": False, "sections": [], "sections_cfg": [],
+    alert_eng = alerts.Engine()                 # value alerts: Settings > Alerts
+    st = {"alert_rows": {}, "alert_icon": None, "alert_key": None, "items": {},"last": {}, "status": {}, "size": None, "ok": False, "sections": [], "sections_cfg": [],
           "auto": True, "auto_n": -1, "checked": False, "empty": None, "note": note, "settings": None,
           "hw_exe": hwctl.detect_hwinfo(cfg["hwinfo_path"]), "tasks": hwctl.tasks_installed(),
           "mon": config.pick_monitor(cfg["monitor"]), "mode": str(cfg["window_mode"]).lower(),
@@ -829,6 +832,9 @@ def main():
         timed(st.get("hk_msg", ""), C["yellow"], st.get("hk_note", 0), TOAST_ERR_S)
         timed(st.get("thr_msg", ""), C["yellow"], st.get("thr_note", 0), TOAST_ERR_S)
         timed(st.get("mode_msg", ""), themes.accent("gauge"), st.get("mode_note", 0), TOAST_HINT_S)
+        if cfg["alerts"]["enabled"]:                 # persistent while the value is still past the limit
+            for rule, v in alert_eng.active():
+                msgs.append(("⚠ " + alert_text(rule, v), C["red"], None))
         ap = st.get("applying")
         hint = current_hint()
         if ap and now - ap[0] < 12:
@@ -1271,6 +1277,11 @@ def main():
             mm.reconfigure()                       # colours / fonts / texts of the strip follow
         if "check_updates" in real:
             upd_reschedule(1000)
+        if "alerts" in real:                       # new rules start from scratch (no old "already notified")
+            alert_eng.reset()
+            st["alert_key"] = None
+            if not cfg["alerts"]["enabled"]:
+                alert_eng.set_rules([])
         if "hwinfo_path" in real:
             st["hw_exe"] = hwctl.detect_hwinfo(cfg["hwinfo_path"])
         if {"backend", "lhm_url", "presentmon_path"} & set(real):
@@ -1525,6 +1536,12 @@ def main():
                 st["thr_msg"] = " · ".join(t("thr_toast", who=w, what=x) for w, x in hot)
                 st["thr_note"] = now
         mm.update(rows, rd if ok and not stale else [], ok and not frozen)
+        if cfg["alerts"]["enabled"] and ok and not frozen and not stale:
+            try:
+                check_alerts(rows, rd, now)
+            except Exception:
+                traceback.print_exc()
+        alert_icon_cleanup(now)
         # HWiNFO has not polled since the last tick: nothing new to show (the values are identical)
         poll = hwsm.last_poll if (ok and src.active == "hwinfo") else None
         same = (poll is not None and poll == st.get("poll") and not st.get("need_draw") and not st["frozen"]
@@ -1608,6 +1625,68 @@ def main():
         slow = (mini and not cfg["logging"] and not mm.visible) or (src.active != "hwinfo" and not (cfg["logging"] and cfg["interval"] < 1))
         root.after(1000 if slow else 500, tick)
 
+    # ------------------------------------------------------------ alerts (alerts.py)
+    def alert_text(rule, v, row=None):
+        """"CPU Temperature 92 °C (limit > 90 °C)" in the current language."""
+        row = row or st["alert_rows"].get(rule.get("metric"))
+        name = row.name if row is not None else (rule.get("name") or "?")
+        unit = row.unit_eff if row is not None else ""
+        fmt = row.fmt_value if row is not None else (lambda x: f"{x:g}")
+        sp = " " if unit and unit != "%" else ""
+        return t("al_msg", name=name, value=f"{fmt(v)}{sp}{unit}",
+                 limit=f"{rule.get('op', '>')} {alerts.fmt_limit(rule.get('value', 0))}{sp}{unit}")
+
+    def check_alerts(rows, rd, now):
+        conf = cfg["alerts"]
+        key = (tuple(r.key for r in rows), repr(conf["rules"]))
+        if st.get("alert_key") != key:               # layout or rules changed ("auto" rules follow the layout)
+            st["alert_key"] = key
+            alert_eng.set_rules(alerts.resolve_rules(conf, rows))
+        want = {r.get("metric") for r in alert_eng.rules}
+        vals = {}
+        for row in rows:
+            mk = minimode.metric_key(row)
+            if mk in want and mk not in vals and alerts.usable(row):
+                r = row.match(rd)
+                if r is not None:
+                    vals[mk] = (r["value"], row)
+                    st["alert_rows"][mk] = row
+        for rule, v, row in alert_eng.update(vals, now):
+            alert_fire(t("al_title"), alert_text(rule, v, row), conf.get("notify", True), conf.get("sound", True))
+
+    def alert_fire(title, text, notify, sound):
+        """Sound and / or Windows notification (the tray icon is shown for it when the panel is not in the tray)."""
+        if sound:
+            try:
+                winsound.PlaySound("SystemExclamation", winsound.SND_ALIAS | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+            except Exception:
+                pass
+        if notify and tr.ok:
+            if not st.get("hidden") and not tr.added:
+                tip, items = tray_state()
+                if not tr.set_visible(True, tip, items):
+                    return
+                st["alert_icon"] = time.time()
+            elif st.get("alert_icon"):
+                st["alert_icon"] = time.time()
+            tr.balloon(title, text, warn=True, quiet=True)      # (the sound above follows the user's choice)
+
+    def alert_icon_cleanup(now):
+        """The icon shown only for a notification goes again 2 minutes later (and never while the panel is in the tray:
+        then it is the tray icon)."""
+        t0 = st.get("alert_icon")
+        if not t0 or st.get("hidden"):
+            return
+        if now - t0 > 120 and not (cfg["alerts"]["enabled"] and alert_eng.active()):
+            st["alert_icon"] = None
+            tr.set_visible(False)
+
+    def alert_test(notify, sound):
+        """Settings > Alerts > Test: the same sound / notification a real alert gives."""
+        alert_fire(t("al_title"), t("al_test_text"), notify, sound)
+
+    api.alert_test = alert_test
+
     # ------------------------------------------------------------ closing / running in the background
     def bg_wanted():
         """True when a situation ticked in Settings > Background is active: closing the panel then only hides it."""
@@ -1636,6 +1715,7 @@ def main():
             st["shown_state"] = "normal"
         root.withdraw()
         st["hidden"] = True
+        st["alert_icon"] = None                  # the icon is the tray icon now (it stays)
         if not cfg.get("bg_hint_shown"):         # the first time: tell the user where it went
             cfg["bg_hint_shown"] = True
             save_cfg("bg_hint_shown")
@@ -1656,6 +1736,7 @@ def main():
         except tk.TclError:
             pass
         tr.set_visible(False)
+        st["alert_icon"] = None
 
     def guard_bench(then):
         """A benchmark / load test runs (only possible from the open Settings window): ask first, stop it, close the

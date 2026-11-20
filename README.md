@@ -66,6 +66,8 @@ Türkçe açıklama için aşağıya bakın: [Türkçe](#türkçe).
   changed by Basic. Config: `ui_mode` (`"basic"` / `"advanced"`), `ui_mode_hint_shown`.
 - **Mini mode**: a small semi-transparent strip with a few readings (FPS, CPU / GPU temperature, usage, power by
   default) on top of your game, toggled by a global hotkey (`Ctrl+Shift+M`) or `M` on the panel, see [Mini mode](#mini-mode-in-game-overlay).
+- **Alerts**: a Windows notification and / or a sound when a value stays past a limit (e.g. CPU temperature above
+  90 °C for 10 s), see [Alerts](#alerts).
 - **Multi-column layout** for wide screens: sections are distributed over 1 to 3 columns (automatic by window shape).
 - **Updates**: the panel checks GitHub for a newer release and, after you confirm, downloads and installs it
   (checksum verified); can be turned off in Settings.
@@ -143,6 +145,22 @@ or a transparent background, the metric list, and "show when metriQ starts" (off
   *exclusive fullscreen* is drawn above every other window, so the strip is hidden there; switch the game to borderless.
 - It is an ordinary window of the metriQ process: nothing is injected into any game (no DLLs, no hooks), so it is
   safe with anti-cheat systems. The values are the panel's own, read with the same interval.
+
+## Alerts
+
+Settings > **Alerts** (off by default): "Watch the rules", *Windows notification*, *Sound* and a *Send a test* button.
+Each rule watches one row of your panel layout: `row` `above` / `below` `limit` `for at least 0 / 5 / 10 / 30 / 60 s`
+(at most 8 rules). The suggested rules are CPU temperature above 90 °C and GPU temperature above 85 °C, for 10 s, for
+the rows that exist.
+
+- A rule notifies once. It can notify again only after the value went back past the limit by a small margin (3 %,
+  at least 1 unit) and at most every 5 minutes, so a value hovering around the limit does not flood you.
+- While the value is still past the limit, a red notice stays above the status bar of the panel.
+- The Windows notification needs an icon in the notification area: when the panel is not in the tray, the metriQ icon
+  shows up for the notification and goes away 2 minutes later. During a full-screen game Windows may hold
+  notifications back (*Do not disturb*); the sound (the Windows *Exclamation* sound) still plays.
+- metriQ must be running (the panel open, or hidden in the tray, see below). Rules of a row that is no longer in the
+  layout are kept and marked "(not in the panel)".
 
 ## Keep running in the background
 
@@ -252,6 +270,7 @@ Set the environment variable `METRIQ_DIR` to use another folder (portable use).
 | `bench_ssd_drive` | `"auto"` or `"D:"` | drive of the SSD benchmark file (`"auto"` = the Temp folder's drive) |
 | `bg_keep_logging`, `bg_keep_mini` | `true` / `false` | closing the panel only hides it (tray icon) while a recording runs / mini mode is shown; `bg_hint_shown` remembers the one-time notice |
 | `minimode` | object | the in-game strip, see [Mini mode](#mini-mode-in-game-overlay): `enabled`, `hotkey` (`"ctrl+shift+m"`, `"ctrl+alt+m"`, `"ctrl+shift+f10"`, `"off"`), `corner` (`tl` `tr` `bl` `br`), `x`, `y`, `monitor` (`"primary"` or index), `orientation`, `opacity`, `font_size`, `labels`, `background` (`"plate"` / `"none"`), `metrics` (`"auto"` or a list). Missing keys use the defaults |
+| `alerts` | object | see [Alerts](#alerts): `enabled`, `notify`, `sound` (`true` / `false`), `rules` (`"auto"` = the suggested rules, or a list of `{"metric", "name", "op": ">" / "<", "value", "secs"}`; `metric` is `sensor|label|type` of a layout row) |
 | `sections` | `"auto"` or a list | the layout of the HWiNFO source, see below |
 | `sections_lhm`, `sections_builtin` | `"auto"` or a list | the layouts of the other sources (missing = `auto`) |
 
@@ -382,7 +401,7 @@ python tools\i18n_export.py                # only after the English texts change
 `backend.py` (data source selection), `hwsm.py` (HWiNFO shared memory reader), `sens_lhm.py` (LibreHardwareMonitor),
 `sens_builtin.py` (built-in: PDH, NVML, DXGI), `presentmon.py` (optional FPS),
 `layout.py` (rows, matching, auto-detection), `config.py` (settings, monitors),
-`hwctl.py` (HWiNFO detection and tasks), `i18n.py` (strings), `lang/` (translations), `panel.py` (UI), `settings_ui.py` (settings window),
+`hwctl.py` (HWiNFO detection and tasks), `alerts.py` / `alerts_ui.py` (value alerts, `tools/check_alerts.py`), `i18n.py` (strings), `lang/` (translations), `panel.py` (UI), `settings_ui.py` (settings window),
 `winicon.py` (taskbar identity), `version.py`, `packaging/` (PyInstaller spec, Inno Setup script, build script),
 `gfx.py` (anti-aliased icons and cards; needs the optional `pip install pillow`, without it the panel draws plain canvas shapes),
 `src\make_icon.py` (regenerates `metriq.ico`). License: [MIT](LICENSE).
@@ -463,6 +482,11 @@ işareti varsayılan olarak Windows bölge ayarlarından alınır (Türkçe Exce
 **Mini mod:** oyunun üstünde duran, birkaç değeri gösteren küçük yarı saydam şerit (Ayarlar > *Mini mod*; kısayol varsayılan
 `Ctrl+Shift+M`, panelde `M`). Yalnızca **pencereli veya kenarlıksız (borderless) çalışan oyunlarda** görünür; özel tam ekran
 (exclusive fullscreen) oyunlarda gizlenir. Oyuna hiçbir şey enjekte edilmez, anti-cheat ile uyumludur.
+**Uyarılar:** Ayarlar > *Uyarılar* (varsayılan kapalı): bir değer sınırı belirtilen süre boyunca aşarsa (ör. CPU
+sıcaklığı 10 sn boyunca 90 °C üstünde) Windows bildirimi ve / veya ses. Her kural panel düzenindeki bir satırı izler
+(en çok 8 kural); önerilenler CPU > 90 °C ve GPU > 85 °C. Kural bir kez haber verir; değer geri dönünce ve en erken
+5 dakika sonra yeniden haber verebilir. Değer sınırın ötesindeyken panelde kırmızı bir not durur. Tam ekran oyunda
+Windows bildirimi bekletebilir; ses yine de çalar. metriQ'nun açık (ya da bildirim alanında gizli) olması gerekir.
 **Arka planda çalışma:** Ayarlar > Görünüm > *Arka plan*: panel kapatılınca *kayıt sürerken* ve / veya *mini mod açıkken*
 metriQ arka planda çalışmaya devam eder (ikisi de varsayılan olarak kapalı). Bu durumda kapatma düğmesi yalnızca pencereyi
 gizler; kayıt ve mini mod sürer, bildirim alanında bir metriQ simgesi belirir (ilk seferde bir bildirim gösterilir).

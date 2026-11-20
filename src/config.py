@@ -64,7 +64,15 @@ DEFAULTS = {
         "background": "plate",       # "plate" (card colour) | "none" (only the text, colour-keyed)
         "metrics": "auto",           # "auto" (FPS, CPU / GPU temperature, usage, power) or a list of row keys (max 8)
     },
+    "alerts": {                      # value alerts (alerts.py, README: Alerts)
+        "enabled": False,            # watch the rules below
+        "notify": True,              # Windows notification (the tray icon shows while one is pending)
+        "sound": True,               # Windows "Exclamation" sound
+        "rules": "auto",             # "auto" (CPU > 90 °C, GPU > 85 °C for 10 s) or a list, see alerts.py
+    },
 }
+
+ALERT_MAX_RULES = 8
 
 MINI_CORNERS = ("tl", "tr", "bl", "br")
 MINI_HOTKEYS = ("ctrl+shift+m", "ctrl+alt+m", "ctrl+shift+f10", "off")
@@ -199,6 +207,7 @@ def load_config():
     cfg.pop("ui_scale", None)        # removed feature: ignore old values
     cfg["backend"] = norm_backend(cfg.get("backend"))
     cfg["minimode"] = norm_minimode(cfg.get("minimode"))
+    cfg["alerts"] = norm_alerts(cfg.get("alerts"))
     cfg["ui_mode"] = norm_ui_mode(cfg.get("ui_mode"))
     for k in ("bg_keep_logging", "bg_keep_mini", "bg_hint_shown", "ui_mode_hint_shown"):      # older / hand-edited files: anything but a boolean = default
         if not isinstance(cfg.get(k), bool):
@@ -264,6 +273,33 @@ def norm_minimode(v):
             if isinstance(k, str) and k not in keys:
                 keys.append(k)
         d["metrics"] = keys[:MINI_MAX_METRICS]
+    return d
+
+
+def norm_alerts(v):
+    """The "alerts" dict with every key present and valid; rules: "auto" or a clean list (at most ALERT_MAX_RULES)."""
+    d = copy.deepcopy(DEFAULTS["alerts"])
+    if not isinstance(v, dict):
+        return d
+    for k in ("enabled", "notify", "sound"):
+        if isinstance(v.get(k), bool):
+            d[k] = v[k]
+    rules = v.get("rules", "auto")
+    if isinstance(rules, list):
+        out = []
+        for r in rules:
+            if not isinstance(r, dict) or not isinstance(r.get("metric"), str) or not r["metric"]:
+                continue
+            try:
+                val = float(str(r.get("value")).replace(",", "."))
+            except (TypeError, ValueError):
+                continue
+            if val != val or abs(val) > 1e9:            # NaN / absurd
+                continue
+            out.append({"metric": r["metric"], "name": str(r.get("name") or "")[:80],
+                        "op": "<" if r.get("op") == "<" else ">", "value": round(val, 2),
+                        "secs": _int_in(r.get("secs"), 0, 3600, 10)})
+        d["rules"] = out[:ALERT_MAX_RULES]
     return d
 
 

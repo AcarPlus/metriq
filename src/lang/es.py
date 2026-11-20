@@ -4,6 +4,30 @@ NAME = "Español"          # the language's own name (shown in Settings > Langua
 
 # {key: text}: same keys and same {placeholders} as tools/i18n_en.json "strings"
 STRINGS = {
+    "al_tab": "Alertas",
+    "al_card_general": "Alertas",
+    "al_card_rules": "Reglas",
+    "al_enable": "Vigilar las reglas",
+    "al_enable_hint": "metriQ te avisa cuando un valor se mantiene más allá de su límite.",
+    "al_notify": "Notificación de Windows",
+    "al_notify_hint": "Para ello aparece un icono junto al reloj. Durante un juego a pantalla completa Windows puede retener las notificaciones (No molestar); el sonido se reproduce igualmente.",
+    "al_sound": "Sonido",
+    "al_test": "Probar",
+    "al_test_btn": "Enviar una prueba",
+    "al_test_hint": "Usa los interruptores de arriba, incluso antes de guardar.",
+    "al_rules_hint": "Una regla avisa una vez. Puede volver a avisar cuando el valor haya vuelto, como mucho cada {n} minutos. Las reglas vigilan las filas del diseño de tu panel.",
+    "al_add": "Añadir regla",
+    "al_suggested": "Reglas sugeridas",
+    "al_no_rows": "El panel aún no tiene filas que vigilar.",
+    "al_missing": "{name} (no está en el panel)",
+    "al_above": "> por encima",
+    "al_below": "< por debajo",
+    "al_now": "al instante",
+    "al_for_s": "durante {n} s",
+    "al_max": "Como máximo {n} reglas.",
+    "al_title": "Alerta de metriQ",
+    "al_msg": "{name}: {value} (límite {limit})",
+    "al_test_text": "Así se ve una alerta.",
     "applying": "ajustando el intervalo de muestreo de HWiNFO a {ms} ms · valores retenidos…",
     "bat_level": "Nivel de batería",
     "bat_rate": "Carga / descarga",
@@ -810,6 +834,7 @@ STRINGS = {
 
 # {key: text}: same keys as tools/i18n_en.json "help" (the keys there have no "hp_" prefix)
 HELP = {
+    "alerts": "Cada regla vigila una fila del panel, por ejemplo temperatura de la CPU por encima de 90 °C durante 10 s. Cuando ocurre recibes una notificación de Windows y / o un sonido, y mientras el valor siga más allá del límite queda un aviso rojo sobre la barra de estado. metriQ debe estar en marcha (el panel abierto u oculto en la bandeja).",
     "b_bat_level": "Cuánta carga le queda a la batería.",
     "b_bat_state": "Si la batería se está cargando, descargando o está llena.",
     "b_bat_time": "Cuánto durará aproximadamente la batería con el uso actual. Solo se muestra con batería.",

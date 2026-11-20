@@ -4,6 +4,30 @@ NAME = "Português (Brasil)"          # the language's own name (shown in Settin
 
 # {key: text}: same keys and same {placeholders} as tools/i18n_en.json "strings"
 STRINGS = {
+    "al_tab": "Alertas",
+    "al_card_general": "Alertas",
+    "al_card_rules": "Regras",
+    "al_enable": "Vigiar as regras",
+    "al_enable_hint": "O metriQ avisa quando um valor fica além do limite.",
+    "al_notify": "Notificação do Windows",
+    "al_notify_hint": "Para isso aparece um ícone ao lado do relógio. Durante um jogo em tela cheia o Windows pode segurar as notificações (Não incomodar); o som toca mesmo assim.",
+    "al_sound": "Som",
+    "al_test": "Experimentar",
+    "al_test_btn": "Enviar um teste",
+    "al_test_hint": "Usa os interruptores acima, mesmo antes de salvar.",
+    "al_rules_hint": "Uma regra avisa uma vez. Pode avisar de novo depois que o valor voltar, no máximo a cada {n} minutos. As regras vigiam as linhas do layout do seu painel.",
+    "al_add": "Adicionar regra",
+    "al_suggested": "Regras sugeridas",
+    "al_no_rows": "O painel ainda não tem linhas para vigiar.",
+    "al_missing": "{name} (não está no painel)",
+    "al_above": "> acima",
+    "al_below": "< abaixo",
+    "al_now": "na hora",
+    "al_for_s": "por {n} s",
+    "al_max": "No máximo {n} regras.",
+    "al_title": "Alerta do metriQ",
+    "al_msg": "{name}: {value} (limite {limit})",
+    "al_test_text": "É assim que um alerta aparece.",
     "applying": "ajustando o intervalo de leitura do HWiNFO para {ms} ms · valores mantidos…",
     "bat_level": "Nível da bateria",
     "bat_rate": "Carga / Descarga",
@@ -810,6 +834,7 @@ STRINGS = {
 
 # {key: text}: same keys as tools/i18n_en.json "help" (the keys there have no "hp_" prefix)
 HELP = {
+    "alerts": "Cada regra vigia uma linha do painel, por exemplo temperatura da CPU acima de 90 °C por 10 s. Quando acontece, chega uma notificação do Windows e / ou um som, e enquanto o valor estiver além do limite fica um aviso vermelho acima da barra de status. O metriQ precisa estar em execução (painel aberto ou oculto na bandeja).",
     "b_bat_level": "Quanta carga ainda resta na bateria.",
     "b_bat_state": "Se a bateria está carregando, descarregando ou cheia.",
     "b_bat_time": "Cerca de quanto tempo a bateria dura com o uso atual. Aparece só quando está na bateria.",
