@@ -602,10 +602,13 @@ def main():
         my = sy + sb_h / 2
         px0 = col_name - 6
         f_pill = (F_TXT, -max(10, int(rs * 0.50)), "bold")
+        # Basic has no recording: no record pill (and no log viewer button, see below)
         fp_ = tkfont.Font(family=F_TXT, size=f_pill[1], weight="bold")
         pill_fit = 6 + rs * 0.8 + max(fp_.measure(t("log_on")), fp_.measure(t("log_off"))) + rs * 0.7  # dot + text + pad
         pw, ph = min(sw_span * 0.25, max(rs * 6.8, 130), max(pill_fit, 130)), rs * 1.1
-        if GFX:
+        if basic:
+            pw = -6.0                                # nothing drawn; the mode chip may start at the bar's left edge
+        elif GFX:
             s["pill_fn"] = lambda on: gfx.pill(pw, ph, mix(C["card"], C["green"] if on else C["red"], 0.18),
                                                C["green"] if on else C["red"], 6 + rs * 0.38, rs * 0.18)
             s["pill"] = cv.create_image(int(round(px0)), int(round(my - ph / 2)), image=s["pill_fn"](cfg["logging"]),
@@ -615,17 +618,18 @@ def main():
                                    tags="logbtn")
             s["dot"] = cv.create_oval(col_name + rs * 0.2, my - rs * 0.18, col_name + rs * 0.56, my + rs * 0.18,
                                       fill=C["red"], outline="", tags="logbtn")
-        s["txt"] = cv.create_text(col_name + rs * 0.8, my, text="", anchor="w",
-                                  font=f_pill, fill=C["fg"], tags="logbtn")
+        if not basic:
+            s["txt"] = cv.create_text(col_name + rs * 0.8, my, text="", anchor="w",
+                                      font=f_pill, fill=C["fg"], tags="logbtn")
         # right end geometry first: [interval label] [spinbox] [chart] [reset] [gear]; the switch must fit before it.
-        # Basic: [chart] [gear] only (no MIN / MAX / AVG to reset, no recording-mode switch, no interval)
+        # Basic: [gear] only (no recording, so no log viewer; no MIN / MAX / AVG to reset, no interval)
         gs = max(rs * 0.42, 8.0)
         hit = gs * 1.45
         gx = sx1 - spad - hit
         rx = gx - hit * 2 - 4
         vx = rx - hit * 2 - 4
         if basic:
-            vx = rx
+            vx = gx                                  # no viewer button: the chip ends just before the gear
         spin_w = max(44.0, min(sw_span * 0.1, rs * 3.2))
         spin_r = vx - hit - 6
         lbl_r = spin_r - spin_w - 8                                  # right edge of the interval label
@@ -710,8 +714,9 @@ def main():
             if not basic:
                 s["reset_bg"] = cv.create_image(rx, my, image=gfx.button("reset", hit, gs, C["dim"], C["card"]),
                                                 tags="resetbtn")
-            s["view_bg"] = cv.create_image(vx, my, image=gfx.button("chart", hit, gs, C["dim"], C["card"]),
-                                           tags="viewbtn")
+            if not basic:
+                s["view_bg"] = cv.create_image(vx, my, image=gfx.button("chart", hit, gs, C["dim"], C["card"]),
+                                               tags="viewbtn")
         else:
             s["gear_bg"] = cv.create_oval(gx - hit, my - hit, gx + hit, my + hit, fill=C["card"], outline="",
                                           tags="gearbtn")
@@ -720,9 +725,10 @@ def main():
                 s["reset_bg"] = cv.create_oval(rx - hit, my - hit, rx + hit, my + hit, fill=C["card"], outline="",
                                                tags="resetbtn")
                 draw_icon(cv, "reset", rx, my, gs, C["dim"], C["card"], tags=("resetbtn",))
-            s["view_bg"] = cv.create_oval(vx - hit, my - hit, vx + hit, my + hit, fill=C["card"], outline="",
-                                          tags="viewbtn")
-            draw_icon(cv, "chart", vx, my, gs, C["dim"], C["card"], tags=("viewbtn",))
+            if not basic:
+                s["view_bg"] = cv.create_oval(vx - hit, my - hit, vx + hit, my + hit, fill=C["card"], outline="",
+                                              tags="viewbtn")
+                draw_icon(cv, "chart", vx, my, gs, C["dim"], C["card"], tags=("viewbtn",))
         if show_lbl:                             # hidden when it would overlap the switch; the spinbox keeps its tooltip
             cv.create_text(lbl_r, my, text=t("interval_lbl"), anchor="e", font=(F_TXT, fs_sw),
                            fill=C["dim"], tags="intlbl")
@@ -924,7 +930,9 @@ def main():
             return
         on = cfg["logging"]
         all_ = cfg.get("log_all", False)
-        if s["gfx"]:
+        if "pill" not in s:                          # Basic: no record pill / mode switch
+            pass
+        elif s["gfx"]:
             if s.get("pill_on") != on:
                 s["pill_on"] = on
                 cv.itemconfig(s["pill"], image=s["pill_fn"](on))
@@ -939,7 +947,8 @@ def main():
         sk = (on, all_, i18n._lang)
         if s.get("static_key") != sk:
             s["static_key"] = sk
-            cv.itemconfig(s["txt"], text=t("log_on") if on else t("log_off"))
+            if "txt" in s:
+                cv.itemconfig(s["txt"], text=t("log_on") if on else t("log_off"))
             if "sw_l" in s:
                 cv.itemconfig(s["sw_l"], fill=C["faint"] if all_ else C["fg"])
                 cv.itemconfig(s["sw_r"], fill=C["fg"] if all_ else C["faint"])
@@ -1028,7 +1037,7 @@ def main():
             st["applying"] = (time.time(), ms)
 
     def key_toggle(e):
-        if root.focus_get() is not spin:
+        if root.focus_get() is not spin and not is_basic():       # Basic has no recording
             toggle()
 
     def reset_stats(e=None):
@@ -1046,7 +1055,7 @@ def main():
             open_settings()
 
     def key_viewer(e):
-        if root.focus_get() is not spin:
+        if root.focus_get() is not spin and not is_basic():       # the log viewer belongs to recording (Advanced)
             logview.show(api)
 
     def key_mini(e):
@@ -1221,6 +1230,8 @@ def main():
                 ensure_basic(rd)
         if "ui_mode" in real:              # Basic <-> Advanced: only the view changes, the stored layout is untouched
             need_build = True
+            if is_basic() and cfg["logging"]:
+                toggle()                   # Basic has no recording controls: a running recording stops
             st["bauto_n"], st["mode_msg"] = -1, ""
             if is_basic():
                 rd = read_now()
@@ -1746,6 +1757,8 @@ def main():
         st["mode_msg"], st["mode_note"] = t("ui_mode_hint"), time.time()
         refresh_status()
     root.after(1800, show_mode_hint)
+    if is_basic() and cfg["logging"]:                 # e.g. a hand-edited config: Basic never records
+        toggle()
     root.after(400, tick)
     root.after(300, upd_pump)
     root.after(150, tray_poll)
