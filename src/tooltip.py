@@ -28,6 +28,8 @@ class Tooltip:
         self._after = None
         self._live = None
         self._xy = (0, 0)
+        self._tag = None                              # canvas tag (for_canvas), None for a plain widget
+        self._watch = None
         if _bind:
             widget.bind("<Enter>", self._enter, add="+")
             widget.bind("<Leave>", self._leave, add="+")
@@ -37,9 +39,11 @@ class Tooltip:
     @classmethod
     def for_canvas(cls, cv, tag, content, live_ms=0, delay_ms=DELAY_MS, wrap=WRAP_PX):
         tt = cls(cv, content, live_ms, delay_ms, wrap, _bind=False)
+        tt._tag = tag
         cv.tag_bind(tag, "<Enter>", tt._enter, add="+")
         cv.tag_bind(tag, "<Leave>", tt._leave, add="+")
         cv.tag_bind(tag, "<Motion>", tt._motion, add="+")
+        cv.tag_bind(tag, "<ButtonPress>", tt._leave, add="+")
         return tt
 
     # ---------------------------------------------------------------- events
@@ -65,6 +69,30 @@ class Tooltip:
                 pass
             self._after = None
 
+    def _pointer_over(self):
+        """True while the pointer is still on the widget (or on an item with our tag). <Leave> is not reliable when
+        the panel redraws the items under the pointer, so an open balloon also checks this itself."""
+        try:
+            px, py = self.w.winfo_pointerxy()
+            under = self.w.winfo_containing(px, py)
+            if under is None or not str(under).startswith(str(self.w)):
+                return False
+            if self._tag is None:
+                return True
+            cx, cy = px - self.w.winfo_rootx(), py - self.w.winfo_rooty()
+            return any(self._tag in self.w.gettags(i) for i in self.w.find_overlapping(cx, cy, cx, cy))
+        except tk.TclError:
+            return False
+
+    def _watch_tick(self):
+        self._watch = None
+        if not self.tip:
+            return
+        if not self._pointer_over():
+            self.hide()
+            return
+        self._watch = self.w.after(250, self._watch_tick)
+
     # ---------------------------------------------------------------- drawing
     def _resolve(self):
         c = self.content
@@ -75,6 +103,9 @@ class Tooltip:
 
     def show(self):
         self._after = None
+        if not self._pointer_over():              # left (or the item was redrawn away) before the delay ran out
+            self.hide()
+            return
         data = self._resolve()
         if not data:
             return
@@ -110,6 +141,8 @@ class Tooltip:
                 tk.Label(body, text=right, bg=p["card"], fg=p["fg"], font=f,
                          anchor="e").grid(row=i, column=1, sticky="e", padx=(14, 0))
         self._place()
+        if self._watch is None:
+            self._watch = self.w.after(250, self._watch_tick)
         if self.live_ms and self._live is None:
             self._live = self.w.after(self.live_ms, self._refresh)
 
@@ -144,6 +177,13 @@ class Tooltip:
             self.tip.deiconify()
 
     def hide(self):
+        self._cancel()                            # a pending show must not open the balloon after a hide
+        if self._watch:
+            try:
+                self.w.after_cancel(self._watch)
+            except tk.TclError:
+                pass
+            self._watch = None
         if self._live:
             try:
                 self.w.after_cancel(self._live)
