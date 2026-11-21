@@ -36,6 +36,9 @@
     { id: 'surround', name: 'Surround', url: 'https://acarplus.github.io/surround/', c1: '#8ea2ff', c2: '#5cc8f2',
       glyph: '<circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/><path d="M8 8a5.7 5.7 0 0 0 0 8M16 8a5.7 5.7 0 0 1 0 8M5 5a10 10 0 0 0 0 14M19 5a10 10 0 0 1 0 14"/>',
       tr: 'Tüm hoparlörler tek çevresel ses sistemi', en: 'Every speaker, one surround system' },
+    { id: 'perde', name: 'Perde', url: 'https://acarplus.github.io/perde/', c1: '#ff5a6e', c2: '#8b5cf6',
+      glyph: '<path d="M3 4h18M5 4v15c2.5 0 4-2 4-5V4M19 4v15c-2.5 0-4-2-4-5V4M8 21h8"/>',
+      tr: 'Projeksiyon için sade ana ekran', en: 'Clean home screen for projectors' },
     { id: 'stremio-offline', name: 'Stremio Offline', url: 'https://acarplus.github.io/stremio-offline/', c1: '#22c55e', c2: '#8b7cf6',
       glyph: '<path d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M6 20h12"/>',
       tr: "Stremio'yu internetsiz izle", en: 'Watch Stremio offline' }
