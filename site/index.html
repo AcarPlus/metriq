@@ -3,159 +3,424 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>metriQ · İndir</title>
-<meta name="description" content="metriQ: Windows için her zaman üstte duran, canlı sıcaklık, kullanım, güç, fan ve FPS gösteren ücretsiz sensör paneli.">
-<meta name="theme-color" content="#0d1117">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M5 22a11 11 0 0 1 22 0' fill='none' stroke='%2358d6c4' stroke-width='3.2' stroke-linecap='round'/%3E%3Cpath d='M16 22l6-7' stroke='%2358d6c4' stroke-width='3.2' stroke-linecap='round'/%3E%3C/svg%3E">
+<title>metriQ · Bilgisayarının nabzı, tek bakışta</title>
+<meta name="description" content="metriQ: Windows için her zaman üstte duran, canlı sıcaklık, kullanım, güç, fan ve FPS gösteren ücretsiz ve açık kaynak sensör paneli.">
+<meta property="og:title" content="metriQ">
+<meta property="og:description" content="Always-on-top sensor dashboard for Windows: live temperatures, load, power, fans and FPS, coloured green to red.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://acarplus.github.io/metriq/">
+<meta name="theme-color" content="#07090d">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%234fe3cf'/%3E%3Cstop offset='1' stop-color='%237aa8ff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='18' fill='url(%23g)'/%3E%3Cpath d='M16 41a16 16 0 0 1 32 0M32 41l8.5-10' fill='none' stroke='%23061018' stroke-width='5.5' stroke-linecap='round'/%3E%3C/svg%3E">
+<script>(function(){var h=document.documentElement;h.classList.add('js');try{var q=new URLSearchParams(location.search).get('lang'),s=localStorage.getItem('dil');h.lang=q==='en'||q==='tr'?q:s||((navigator.language||'tr').toLowerCase().indexOf('tr')===0?'tr':'en')}catch(e){}})()</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="aile.css">
 <style>
-  :root {
-    --bg: #0d1117; --panel: #151b23; --line: #262e38; --fg: #edf1f5; --muted: #9ba6b2; --faint: #6b7682;
-    --accent: #58d6c4; --accent-fg: #062520; --hot: #ff7b72; --warm: #f2c14e; --ok: #56d364;
-  }
-  @media (prefers-color-scheme: light) {
-    :root { --bg: #f5f7f8; --panel: #ffffff; --line: #dfe4e8; --fg: #14191e; --muted: #536170; --faint: #87929d;
-      --accent: #0a7f71; --accent-fg: #ffffff; --hot: #c2352b; --warm: #a26a00; --ok: #1d7f32; }
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; background: var(--bg); color: var(--fg); }
-  body { font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  a { color: inherit; }
-  .wrap { max-width: 880px; margin: 0 auto; padding: 0 16px; }
-  header { display: flex; align-items: center; gap: 10px; padding: 22px 0; font-weight: 650; font-size: 18px; }
-  header svg { flex: none; color: var(--accent); }
-  header .gh { margin-left: auto; font-weight: 500; font-size: 14px; color: var(--muted); text-decoration: none; }
-  header .gh:hover { color: var(--fg); }
-  .hero { padding: 40px 0 28px; display: grid; gap: 28px; grid-template-columns: minmax(0, 1fr); }
-  @media (min-width: 760px) { .hero { grid-template-columns: minmax(0, 1fr) 260px; align-items: center; } }
-  h1 { font-size: clamp(30px, 6vw, 46px); line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 14px; }
-  .lead { font-size: 18px; color: var(--muted); max-width: 600px; margin: 0 0 28px; }
-  .cta { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
-  .btn { display: inline-flex; align-items: center; gap: 10px; background: var(--accent); color: var(--accent-fg);
-    font-weight: 700; font-size: 18px; padding: 15px 26px; border-radius: 12px; text-decoration: none; }
-  .btn:hover { filter: brightness(1.06); }
-  .btn:focus-visible, .ghost:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
-  .meta { font-size: 14px; color: var(--faint); }
-  .ghost { color: var(--muted); }
-  /* small mock of the panel: a few rows with value bars */
-  .mock { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; font-size: 14px; }
-  .mock .t { font-size: 11px; font-weight: 700; letter-spacing: .08em; color: var(--faint); margin: 2px 0 8px; }
-  .mock .t + .r { margin-top: 0; }
-  .r { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; margin-top: 9px; }
-  .r span:first-child { color: var(--muted); }
-  .r b { font-variant-numeric: tabular-nums; font-weight: 650; }
+  :root { --a: #4fe3cf; --a2: #7aa8ff; --a-rgb: 79, 227, 207; --a2-rgb: 122, 168, 255; --a-fg: #03201b; }
+  @media (prefers-color-scheme: light) { :root { --ink: #0a8576; --ink2: #3b67d6; } }
+
+  /* hero scene: the panel itself */
+  .panel { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 20px; padding: 20px; }
+  .gauge { text-align: center; }
+  .gauge svg { width: 100%; height: auto; overflow: visible; }
+  .gauge .track { stroke: var(--line-2); }
+  .gauge .needle { transform-origin: 100px 100px; transition: transform 1.1s cubic-bezier(.2, .8, .2, 1); }
+  .gauge .val { font: 700 34px/1 var(--display); letter-spacing: -.03em; margin-top: -6px; font-variant-numeric: tabular-nums; transition: color 1s; }
+  .gauge .val small { font-size: 16px; color: var(--muted); font-weight: 600; }
+  .gauge .lbl { font-size: 12px; color: var(--faint); letter-spacing: .1em; font-weight: 600; margin-top: 4px; }
+  .gauge .spark { margin-top: 18px; }
+  .gauge .spark path { fill: none; stroke: var(--a); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .gauge .spark .area { fill: url(#sg); stroke: none; }
+  .gauge .fps { display: flex; justify-content: space-between; font-size: 12px; color: var(--faint); margin-top: 6px; }
+  .gauge .fps b { color: var(--fg); font-variant-numeric: tabular-nums; }
+  .rows .t { font-size: 11px; font-weight: 700; letter-spacing: .12em; color: var(--faint); margin: 2px 0 10px; display: flex; justify-content: space-between; }
+  .rows .t span { letter-spacing: .06em; font-weight: 600; }
+  .rows .t + .r { margin-top: 0; }
+  .rows .gap { height: 14px; }
+  .r { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px 12px; align-items: baseline; margin-top: 11px; font-size: 13.5px; }
+  .r > span { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .r em { font-style: normal; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .r b { font-variant-numeric: tabular-nums; font-weight: 650; min-width: 58px; text-align: right; transition: color 1s; }
   .bar { grid-column: 1 / -1; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
-  .bar i { display: block; height: 100%; border-radius: 3px; }
-  .mock hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0 10px; }
-  section { padding: 26px 0; border-top: 1px solid var(--line); }
-  h2 { font-size: 20px; margin: 0 0 16px; }
-  .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
-  .steps li { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
-  .n { display: inline-flex; width: 26px; height: 26px; border-radius: 50%; align-items: center; justify-content: center;
-    background: var(--accent); color: var(--accent-fg); font-weight: 700; font-size: 14px; margin-bottom: 8px; }
-  .steps b { display: block; margin-bottom: 4px; }
-  .steps p { margin: 0; color: var(--muted); font-size: 15px; }
-  .feat { display: grid; gap: 10px 24px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin: 0; padding: 0; list-style: none; }
-  .feat li { padding-left: 22px; position: relative; color: var(--muted); }
-  .feat li::before { content: ""; position: absolute; left: 0; top: 9px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
-  .feat strong { color: var(--fg); font-weight: 600; }
-  .note { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; color: var(--muted); font-size: 15px; }
-  .note + .note { margin-top: 10px; }
-  .note b { color: var(--fg); }
-  kbd { font: 600 13px/1 ui-monospace, Consolas, monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 2px 5px; background: var(--bg); color: var(--fg); }
-  footer { padding: 28px 0 40px; color: var(--faint); font-size: 13px; border-top: 1px solid var(--line); }
-  footer p { margin: 0 0 6px; }
+  .bar i { display: block; height: 100%; border-radius: 3px; transition: width 1.1s cubic-bezier(.2, .8, .2, 1), background-color 1s; }
+  .f-alert { top: -24px; left: -40px; }
+  .f-alert .dot { background: linear-gradient(135deg, #ff8a65, #ff5d7a); color: #2a0610; }
+  .f-mini { bottom: -30px; right: -22px; animation-delay: -3s; }
+
+  /* feature visuals */
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chips span { font-size: 13px; padding: 6px 11px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); background: var(--card); }
+  .chips span.on { color: var(--fg); border-color: rgba(var(--a-rgb), .5); background: rgba(var(--a-rgb), .1); }
+  .src { display: grid; gap: 8px; margin-top: 20px; }
+  .src div { display: flex; align-items: center; justify-content: space-between; font-size: 13.5px; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); }
+  .src div b { font-weight: 600; }
+  .src div span { font-size: 12px; color: var(--faint); }
+  .ramp { height: 10px; border-radius: 6px; margin-top: 22px; background: linear-gradient(90deg, hsl(140 70% 50%), hsl(70 85% 52%), hsl(38 95% 55%), hsl(0 85% 60%)); }
+  .ramp-l { display: flex; justify-content: space-between; font-size: 12px; color: var(--faint); margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .strip { position: relative; height: 150px; border-radius: 14px; overflow: hidden; border: 1px solid var(--line);
+    background: radial-gradient(120% 90% at 70% 120%, #3a1d5c, transparent 60%), radial-gradient(90% 80% at 10% 0%, #0f3b4a, transparent 60%), linear-gradient(160deg, #10182a, #1b1030); }
+  .strip::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 55%; background: linear-gradient(180deg, transparent, rgba(0, 0, 0, .55)), repeating-linear-gradient(100deg, rgba(255, 255, 255, .04) 0 2px, transparent 2px 40px); }
+  .strip .bar-mini { position: absolute; top: 12px; left: 12px; display: flex; gap: 14px; padding: 7px 12px; border-radius: 9px; font: 600 12px/1 var(--mono);
+    color: #e8fff9; background: rgba(5, 10, 16, .55); border: 1px solid rgba(255, 255, 255, .12); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+  .strip .bar-mini i { font-style: normal; color: #4fe3cf; }
+  .strip .bar-mini i.w { color: #f2c14e; }
+  .strip kbd { position: absolute; right: 12px; bottom: 12px; }
+  .langs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 18px; }
+  .langs span { font: 600 12px/1 var(--mono); padding: 6px 8px; border-radius: 7px; background: var(--card-hi); border: 1px solid var(--line); color: var(--muted); }
+  .upd { display: flex; align-items: center; gap: 12px; margin-top: 20px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); font-size: 13.5px; }
+  .upd .ok { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: rgba(var(--a-rgb), .16); color: var(--ink); }
+  .upd .ok svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  .upd code { font-size: 11.5px; }
+  @media (max-width: 520px) {
+    .panel { grid-template-columns: minmax(0, 1fr); }
+    .gauge { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 16px; align-items: center; text-align: left; }
+    .gauge .spark { margin-top: 0; }
+  }
 </style>
 </head>
-<body>
-<div class="wrap">
-  <header>
-    <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 22a11 11 0 0 1 22 0" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/><path d="M16 22l6-7" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/></svg>
-    metriQ
-    <a class="gh" href="https://github.com/AcarPlus/metriq">GitHub</a>
-  </header>
+<body data-app="metriq" data-repo="AcarPlus/metriq" data-title-tr="metriQ · Bilgisayarının nabzı, tek bakışta" data-title-en="metriQ · Your PC's pulse at a glance">
+<div class="backdrop" aria-hidden="true"><div class="aurora a1"></div><div class="aurora a2"></div></div>
 
-  <div class="hero">
-    <div>
-      <h1>Bilgisayarının nabzı,<br>tek bakışta.</h1>
-      <p class="lead">metriQ, Windows'ta her zaman üstte duran küçük bir panel: işlemci ve ekran kartı sıcaklığı, kullanım, güç, fanlar, ağ, disk ve FPS canlı olarak, yeşilden kırmızıya renkle.</p>
-      <div class="cta">
-        <a class="btn" id="dl" href="https://github.com/AcarPlus/metriq/releases/latest">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M4 20h16"/></svg>
-          Windows için indir
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="#"><span class="mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16.5a8 8 0 0 1 16 0"/><path d="M12 16.5l4.2-5"/></svg></span>metriQ</a>
+    <nav class="links" aria-label="Bölümler">
+      <a href="#ozellikler"><span data-tr>Özellikler</span><span data-en>Features</span></a>
+      <a href="#kurulum"><span data-tr>Kurulum</span><span data-en>Install</span></a>
+      <a href="#sss"><span data-tr>SSS</span><span data-en>FAQ</span></a>
+    </nav>
+    <span class="sp"></span>
+    <button class="iconbtn" id="dil" type="button">EN</button>
+    <a class="iconbtn" href="https://github.com/AcarPlus/metriq" aria-label="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.69 5.4-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg></a>
+    <a class="btn primary small cta" href="https://github.com/AcarPlus/metriq/releases/latest" data-asset="setup.*\.exe$"><span data-tr>İndir</span><span data-en>Download</span></a>
+  </div>
+</header>
+
+<main>
+<section class="hero" style="padding-top:64px">
+  <div class="wrap">
+    <div class="rv">
+      <a class="pill" href="https://github.com/AcarPlus/metriq/releases/latest"><b data-ver>v1.8.0</b><span data-tr>Yeni: sınır aşılınca uyarı</span><span data-en>New: alerts when a value runs hot</span></a>
+      <h1><span data-tr>Bilgisayarının nabzı, <span class="grad">tek bakışta.</span></span><span data-en>Your PC's pulse, <span class="grad">at a glance.</span></span></h1>
+      <p class="lead" data-tr>metriQ, Windows'ta her zaman üstte duran küçük bir panel: işlemci ve ekran kartı sıcaklığı, kullanım, güç, fanlar, ağ, disk ve FPS canlı olarak, yeşilden kırmızıya renkle.</p>
+      <p class="lead" data-en>metriQ is a small always-on-top panel for Windows: CPU and GPU temperatures, load, power, fans, network, disks and FPS, live and coloured from green to red.</p>
+      <div class="btns">
+        <a class="btn primary" href="https://github.com/AcarPlus/metriq/releases/latest" data-asset="setup.*\.exe$">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M5 20h14"/></svg>
+          <span data-tr>Windows için indir</span><span data-en>Download for Windows</span>
         </a>
-        <span class="meta" id="ver">Windows 10/11 · ücretsiz</span>
+        <a class="btn ghost" href="https://github.com/AcarPlus/metriq">
+          <svg class="gh" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.69 5.4-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+          <span data-tr>Kaynak kodu</span><span data-en>Source code</span>
+        </a>
+      </div>
+      <div class="meta">
+        <span>Windows 10 / 11</span>
+        <span data-tr>Ücretsiz, açık kaynak</span><span data-en>Free &amp; open source</span>
+        <span hidden><span data-tr>Kurulum</span><span data-en>Setup</span>&nbsp;<span data-asset="setup.*\.exe$"></span></span>
       </div>
     </div>
-    <div class="mock" aria-hidden="true">
-      <div class="t">SICAKLIK</div>
-      <div class="r"><span>CPU</span><b>58 °C</b><div class="bar"><i style="width:48%;background:var(--ok)"></i></div></div>
-      <div class="r"><span>GPU</span><b>71 °C</b><div class="bar"><i style="width:70%;background:var(--warm)"></i></div></div>
-      <hr>
-      <div class="t">YÜK</div>
-      <div class="r"><span>CPU kullanımı</span><b>%34</b><div class="bar"><i style="width:34%;background:var(--ok)"></i></div></div>
-      <div class="r"><span>GPU gücü</span><b>286 W</b><div class="bar"><i style="width:88%;background:var(--hot)"></i></div></div>
-      <div class="r"><span>FPS</span><b>144</b><div class="bar"><i style="width:80%;background:var(--ok)"></i></div></div>
+
+    <div class="stage rv" aria-hidden="true">
+      <div class="float f-alert"><span class="dot"><svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span><span><b data-tr>GPU 85 °C üstünde</b><b data-en>GPU above 85 °C</b><small data-tr>10 sn'dir · uyarı</small><small data-en>for 10 s · alert</small></span></div>
+      <div class="float f-mini"><span class="dot"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h6"/></svg></span><span><b data-tr>Oyun içi mini mod</b><b data-en>In-game mini mode</b><small>Ctrl + Shift + M</small></span></div>
+      <div class="win">
+        <div class="win-bar"><i></i><i></i><i></i><span>metriQ</span><em class="live" style="font-style:normal"><span data-tr>CANLI</span><span data-en>LIVE</span></em></div>
+        <div class="panel">
+          <div class="gauge">
+            <div>
+              <svg viewBox="0 0 200 118">
+                <defs>
+                  <linearGradient id="gg" x1="0" x2="1"><stop offset="0" stop-color="hsl(140 70% 50%)"/><stop offset=".5" stop-color="hsl(60 85% 52%)"/><stop offset=".78" stop-color="hsl(35 95% 55%)"/><stop offset="1" stop-color="hsl(0 85% 60%)"/></linearGradient>
+                </defs>
+                <path class="track" d="M20 100a80 80 0 0 1 160 0" fill="none" stroke-width="12" stroke-linecap="round"/>
+                <path d="M20 100a80 80 0 0 1 160 0" fill="none" stroke="url(#gg)" stroke-width="12" stroke-linecap="round" opacity=".95"/>
+                <g class="needle" id="needle"><path d="M100 100L100 34" stroke="var(--fg)" stroke-width="4" stroke-linecap="round"/></g>
+                <circle cx="100" cy="100" r="9" fill="var(--surface)" stroke="var(--fg)" stroke-width="3.5"/>
+              </svg>
+              <div class="val" id="gval">58<small> °C</small></div>
+              <div class="lbl">CPU</div>
+            </div>
+            <div class="spark">
+              <svg viewBox="0 0 160 44" preserveAspectRatio="none" style="width:100%;height:44px">
+                <defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="rgb(79 227 207 / .35)"/><stop offset="1" stop-color="rgb(79 227 207 / 0)"/></linearGradient></defs>
+                <path class="area" id="sparkA" d=""/>
+                <path id="sparkL" d=""/>
+              </svg>
+              <div class="fps"><span>FPS</span><b id="fps">144</b></div>
+            </div>
+          </div>
+          <div class="rows">
+            <div class="t"><span data-tr>SICAKLIK</span><span data-en>TEMPERATURE</span><span data-tr>MİN · MAKS</span><span data-en>MIN · MAX</span></div>
+            <div class="r" data-lo="30" data-hi="95" data-v="58" data-u=" °C" data-g="1"><span>CPU</span><em></em><b></b><div class="bar"><i></i></div></div>
+            <div class="r" data-lo="30" data-hi="90" data-v="71" data-u=" °C"><span>GPU</span><em></em><b></b><div class="bar"><i></i></div></div>
+            <div class="r" data-lo="25" data-hi="75" data-v="44" data-u=" °C"><span>NVMe</span><em></em><b></b><div class="bar"><i></i></div></div>
+            <div class="gap"></div>
+            <div class="t"><span data-tr>YÜK</span><span data-en>LOAD</span><span></span></div>
+            <div class="r" data-lo="0" data-hi="100" data-v="34" data-p="%"><span data-tr>CPU kullanımı</span><span data-en>CPU usage</span><em></em><b></b><div class="bar"><i></i></div></div>
+            <div class="r" data-lo="0" data-hi="320" data-v="268" data-u=" W"><span data-tr>GPU gücü</span><span data-en>GPU power</span><em></em><b></b><div class="bar"><i></i></div></div>
+            <div class="r" data-lo="0" data-hi="2600" data-v="1420" data-u=" rpm" data-calm="1"><span data-tr>Fan</span><span data-en>Fan</span><em></em><b></b><div class="bar"><i></i></div></div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
+</section>
 
-  <section>
-    <h2>Kurulum: üç adım</h2>
-    <ol class="steps">
-      <li><span class="n">1</span><b>İndir ve çalıştır</b><p>Kurulum Python gerektirmez. HWiNFO yoksa ücretsiz olarak (winget ile) kurmayı ve paylaşılan belleğini açmayı teklif eder; atlarsan yerleşik kaynak kullanılır.</p></li>
-      <li><span class="n">2</span><b>metriQ'yu aç</b><p>Başlat menüsünden aç. Panel HWiNFO'yu kendisiyle birlikte açar, kapatınca onu da kapatır.</p></li>
-      <li><span class="n">3</span><b>Kendine göre ayarla</b><p>Dişli düğmesi ya da <kbd>S</kbd>: dil, monitör, 1–3 sütun, satırlar, renkler, kayıt.</p></li>
-    </ol>
-  </section>
-
-  <section>
-    <h2>Neler yapar</h2>
-    <ul class="feat">
-      <li><strong>Donanımına göre kendini kurar:</strong> çekirdek saatleri, CPU/GPU sıcaklık ve güç, RAM/VRAM, anakart, fanlar, diskler, ağ; sende olmayan satır hiç görünmez.</li>
-      <li><strong>Üç veri kaynağı:</strong> HWiNFO (en geniş), LibreHardwareMonitor (açık kaynak) ya da hiçbir şey kurmadan Windows'un kendi kaynakları.</li>
-      <li><strong>Renkli ve net:</strong> her satırda yeşilden kırmızıya renk, çubuk ve MİN / MAKS / ORT.</li>
-      <li><strong>Oyun içi mini mod:</strong> oyunun üstünde küçük yarı saydam şerit (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd>); oyuna hiçbir şey enjekte edilmez.</li>
-      <li><strong>CSV kaydı:</strong> değerleri dosyaya yazar; Türkçe Excel/LibreOffice ayarlarıyla doğrudan açılır.</li>
-      <li><strong>Dizüstü desteği:</strong> batarya bölümü ve CPU/GPU kısılma (throttling) satırı.</li>
-      <li><strong>Altı dil:</strong> Türkçe, English, Deutsch, Español, Русский, Português.</li>
-      <li><strong>Kendini günceller:</strong> yeni sürümü sorarak indirir, SHA-256 özetini doğrulayıp kurar.</li>
-    </ul>
-  </section>
-
-  <section>
-    <div class="note"><b>Windows “bilinmeyen yayıncı” uyarısı verirse:</b> kurulum dosyası henüz imzalı olmadığı için SmartScreen sorar. <b>Ek bilgi → Yine de çalıştır</b>. Akıllı Uygulama Denetimi (Smart App Control) açıksa imzasız dosyayı tamamen engelleyebilir.</div>
-    <div class="note" id="portable"><b>Kurulumsuz kullanım:</b> taşınabilir ZIP'i açıp <code>metriQ.exe</code>'yi çalıştır (salt okunur mod). İndirme: <a class="ghost" id="zip" href="https://github.com/AcarPlus/metriq/releases/latest">sürüm sayfası</a>. Tüm sürümler ve değişiklikler: <a class="ghost" href="https://github.com/AcarPlus/metriq/releases">sürümler</a>.</div>
-    <div class="note"><b>Gizlilik:</b> veriler bilgisayarından çıkmaz. Panelin tek ağ isteği güncelleme denetimidir (GitHub'a yalnızca “yeni sürüm var mı” diye sorar) ve ayarlardan kapatılabilir.</div>
-  </section>
-
-  <footer>
-    <p>metriQ açık kaynaktır (MIT) · <a href="https://github.com/AcarPlus/metriq">github.com/AcarPlus/metriq</a></p>
-    <p>HWiNFO / REALiX s.r.o. veya LibreHardwareMonitor projesiyle bağlantısı yoktur; HWiNFO sahibinin ticari markasıdır.</p>
-  </footer>
+<div class="wrap rv">
+  <div class="stats">
+    <div><b>3</b><span data-tr>veri kaynağı, biri kurulumsuz</span><span data-en>data sources, one needs no install</span></div>
+    <div><b>6</b><span data-tr>dil</span><span data-en>languages</span></div>
+    <div><b>1–3</b><span data-tr>sütun, istediğin monitörde</span><span data-en>columns, on any monitor</span></div>
+    <div><b>0</b><span data-tr>veri dışarı gitmez</span><span data-en>data leaves your PC</span></div>
+  </div>
 </div>
+
+<section id="ozellikler">
+  <div class="wrap">
+    <div class="rv">
+      <div class="eyebrow"><span data-tr>Özellikler</span><span data-en>Features</span></div>
+      <h2 data-tr>Her şey bir bakışta, hiçbiri yolunda değil.</h2>
+      <h2 data-en>Everything at a glance, nothing in the way.</h2>
+      <p class="sub" data-tr>Panel donanımını tanır, yalnızca sende olanı gösterir ve oyun oynarken bile göz ucuyla okunur.</p>
+      <p class="sub" data-en>The panel learns your hardware, shows only what you actually have and stays readable from the corner of your eye, even mid-game.</p>
+    </div>
+    <div class="bento">
+      <div class="card w2 rv">
+        <div class="ic"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg></div>
+        <h3 data-tr>Donanımına göre kendini kurar</h3><h3 data-en>Sets itself up for your hardware</h3>
+        <p data-tr>Çekirdek saatleri, CPU/GPU sıcaklık ve güç, RAM/VRAM, anakart, fanlar, diskler, ağ. Sende olmayan satır hiç görünmez.</p>
+        <p data-en>Core clocks, CPU/GPU temperature and power, RAM/VRAM, motherboard, fans, disks and network. Rows you don't have never show up.</p>
+        <div class="viz chips">
+          <span class="on">CPU</span><span class="on">GPU</span><span class="on">RAM</span><span class="on">VRAM</span><span class="on" data-tr>Anakart</span><span class="on" data-en>Motherboard</span><span class="on" data-tr>Fanlar</span><span class="on" data-en>Fans</span><span class="on" data-tr>Diskler</span><span class="on" data-en>Disks</span><span class="on" data-tr>Ağ</span><span class="on" data-en>Network</span><span class="on">FPS</span><span data-tr>Batarya</span><span data-en>Battery</span>
+        </div>
+      </div>
+      <div class="card rv">
+        <div class="ic"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></div>
+        <h3 data-tr>Üç veri kaynağı</h3><h3 data-en>Three data sources</h3>
+        <p data-tr>En genişinden hiçbir şey kurmadan çalışanına kadar.</p>
+        <p data-en>From the most detailed to one that needs nothing installed.</p>
+        <div class="src">
+          <div><b>HWiNFO</b><span data-tr>en geniş</span><span data-en>widest</span></div>
+          <div><b>LibreHardwareMonitor</b><span data-tr>açık kaynak</span><span data-en>open source</span></div>
+          <div><b data-tr>Windows yerleşik</b><b data-en>Windows built-in</b><span data-tr>kurulumsuz</span><span data-en>no install</span></div>
+        </div>
+      </div>
+      <div class="card rv">
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg></div>
+        <h3 data-tr>Renkli ve net</h3><h3 data-en>Colourful and clear</h3>
+        <p data-tr>Her satırda yeşilden kırmızıya renk, çubuk ve MİN / MAKS / ORT.</p>
+        <p data-en>Every row gets a green-to-red colour, a bar and MIN / MAX / AVG.</p>
+        <div class="ramp"></div>
+        <div class="ramp-l"><span>40 °C</span><span>65 °C</span><span>90 °C</span></div>
+      </div>
+      <div class="card w2 rv">
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M6 11h4M8 9v4M15 12h.01M18 10h.01"/><path d="M17.32 5H6.68a4 4 0 0 0-3.98 3.59l-.6 6A3 3 0 0 0 5.08 18c.86 0 1.67-.43 2.15-1.15L8.5 15h7l1.27 1.85A2.6 2.6 0 0 0 18.92 18a3 3 0 0 0 2.98-3.41l-.6-6A4 4 0 0 0 17.32 5z"/></svg></div>
+        <h3 data-tr>Oyun içi mini mod</h3><h3 data-en>In-game mini mode</h3>
+        <p data-tr>Oyunun üstünde küçük, yarı saydam bir şerit. Oyuna hiçbir şey enjekte edilmez.</p>
+        <p data-en>A small translucent strip on top of your game. Nothing is injected into the game.</p>
+        <div class="viz strip"><div class="bar-mini"><span>CPU <i>61°</i></span><span>GPU <i class="w">78°</i></span><span>FPS <i>143</i></span></div><kbd>Ctrl + Shift + M</kbd></div>
+      </div>
+      <div class="card rv">
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></div>
+        <h3 data-tr>Uyarılar</h3><h3 data-en>Alerts</h3>
+        <p data-tr>Bir değer belirlediğin süre boyunca sınırın üstünde kalırsa Windows bildirimi ve ses. Kapalı başlar, Ayarlar'dan açılır.</p>
+        <p data-en>A Windows notification and a sound when a value stays past your limit for a while. Off by default, turn it on in Settings.</p>
+      </div>
+      <div class="card rv">
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8M8 9h2"/></svg></div>
+        <h3 data-tr>CSV kaydı</h3><h3 data-en>CSV logging</h3>
+        <p data-tr>Değerleri dosyaya yazar; Türkçe Excel ve LibreOffice ayarlarıyla doğrudan açılır.</p>
+        <p data-en>Writes values to a file that opens straight in Excel or LibreOffice, Turkish locale included.</p>
+      </div>
+      <div class="card rv">
+        <div class="ic"><svg viewBox="0 0 24 24"><rect x="2" y="7" width="16" height="10" rx="2"/><path d="M22 11v2M6 10v4M10 10v4"/></svg></div>
+        <h3 data-tr>Dizüstü desteği</h3><h3 data-en>Laptop support</h3>
+        <p data-tr>Batarya bölümü ve CPU/GPU kısılma (throttling) satırı.</p>
+        <p data-en>A battery section and a CPU/GPU throttling row.</p>
+      </div>
+      <div class="card rv">
+        <div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></div>
+        <h3 data-tr>Altı dil</h3><h3 data-en>Six languages</h3>
+        <p data-tr>Panel ve ayarlar istediğin dilde.</p>
+        <p data-en>The panel and settings in your language.</p>
+        <div class="langs"><span>Türkçe</span><span>English</span><span>Deutsch</span><span>Español</span><span>Русский</span><span>Português</span></div>
+      </div>
+      <div class="card w2 rv">
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg></div>
+        <h3 data-tr>Kendini günceller</h3><h3 data-en>Updates itself</h3>
+        <p data-tr>Yeni sürüm çıkınca sorar, indirir, SHA-256 özetini doğrulayıp kurar. İstersen güncelleme denetimini tamamen kapatırsın.</p>
+        <p data-en>When a new version is out it asks, downloads it, checks its SHA-256 digest and installs it. You can switch the update check off entirely.</p>
+        <div class="upd"><span class="ok"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span><span><span data-tr>Özet doğrulandı</span><span data-en>Digest verified</span> · <code>sha256:9f2c…e41a</code></span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="kurulum">
+  <div class="wrap">
+    <div class="rv">
+      <div class="eyebrow"><span data-tr>Kurulum</span><span data-en>Install</span></div>
+      <h2 data-tr>Üç adımda hazır.</h2>
+      <h2 data-en>Ready in three steps.</h2>
+      <p class="sub" data-tr>Python ya da başka bir şey kurman gerekmez.</p>
+      <p class="sub" data-en>No Python or anything else to install.</p>
+    </div>
+    <div class="steps">
+      <div class="card step rv"><div class="num"></div>
+        <h3 data-tr>İndir ve çalıştır</h3><h3 data-en>Download and run</h3>
+        <p data-tr>HWiNFO yoksa kurulum onu ücretsiz olarak (winget ile) kurmayı ve paylaşılan belleğini açmayı teklif eder; atlarsan yerleşik kaynak kullanılır.</p>
+        <p data-en>If HWiNFO is missing, Setup offers to install it for free (via winget) and turn on its shared memory. Skip it and the built-in source is used.</p>
+      </div>
+      <div class="card step rv"><div class="num"></div>
+        <h3 data-tr>metriQ'yu aç</h3><h3 data-en>Open metriQ</h3>
+        <p data-tr>Başlat menüsünden aç. Panel HWiNFO'yu kendisiyle birlikte açar, kapatınca onu da kapatır.</p>
+        <p data-en>Open it from the Start menu. The panel starts HWiNFO along with itself and closes it when you quit.</p>
+      </div>
+      <div class="card step rv"><div class="num"></div>
+        <h3 data-tr>Kendine göre ayarla</h3><h3 data-en>Make it yours</h3>
+        <p data-tr>Dişli düğmesi ya da <kbd>S</kbd>: dil, monitör, 1–3 sütun, satırlar, renkler, kayıt, uyarılar.</p>
+        <p data-en>The gear button or <kbd>S</kbd>: language, monitor, 1–3 columns, rows, colours, logging and alerts.</p>
+      </div>
+    </div>
+    <div class="duo" style="margin-top:16px">
+      <div class="card rv">
+        <h3 data-tr>Gizlilik ve güven</h3><h3 data-en>Privacy and trust</h3>
+        <ul class="ticks" style="margin-top:16px" data-tr>
+          <li><b>Veriler bilgisayarından çıkmaz.</b> Tek ağ isteği güncelleme denetimidir ve kapatılabilir.</li>
+          <li><b>Oyuna dokunmaz:</b> mini mod ayrı bir penceredir, hiçbir şey enjekte edilmez.</li>
+          <li><b>Açık kaynak (MIT):</b> kodun tamamı GitHub'da.</li>
+        </ul>
+        <ul class="ticks" style="margin-top:16px" data-en>
+          <li><b>Your data stays on your PC.</b> The only network request is the update check, and you can turn it off.</li>
+          <li><b>Hands off your games:</b> mini mode is a separate window, nothing is injected.</li>
+          <li><b>Open source (MIT):</b> all of the code is on GitHub.</li>
+        </ul>
+      </div>
+      <div class="card rv">
+        <h3 data-tr>Kurulumsuz kullanım</h3><h3 data-en>No-install option</h3>
+        <p style="margin-top:10px" data-tr>Taşınabilir ZIP'i aç, <code>metriQ.exe</code>'yi çalıştır (salt okunur mod).</p>
+        <p style="margin-top:10px" data-en>Unzip the portable ZIP and run <code>metriQ.exe</code> (read-only mode).</p>
+        <div class="btns" style="margin-top:20px">
+          <a class="btn ghost small" href="https://github.com/AcarPlus/metriq/releases/latest" data-asset="portable.*\.zip$"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M5 20h14"/></svg><span data-tr>Taşınabilir ZIP</span><span data-en>Portable ZIP</span></a>
+          <a class="btn ghost small" href="https://github.com/AcarPlus/metriq/releases"><span data-tr>Tüm sürümler</span><span data-en>All releases</span></a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="sss">
+  <div class="wrap">
+    <div class="center rv">
+      <div class="eyebrow"><span data-tr>SSS</span><span data-en>FAQ</span></div>
+      <h2 data-tr>Sık sorulanlar</h2><h2 data-en>Questions, answered</h2>
+      <p class="sub"></p>
+    </div>
+    <div class="faq">
+      <details class="rv"><summary><span data-tr>Windows "bilinmeyen yayıncı" uyarısı veriyor</span><span data-en>Windows warns about an "unknown publisher"</span></summary>
+        <p data-tr>Kurulum dosyası henüz imzalı olmadığı için SmartScreen sorar: <b>Ek bilgi → Yine de çalıştır</b>. Akıllı Uygulama Denetimi (Smart App Control) açıksa imzasız dosyayı tamamen engelleyebilir.</p>
+        <p data-en>The installer isn't code-signed yet, so SmartScreen asks: <b>More info → Run anyway</b>. If Smart App Control is on, it may block unsigned files entirely.</p></details>
+      <details class="rv"><summary><span data-tr>HWiNFO şart mı?</span><span data-en>Do I need HWiNFO?</span></summary>
+        <p data-tr>Hayır. HWiNFO en geniş veriyi verir, ama LibreHardwareMonitor ya da hiçbir şey kurmadan Windows'un kendi kaynakları da kullanılabilir.</p>
+        <p data-en>No. HWiNFO gives the most data, but LibreHardwareMonitor or Windows' own sources work too, the latter with nothing to install.</p></details>
+      <details class="rv"><summary><span data-tr>Oyunun içine bir şey ekliyor mu?</span><span data-en>Does it hook into my games?</span></summary>
+        <p data-tr>metriQ oyuna hiçbir şey enjekte etmez; mini mod oyunun üstünde duran ayrı, yarı saydam bir penceredir.</p>
+        <p data-en>metriQ injects nothing into the game; mini mode is a separate translucent window that sits on top of it.</p></details>
+      <details class="rv"><summary><span data-tr>İnternete bir şey gönderiyor mu?</span><span data-en>Does it send anything online?</span></summary>
+        <p data-tr>Hayır. Tek ağ isteği GitHub'a "yeni sürüm var mı" diye sormaktır ve ayarlardan kapatılabilir.</p>
+        <p data-en>No. Its only request asks GitHub whether a new version exists, and you can turn that off in Settings.</p></details>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="band rv">
+      <h2 data-tr>Bilgisayarını <span class="grad">görmeye başla.</span></h2>
+      <h2 data-en>Start <span class="grad">seeing your PC.</span></h2>
+      <p class="sub" data-tr>Ücretsiz, açık kaynak, MIT lisanslı.</p>
+      <p class="sub" data-en>Free, open source, MIT licensed.</p>
+      <div class="btns">
+        <a class="btn primary" href="https://github.com/AcarPlus/metriq/releases/latest" data-asset="setup.*\.exe$"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M5 20h14"/></svg><span data-tr>Windows için indir</span><span data-en>Download for Windows</span></a>
+        <a class="btn ghost" href="https://github.com/AcarPlus/metriq/issues"><span data-tr>Sorun bildir</span><span data-en>Report an issue</span></a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top:72px">
+  <div class="wrap">
+    <div class="eyebrow rv"><span data-tr>Aynı aileden</span><span data-en>From the same family</span></div>
+    <div class="family rv" id="aile"></div>
+  </div>
+</section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <a class="brand" href="#"><span class="mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16.5a8 8 0 0 1 16 0"/><path d="M12 16.5l4.2-5"/></svg></span>metriQ</a>
+    <div>
+      <p data-tr>metriQ açık kaynaktır (MIT). HWiNFO / REALiX s.r.o. veya LibreHardwareMonitor projesiyle bağlantısı yoktur; HWiNFO sahibinin ticari markasıdır.</p>
+      <p data-en>metriQ is open source (MIT). It is not affiliated with HWiNFO / REALiX s.r.o. or the LibreHardwareMonitor project; HWiNFO is a trademark of its owner.</p>
+      <p>© <span id="yil">2026</span> AcarPlus</p>
+    </div>
+    <nav><a href="https://github.com/AcarPlus/metriq">GitHub</a><a href="https://github.com/AcarPlus/metriq/releases"><span data-tr>Sürümler</span><span data-en>Releases</span></a><a href="https://github.com/AcarPlus/metriq/blob/main/LICENSE">MIT</a></nav>
+  </div>
+</footer>
+
+<script src="aile.js"></script>
 <script>
-  // The Setup's file name carries the version, so /releases/latest/download/<name> cannot be a stable link:
-  // ask the GitHub API for the latest release and point the button at its Setup. Fallback: the release page.
-  fetch('https://api.github.com/repos/AcarPlus/metriq/releases/latest')
-    .then((r) => (r.ok ? r.json() : null))
-    .then((rel) => {
-      if (!rel || !rel.tag_name) return;
-      const assets = rel.assets || [];
-      const setup = assets.find((a) => /setup.*\.exe$/i.test(a.name));
-      const zip = assets.find((a) => /portable.*\.zip$/i.test(a.name));
-      const mb = (a) => Math.round(a.size / 1048576) + ' MB';
-      let text = 'Sürüm ' + rel.tag_name.replace(/^v/, '');
-      if (setup) {
-        document.getElementById('dl').href = setup.browser_download_url;
-        text += ' · ' + mb(setup);
-      }
-      document.getElementById('ver').textContent = text + ' · Windows 10/11 · ücretsiz';
-      if (zip) {
-        const z = document.getElementById('zip');
-        z.href = zip.browser_download_url;
-        z.textContent = 'taşınabilir ZIP (' + mb(zip) + ')';
-      }
-    })
-    .catch(() => {});
+  // Hero panel: values wander like real sensors; colour runs green → red with the value.
+  (function () {
+    var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var rows = [].slice.call(document.querySelectorAll('.r[data-v]'));
+    function hue(f) { return 'hsl(' + Math.round(140 - 140 * Math.max(0, Math.min(1, f))) + ' 78% 56%)'; }
+    function fmt(r, v) { return r.dataset.p ? r.dataset.p + Math.round(v) : Math.round(v) + r.dataset.u; }
+    rows.forEach(function (r) {
+      var v = +r.dataset.v; r._v = v; r._t = v; r._min = v; r._max = v;
+    });
+    var needle = document.getElementById('needle'), gval = document.getElementById('gval');
+    var hist = [], fpsEl = document.getElementById('fps'), fps = 144;
+    for (var i = 0; i < 40; i++) hist.push(140 + Math.random() * 10 - (i % 13 === 0 ? 24 : 0));
+    function spark() {
+      var lo = 90, hi = 165, w = 160, hgt = 44, step = w / (hist.length - 1), d = '';
+      hist.forEach(function (v, i) { var y = hgt - (v - lo) / (hi - lo) * hgt; d += (i ? 'L' : 'M') + (i * step).toFixed(1) + ' ' + y.toFixed(1); });
+      document.getElementById('sparkL').setAttribute('d', d);
+      document.getElementById('sparkA').setAttribute('d', d + 'L' + w + ' ' + hgt + 'L0 ' + hgt + 'Z');
+    }
+    function paint() {
+      rows.forEach(function (r) {
+        var lo = +r.dataset.lo, hi = +r.dataset.hi, f = (r._v - lo) / (hi - lo);
+        var c = r.dataset.calm ? 'hsl(190 70% 58%)' : hue(f);
+        r.querySelector('b').textContent = fmt(r, r._v);
+        r.querySelector('b').style.color = c;
+        r.querySelector('em').textContent = r.dataset.calm || r.dataset.p ? '' : Math.round(r._min) + ' · ' + Math.round(r._max);
+        var bar = r.querySelector('.bar i'); bar.style.width = (Math.max(0.04, Math.min(1, f)) * 100) + '%'; bar.style.backgroundColor = c;
+        if (r.dataset.g) {
+          needle.style.transform = 'rotate(' + (-90 + 180 * Math.max(0, Math.min(1, f))) + 'deg)';
+          gval.firstChild.nodeValue = Math.round(r._v);
+          gval.style.color = hue(f);
+        }
+      });
+      fpsEl.textContent = Math.round(fps);
+      spark();
+    }
+    function tick() {
+      rows.forEach(function (r) {
+        var lo = +r.dataset.lo, hi = +r.dataset.hi, span = hi - lo;
+        if (Math.random() < 0.18) r._t = Math.max(lo + span * 0.1, Math.min(hi - span * 0.04, +r.dataset.v + (Math.random() - 0.4) * span * 0.35));
+        r._v += (r._t - r._v) * 0.35 + (Math.random() - 0.5) * span * 0.015;
+        r._min = Math.min(r._min, r._v); r._max = Math.max(r._max, r._v);
+      });
+      fps = Math.max(98, Math.min(165, fps + (Math.random() - 0.5) * 14 + (144 - fps) * 0.2));
+      hist.push(fps); hist.shift();
+      paint();
+    }
+    paint();
+    if (!reduce) setInterval(function () { if (!document.hidden) tick(); }, 1200);
+  })();
 </script>
 </body>
 </html>
