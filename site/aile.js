@@ -34,7 +34,7 @@
       glyph: '<path d="M4 16.5a8 8 0 0 1 16 0"/><path d="M12 16.5l4.2-5"/>',
       tr: 'Her zaman üstte duran sensör paneli', en: 'Always-on-top sensor dashboard' },
     { id: 'surround', name: 'Surround', url: 'https://acarplus.github.io/surround/', c1: '#8ea2ff', c2: '#5cc8f2',
-      glyph: '<circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/><path d="M8 8a5.7 5.7 0 0 0 0 8M16 8a5.7 5.7 0 0 1 0 8M5 5a10 10 0 0 0 0 14M19 5a10 10 0 0 1 0 14"/>',
+      glyph: '<path d="M12 7.4L12 1.4M14.3 8.02L17.3 2.82M15.98 9.7L18.49 8.25M16.6 12L20.69 12M15.98 14.3L20.67 17.01M14.3 15.98L15.14 17.44M12 16.6L12 17.62M9.7 15.98L8.86 17.44M8.02 14.3L3.33 17.01M7.4 12L3.31 12M8.02 9.7L5.51 8.25M9.7 8.02L6.7 2.82" stroke-width="1.7"/><circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/>',
       tr: 'Tüm hoparlörler tek çevresel ses sistemi', en: 'Every speaker, one surround system' },
     { id: 'perde', name: 'Perde', url: 'https://acarplus.github.io/perde/', c1: '#ff5a6e', c2: '#8b5cf6',
       glyph: '<path d="M3 4h18M5 4v15c2.5 0 4-2 4-5V4M19 4v15c-2.5 0-4-2-4-5V4M8 21h8"/>',
