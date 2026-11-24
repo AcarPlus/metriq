@@ -20,3 +20,6 @@ fan/build/
 
 # GPU benchmark helper build output
 gpu/build/
+
+# local scratch output (screenshots etc.)
+work/

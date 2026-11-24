@@ -61,7 +61,7 @@ PAGES = (("st_tab_look", "look", "accent_clock", "gauge"), ("st_tab_log", "log",
          ("mini_tab", "mini", "accent_net", "fps"),
          ("al_tab", "alert", "accent_temp", "temp"))
 
-BASIC_PAGES = ("look", "mini", "alert")      # pages (by icon) a normal user needs; Basic hides the others (benchmark and fan control included)
+BASIC_PAGES = ("look", "theme", "mini", "alert")      # pages (by icon) a normal user needs (the theme is one setting shared by both views); Basic hides the others (benchmark and fan control included)
 
 
 def visible_pages(mode):
@@ -1382,7 +1382,7 @@ class SettingsWindow:
             cfg = self.api.cfg
             d.update({"theme": self._theme0["theme"], "theme_overrides": dict(self._theme0["theme_overrides"]),
                       "value_color_mode": self._theme0["value_color_mode"],
-                      "value_steps": list(self._theme0["value_steps"])})
+                      "value_steps": list(self._theme0["value_steps"]), "motion": self._theme0["motion"]})
         return d
 
     def validate(self):

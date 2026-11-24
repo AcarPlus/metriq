@@ -23,10 +23,11 @@ DEFAULTS = {
     "monitor": "auto",               # "auto" | monitor index (see tools/list_monitors.py)
     "window_mode": "maximized",      # "maximized" | "fullscreen" | "window"
     "columns": "auto",               # "auto" | 1..4 (auto: 1 on portrait screens, else 2 or 3 by aspect ratio)
-    "theme": "dark",                 # built-in theme, see themes.py (dark, oled, nord, dracula, catppuccin, tokyo, ...)
+    "theme": "aurora",               # built-in theme, see themes.py (aurora = night / day with Windows, dark, oled, nord, ...)
     "theme_overrides": {},           # any theme token on top of the theme, e.g. {"bg": "#101010", "radius": 8}
     "value_color_mode": "smooth",    # "smooth" (gradient) | "stepped" (3-5 flat colour bands)
     "value_steps": [],               # stepped: [] = 4 equal bands, or 2-4 thresholds in % of each row's range
+    "motion": "auto",                # Aurora animations: "auto" (Windows animation effects) | "on" | "off" (still picture)
     "ui_mode": "basic",              # "basic" (few plain rows, plain words) | "advanced" (everything; your own layout)
     "ui_mode_hint_shown": False,     # the one-time "Basic view is on" notice was shown
     "topmost": True,
@@ -209,6 +210,7 @@ def load_config():
     cfg["minimode"] = norm_minimode(cfg.get("minimode"))
     cfg["alerts"] = norm_alerts(cfg.get("alerts"))
     cfg["ui_mode"] = norm_ui_mode(cfg.get("ui_mode"))
+    cfg["motion"] = norm_motion(cfg.get("motion"))
     for k in ("bg_keep_logging", "bg_keep_mini", "bg_hint_shown", "ui_mode_hint_shown"):      # older / hand-edited files: anything but a boolean = default
         if not isinstance(cfg.get(k), bool):
             cfg[k] = DEFAULTS[k]
@@ -226,6 +228,12 @@ def clamp_interval(v):
 def norm_ui_mode(v):
     """'basic' | 'advanced' (a missing or unknown value means basic)."""
     return "advanced" if str(v or "").strip().lower() == "advanced" else "basic"
+
+
+def norm_motion(v):
+    """'auto' | 'on' | 'off' (anything else -> 'auto')."""
+    v = str(v or "").strip().lower()
+    return v if v in ("auto", "on", "off") else "auto"
 
 
 def norm_columns(v):

@@ -1,7 +1,7 @@
 """Process window: which program uses the CPU / RAM / GPU / VRAM / disk, and which ones go into the CSV.
 
-Opened from the panel by clicking the name of a CPU / RAM / GPU / VRAM / disk row (``Controller.tag_row``); the
-(i) icon next to the CPU / GPU / RAM / VRAM rows opens a hover balloon with the top programs instead.
+Opened from the panel by clicking the name of a CPU / RAM / GPU / VRAM / disk row (``Controller.tag_row``); hovering
+that name shows a balloon with the top programs instead.
 Sampling (procmon.MON) runs only while the window or a balloon is open.
 
 What the lists add up to (so the numbers can be compared with the panel):
@@ -53,7 +53,19 @@ _ROW_LABELS = (
     ("vram", ("GPU D3D Memory Dedicated", "GPU Memory Allocated", "GPU Memory Used")),
     ("ram", ("Physical Memory Used", "Memory Used")),
 )
-_INFO = ("cpu", "gpu", "ram", "vram")            # rows that get the (i) icon
+_INFO = ("cpu", "gpu", "ram", "vram")            # rows whose balloon lists the programs by their own metric
+# hover balloon of a row: its metric (network / disk rows by their row id: read and write are listed apart)
+_TIP_BY_RID = {"download": "net", "upload": "net", "disk_read": "dread", "disk_write": "dwrite"}
+TIP_DELAY_MS = 140                               # the balloon opens almost at once: hovering the name is the request
+
+
+def tip_metric_for_row(row):
+    """Metric of the hover balloon of a panel row ('cpu' 'gpu' 'ram' 'vram' 'dread' 'dwrite' 'net'), else None."""
+    m = _TIP_BY_RID.get(getattr(row, "rid", None))
+    if m:
+        return m
+    m = metric_for_row(row)
+    return m if m in _INFO else ("dread" if m == "disk" else None)
 
 
 def metric_for_row(row):
@@ -88,8 +100,10 @@ def fmt_mem(mb):
 def fmt_val(metric, v):
     if metric in ("cpu", "gpu"):
         return _dec(f"{v:.1f} %")
-    if metric == "disk":
-        return _dec(f"{v:.2f} MB/s")
+    if metric in ("disk", "dread", "dwrite"):
+        return _dec(f"{v:.2f} MB/s" if v < 10 else f"{v:.1f} MB/s")
+    if metric == "net":
+        return t("pw_conns", n=int(v))
     return fmt_mem(v)
 
 
@@ -100,7 +114,7 @@ def _num(metric, v):
 
 def popup_top(cfg):
     try:
-        return max(1, min(10, int(float(cfg.get("usage_popup_top", 1)))))
+        return max(1, min(10, int(float(cfg.get("usage_popup_top", 5)))))
     except (TypeError, ValueError):
         return 1
 
@@ -109,8 +123,9 @@ def popup_top(cfg):
 class UsageTip(Tooltip):
     """Hover balloon with the top programs of one metric. Sampling runs only while the pointer is on the icon."""
 
-    def __init__(self, cv, tag, metric, ctl):
-        super().__init__(cv, self._rows, live_ms=1000, _bind=False)
+    def __init__(self, cv, tag, metric, ctl, note=None):
+        super().__init__(cv, self._rows, live_ms=1000, delay_ms=TIP_DELAY_MS, _bind=False)
+        self.note = note
         self.metric, self.ctl, self.tag = metric, ctl, tag
         self.owner = "tip:" + metric
         self.held = False
@@ -162,7 +177,7 @@ class UsageTip(Tooltip):
         snap = procmon.MON.snapshot()
         m = self.metric
         head = (t("pw_top_" + m), "", "head")
-        if snap is None or (m == "cpu" and not snap.warm):
+        if snap is None or (m in ("cpu", "dread", "dwrite") and not snap.warm):
             return [head, (t("pw_wait"), "")]
         if m in ("gpu", "vram") and not snap.gpu_ok:
             return [head, (t("pw_nogpu"), "")]
@@ -184,62 +199,23 @@ class Controller:
         self.win = None
         self.tips = []
 
-    def tag_row(self, cv, item, row, limit=None, info=True):
+    def tag_row(self, cv, item, row, note=None):
         """Panel hook (called for every row name): makes CPU / RAM / GPU / VRAM / disk rows open the window and
-        adds the (i) balloon icon right behind the name when there is room (limit = right edge in canvas px).
-        info=False: no (i) here (Basic view draws the same explanation icon on every row, see help_icon)."""
+        shows their top programs in a balloon while the pointer is on the name (no separate (i) icon, in both views).
+        note: optional callable -> plain-language explanation shown above the list (Basic view).
+        Returns None for other rows, else (metric, None)."""
         metric = metric_for_row(row)
-        if not metric:
-            return
-        cv.tag_bind(item, "<Button-1>", lambda e, m=metric: self.open(m))
+        tip = tip_metric_for_row(row)
+        if not metric and not tip:
+            return None
+        win_metric = metric or ("disk" if tip in ("dread", "dwrite") else "cpu")
+        cv.tag_bind(item, "<Button-1>", lambda e, m=win_metric: self.open(m))
         cv.tag_bind(item, "<Enter>", lambda e: cv.config(cursor="hand2"))
         cv.tag_bind(item, "<Leave>", lambda e: cv.config(cursor=""))
-        if info and metric in _INFO and procgfx.AVAILABLE:
-            try:
-                self._info_icon(cv, item, metric, limit)
-            except Exception:
-                pass
-
-    def help_icon(self, cv, item, text_fn, limit=None, on_click=None):
-        """Basic view: the same (i) icon behind every row name; hovering explains the row in plain words."""
-        if not procgfx.AVAILABLE:
-            return
-        try:
-            x0, y0, x1, y1 = cv.bbox(item)
-            d = max(12, int(round((y1 - y0) * 0.74)))
-            cx = x1 + 6 + d / 2
-            if limit is not None and cx + d / 2 > limit:
-                return
-            C = self.api.C
-            norm = procgfx.info(d, mix(C["card"], C["green"], 0.22), C["green"], mix(C["card"], C["green"], 0.55))
-            hot = procgfx.info(d, C["green"], C["card"])
-            icon = cv.create_image(cx, (y0 + y1) / 2, image=norm, tags="uinfo")
-            cv.tag_bind(icon, "<Enter>", lambda e: (cv.itemconfig(icon, image=hot), cv.config(cursor="hand2" if on_click else "")), add="+")
-            cv.tag_bind(icon, "<Leave>", lambda e: (cv.itemconfig(icon, image=norm), cv.config(cursor="")), add="+")
-            if on_click:
-                cv.tag_bind(icon, "<Button-1>", lambda e: on_click(), add="+")
-            cv._uinfo_imgs = getattr(cv, "_uinfo_imgs", ())[-8:] + (norm, hot)
-            self.tips.append(Tooltip.for_canvas(cv, icon, text_fn))
-            self.tips = self.tips[-48:]
-        except Exception:
-            pass
-
-    def _info_icon(self, cv, item, metric, limit):
-        x0, y0, x1, y1 = cv.bbox(item)
-        d = max(12, int(round((y1 - y0) * 0.74)))
-        cx = x1 + 6 + d / 2
-        if limit is not None and cx + d / 2 > limit:
-            return
-        C = self.api.C
-        norm = procgfx.info(d, mix(C["card"], C["green"], 0.22), C["green"], mix(C["card"], C["green"], 0.55))
-        hot = procgfx.info(d, C["green"], C["card"])
-        icon = cv.create_image(cx, (y0 + y1) / 2, image=norm, tags="uinfo")
-        cv.tag_bind(icon, "<Enter>", lambda e: (cv.itemconfig(icon, image=hot), cv.config(cursor="hand2")), add="+")
-        cv.tag_bind(icon, "<Leave>", lambda e: (cv.itemconfig(icon, image=norm), cv.config(cursor="")), add="+")
-        cv.tag_bind(icon, "<Button-1>", lambda e, m=metric: self.open(m), add="+")
-        cv._uinfo_imgs = getattr(cv, "_uinfo_imgs", ())[-8:] + (norm, hot)          # keep the pictures alive
-        self.tips.append(UsageTip(cv, icon, metric, self))
-        self.tips = self.tips[-24:]
+        if tip:                                  # hovering the name itself shows the top programs
+            self.tips.append(UsageTip(cv, item, tip, self, note))
+            self.tips = self.tips[-40:]
+        return metric or tip, None
 
     def open(self, metric=None):
         w = self.win
@@ -1225,7 +1201,10 @@ i18n.register({
         "pw_logging_n": "{n} in log",
         "pw_top_cpu": "Top CPU users", "pw_top_gpu": "Top GPU users",
         "pw_top_ram": "Top RAM users", "pw_top_vram": "Top VRAM users",
-        "ps_popup": "Programs in the (i) balloon",
+        "pw_top_dread": "Top disk readers", "pw_top_dwrite": "Top disk writers",
+        "pw_top_net": "Most network connections (per-program speed needs admin rights)",
+        "pw_conns": "{n} conn.",
+        "ps_popup": "Programs in the hover balloon",
         "ps_popup_hint": "1–10 programs per balloon",
     },
     "tr": {
@@ -1253,7 +1232,10 @@ i18n.register({
         "pw_logging_n": "{n} kayıtta",
         "pw_top_cpu": "CPU'yu en çok kullananlar", "pw_top_gpu": "GPU'yu en çok kullananlar",
         "pw_top_ram": "RAM'i en çok kullananlar", "pw_top_vram": "VRAM'i en çok kullananlar",
-        "ps_popup": "(i) balonundaki program sayısı",
+        "pw_top_dread": "Diskten en çok okuyanlar", "pw_top_dwrite": "Diske en çok yazanlar",
+        "pw_top_net": "En çok ağ bağlantısı olanlar (program başına hız yönetici izni ister)",
+        "pw_conns": "{n} bağlantı",
+        "ps_popup": "Üzerine gelince açılan balondaki program sayısı",
         "ps_popup_hint": "balon başına 1–10 program",
     },
 })

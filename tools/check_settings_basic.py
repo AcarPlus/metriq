@@ -38,6 +38,16 @@ def one(mode, want):
     root, w = make(mode)
     root.update()
     got = w.validate()
+    if mode == "basic":                       # the theme page is shared by both views: reachable in Basic, same keys saved
+        th = [i for i in w.nav_map if settings_ui.PAGES[i][1] == "theme"]
+        w.select(th[0]) if th else None
+        root.update()
+        w.theme_tab.pick_theme("dark")
+        saved = w.theme_tab.read()["theme"] if w.theme_tab else None
+        t_ok = bool(th) and saved == "dark"
+        print(f"basic: theme page in the sidebar and a theme can be picked: {'OK' if t_ok else 'FAIL'}")
+        if not t_ok:
+            got = -1
     print(f"{mode}: validate() -> {got!r} (expected {want!r}) {'OK' if got == want else 'FAIL'}")
     w._closing = True
     root.destroy()

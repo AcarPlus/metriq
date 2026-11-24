@@ -87,6 +87,11 @@ def _paint_icon(d, k, kind, cx, cy, s, col, bg):
                (cx + s * 0.8, cy - s * 0.6)]
         for a, b in zip(pts, pts[1:]):
             _line(d, k, a[0], a[1], b[0], b[1], w_, col, True)
+    elif kind == "procs":                         # programs list: a dot + a shorter and shorter bar per row
+        w_ = max(2, s * 0.2)
+        for yy, ln in ((-0.62, 1.0), (0.0, 0.72), (0.62, 0.46)):
+            _disc(d, k, cx - s * 0.78, cy + yy * s, w_ * 0.72, col)
+            _line(d, k, cx - s * 0.36, cy + yy * s, cx - s * 0.36 + ln * s * 1.26, cy + yy * s, w_, col, True)
     elif kind == "reset":
         _arc(d, k, cx, cy, s * 0.78, 0, 290, max(2, s * 0.22), col)
         a = math.radians(70)
