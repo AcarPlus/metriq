@@ -7,6 +7,7 @@
 
 `content` may also be a callable returning a list of rows: [("left", "right"), ...] for a small two-column table,
 or a string. Colours always come from the active theme, so balloons follow theme changes.
+tip.note = callable -> str: an explanation shown above the content (e.g. Basic view: what a row means + its top programs).
 """
 import tkinter as tk
 import tkinter.font as tkfont
@@ -30,6 +31,7 @@ class Tooltip:
         self._xy = (0, 0)
         self._tag = None                              # canvas tag (for_canvas), None for a plain widget
         self._watch = None
+        self.note = None                              # optional callable -> text shown above the content
         if _bind:
             widget.bind("<Enter>", self._enter, add="+")
             widget.bind("<Leave>", self._leave, add="+")
@@ -126,10 +128,21 @@ class Tooltip:
         body.pack(padx=1, pady=1)
         fnt = tkfont.nametofont("TkDefaultFont").copy()
         fnt.configure(size=max(9, abs(fnt.cget("size"))))
+        note = ""
+        if self.note is not None:
+            try:
+                note = self.note() or ""
+            except Exception:
+                note = ""
         if isinstance(data, str):
-            tk.Label(body, text=data, bg=p["card"], fg=p["fg"], font=fnt, justify="left",
-                     wraplength=self.wrap).pack(anchor="w")
+            tk.Label(body, text=(note + "\n\n" + data) if note else data, bg=p["card"], fg=p["fg"], font=fnt,
+                     justify="left", wraplength=self.wrap).pack(anchor="w")
         else:
+            off = 0
+            if note:
+                tk.Label(body, text=note, bg=p["card"], fg=p["fg"], font=fnt, justify="left",
+                         wraplength=self.wrap).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+                off = 1
             for i, row in enumerate(data):
                 left, right = (row[0], row[1]) if isinstance(row, (tuple, list)) and len(row) > 1 else (row, "")
                 bold = i == 0 and isinstance(row, (tuple, list)) and len(row) > 2 and row[2] == "head"
@@ -137,9 +150,9 @@ class Tooltip:
                 if bold:
                     f.configure(weight="bold")
                 tk.Label(body, text=left, bg=p["card"], fg=p["fg"] if bold else p["name"], font=f,
-                         anchor="w").grid(row=i, column=0, sticky="w")
+                         anchor="w").grid(row=i + off, column=0, sticky="w")
                 tk.Label(body, text=right, bg=p["card"], fg=p["fg"], font=f,
-                         anchor="e").grid(row=i, column=1, sticky="e", padx=(14, 0))
+                         anchor="e").grid(row=i + off, column=1, sticky="e", padx=(14, 0))
         self._place()
         if self._watch is None:
             self._watch = self.w.after(250, self._watch_tick)
