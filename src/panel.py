@@ -443,6 +443,41 @@ def main():
             text = text[:-1]
         return text + "…"
 
+    # ------------------------------------------------------------ hover: clickable row names swell a little
+    def hover_grow(nm_id, icon, fs, accent):
+        """Name of a row that opens the process window: on hover it grows (eased, ~150 ms) and lights up, the (i)
+        icon moves along so it stays right behind the name."""
+        size0 = -fs                                     # (font sizes are negative = pixels)
+        size1 = size0 + max(2, int(round(size0 * 0.16)))
+        fill0, fill1 = C["name"], mix(C["fg"], accent, 0.35)
+        a = {"v": 0.0, "to": 0.0, "job": None, "size": size0}
+
+        def step():
+            a["job"] = None
+            try:
+                d = a["to"] - a["v"]
+                a["v"] = a["to"] if abs(d) < 0.07 else a["v"] + d * 0.38
+                e = a["v"]
+                size = int(round(size0 + (size1 - size0) * e))
+                x1_old = cv.bbox(nm_id)[2]
+                if size != a["size"]:
+                    a["size"] = size
+                    cv.itemconfig(nm_id, font=(F_TXT, -size))
+                cv.itemconfig(nm_id, fill=mix(fill0, fill1, e))
+                cv.move(icon, cv.bbox(nm_id)[2] - x1_old, 0)
+            except (tk.TclError, TypeError):
+                return
+            if a["v"] != a["to"]:
+                a["job"] = root.after(16, step)
+
+        def go(to):
+            a["to"] = to
+            if a["job"] is None:
+                a["job"] = root.after(0, step)
+        for it_ in (nm_id, icon):
+            cv.tag_bind(it_, "<Enter>", lambda e: go(1.0), add="+")
+            cv.tag_bind(it_, "<Leave>", lambda e: go(0.0), add="+")
+
     # ------------------------------------------------------------ Aurora effects (aurora.py)
     def fx_begin(W, H):
         """Start of a canvas build: the effect palette when the theme is an Aurora one (sky placed first, at the
@@ -734,7 +769,9 @@ def main():
                     nm_right = (fr["now"] * cw - nw - 10 if not p.with_bar else fr["now"] * cw - 10) if hint_row else name_right
                     nm_id = cv.create_text(col_name, my, text=fit_text(fnt_name, row.name, name_avail + nm_right - name_right - (26 if hint_row else 0)),
                                            anchor="w", font=f_name, fill=C["name"])
-                    procs.tag_row(cv, nm_id, row, cx0 + nm_right, info=not basic)   # CPU / RAM / GPU / VRAM / disk rows open the process window (+ (i) balloon)
+                    tagged = procs.tag_row(cv, nm_id, row, cx0 + nm_right, info=not basic)   # CPU / RAM / GPU / VRAM / disk rows open the process window (+ (i) balloon)
+                    if tagged and tagged[1] is not None:            # clickable (i) rows: the name swells on hover
+                        hover_grow(nm_id, tagged[1], fs_name, accent)
                     if row.help:                                        # e.g. throttling: what it is, which source it needs
                         Tooltip.for_canvas(cv, nm_id, lambda k=row.help: t("hp_" + k))
                         if basic:       # Basic: every row has the same (i); the hint row's one also opens the HWiNFO setting

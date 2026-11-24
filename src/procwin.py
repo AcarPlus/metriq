@@ -187,18 +187,21 @@ class Controller:
     def tag_row(self, cv, item, row, limit=None, info=True):
         """Panel hook (called for every row name): makes CPU / RAM / GPU / VRAM / disk rows open the window and
         adds the (i) balloon icon right behind the name when there is room (limit = right edge in canvas px).
-        info=False: no (i) here (Basic view draws the same explanation icon on every row, see help_icon)."""
+        info=False: no (i) here (Basic view draws the same explanation icon on every row, see help_icon).
+        Returns None for other rows, else (metric, icon item or None)."""
         metric = metric_for_row(row)
         if not metric:
-            return
+            return None
         cv.tag_bind(item, "<Button-1>", lambda e, m=metric: self.open(m))
         cv.tag_bind(item, "<Enter>", lambda e: cv.config(cursor="hand2"))
         cv.tag_bind(item, "<Leave>", lambda e: cv.config(cursor=""))
+        icon = None
         if info and metric in _INFO and procgfx.AVAILABLE:
             try:
-                self._info_icon(cv, item, metric, limit)
+                icon = self._info_icon(cv, item, metric, limit)
             except Exception:
                 pass
+        return metric, icon
 
     def help_icon(self, cv, item, text_fn, limit=None, on_click=None):
         """Basic view: the same (i) icon behind every row name; hovering explains the row in plain words."""
@@ -240,6 +243,7 @@ class Controller:
         cv._uinfo_imgs = getattr(cv, "_uinfo_imgs", ())[-8:] + (norm, hot)          # keep the pictures alive
         self.tips.append(UsageTip(cv, icon, metric, self))
         self.tips = self.tips[-24:]
+        return icon
 
     def open(self, metric=None):
         w = self.win

@@ -34,7 +34,7 @@ NIGHT = {
                ("#2f7bff", 0.40, 0.80, 0.75, 0.95, 0.18, 0.08, 0.047, 0.031, 4.4, 1.3, 30),
                ("#9ff7e6", 0.20, 0.55, 0.55, 0.05, 0.30, 0.05, 0.061, 0.052, 2.2, 3.2, -35)),
     "glass": (16, 20, 50, 122), "edge": (255, 255, 255, 34), "sheen": (255, 255, 255, 30),
-    "shadow": (0, 0, 8, 120), "stripe": (255, 255, 255, 7), "sep": (255, 255, 255, 22),
+    "shadow": (0, 0, 8, 120), "stripe": (255, 255, 255, 26), "sep": (255, 255, 255, 22),
     "track": (255, 255, 255, 20), "ring_track": (255, 255, 255, 26), "glow": 1.0, "bubble": 40,
 }
 DAY = {
@@ -45,7 +45,7 @@ DAY = {
                ("#6fb6ff", 0.30, 0.80, 0.75, 0.95, 0.18, 0.08, 0.047, 0.031, 4.4, 1.3, 30),
                ("#ffd6ec", 0.35, 0.55, 0.55, 0.05, 0.30, 0.05, 0.061, 0.052, 2.2, 3.2, -35)),
     "glass": (255, 255, 255, 150), "edge": (255, 255, 255, 235), "sheen": (255, 255, 255, 70),
-    "shadow": (40, 30, 110, 46), "stripe": (60, 70, 140, 9), "sep": (40, 50, 120, 26),
+    "shadow": (40, 30, 110, 46), "stripe": (60, 70, 140, 20), "sep": (40, 50, 120, 26),
     "track": (40, 50, 120, 22), "ring_track": (40, 50, 120, 26), "glow": 0.7, "bubble": 34,
 }
 
@@ -112,7 +112,7 @@ def _rgba(c, a):
     return _rgb(c) + (int(max(0, min(255, a))),)
 
 
-_LRU_MAX = 640
+_LRU_MAX = 1600
 _lru = OrderedDict()
 
 
@@ -169,8 +169,8 @@ def _round_mask(w, h, r, ss=3):
 # --------------------------------------------------------------------------- the sky
 class Sky:
     """Flowing aurora behind everything. frame(w, h, t) -> PIL image (RGB, w x h)."""
-    SC = 6            # rendered at 1/SC of the window size, then scaled up (the clouds are soft anyway)
-    FPS = 3.0         # background frames per second while motion is on (the clouds move a few px per frame)
+    SC = 7            # rendered at 1/SC of the window size, then scaled up (the clouds are soft anyway)
+    FPS = 6.0         # background frames per second while motion is on (the clouds move a few px per frame)
     SPEED = 1.0
 
     def __init__(self, pal):
@@ -203,7 +203,7 @@ class Sky:
         return im
 
     def frame(self, w, h, t):
-        return self.small(w, h, t).resize((max(1, int(w)), max(1, int(h))), Image.BICUBIC)
+        return self.small(w, h, t).resize((max(1, int(w)), max(1, int(h))), Image.BILINEAR)
 
 
 def sky_photo(sky, w, h, t):
@@ -265,15 +265,19 @@ def glass_card(w, h, r, pal, accent=None, glow_at=None, stripes=(), sep=None, tr
             glow.putalpha(ga)
             body = Image.alpha_composite(body, glow)
         d = ImageDraw.Draw(body)
-        for y0, y1, inset in stripes:
-            d.rectangle([int(inset), int(round(y0)), int(w - inset) - 1, int(round(y1)) - 1], fill=pal["stripe"])
         if sep is not None:
             d.line([int(w * 0.02), int(sep), int(w * 0.98), int(sep)], fill=pal["sep"], width=1)
         lay = Image.new("RGBA", (w * 3, h * 3), (0, 0, 0, 0))
         ld = ImageDraw.Draw(lay)
+        # zebra rows: soft rounded pills tinted with the section colour (plain 3 % white was lost on the dark glass)
+        scol = _rgb(themes.mix("#%02x%02x%02x" % pal["stripe"][:3], accent, 0.5)) if accent else pal["stripe"][:3]
+        for y0, y1, inset in stripes:
+            ri = (y1 - y0) * 0.42
+            ld.rounded_rectangle([int(inset * 3), int(round(y0 * 3)) + 2, int((w - inset) * 3) - 1, int(round(y1 * 3)) - 3],
+                                 radius=ri * 3, fill=scol + (pal["stripe"][3],))
         for x0, y0, x1, y1 in tracks:
             ld.rounded_rectangle([x0 * 3, y0 * 3, x1 * 3 - 1, y1 * 3 - 1], radius=(y1 - y0) * 1.5, fill=pal["track"])
-        if tracks:
+        if tracks or stripes:
             body = Image.alpha_composite(body, lay.reduce(3))
         a = ImageChops.multiply(body.getchannel("A"), mask)
         body.putalpha(a)
@@ -303,9 +307,10 @@ def ring(d, q, color, accent, icon, pal):
     PhotoImage of (d + 2 g) square, g = ring_pad(d); place it centred."""
     d = max(12, int(d))
     g = ring_pad(d)
+    color = _qcol(color)
     key = ("ring", d, q, color, accent, icon, id(pal))
 
-    def make():
+    def base_make():                # glass bubble + track + icon: the same for every value
         S = d + 2 * g
         k = 4
         lw = max(2.0, d * 0.085)
@@ -313,18 +318,26 @@ def ring(d, q, color, accent, icon, pal):
         rr = d / 2 - lw / 2
         base = Image.new("RGBA", (S * k, S * k), (0, 0, 0, 0))
         bd = ImageDraw.Draw(base)
-        # glass bubble + track
         rb = rr - lw * 0.9
         bd.ellipse([(c - rb) * k, (c - rb) * k, (c + rb) * k, (c + rb) * k], fill=_rgba(accent, pal["bubble"]))
         ro = rr + lw / 2
         bd.ellipse([(c - ro) * k, (c - ro) * k, (c + ro) * k, (c + ro) * k], outline=pal["ring_track"],
                    width=int(round(lw * k)))
         gfx._paint_icon(bd, k, icon, c, c, d * 0.2, accent, (0, 0, 0, 0))
+        return base.reduce(k)
+
+    def make():
+        S = d + 2 * g
+        k = 3
+        lw = max(2.0, d * 0.085)
+        c = S / 2
+        rr = d / 2 - lw / 2
+        ro = rr + lw / 2
         arc = Image.new("RGBA", (S * k, S * k), (0, 0, 0, 0))
         ad = ImageDraw.Draw(arc)
         frac = q / RING_STEPS
         if frac > 0:
-            n = max(2, int(48 * frac))
+            n = max(2, int(32 * frac))
             a0 = -90.0
             span = 360.0 * frac
             for i in range(n):                        # colour runs from the section accent to the value colour
@@ -338,7 +351,7 @@ def ring(d, q, color, accent, icon, pal):
                 ad.ellipse([(px - lw / 2) * k, (py - lw / 2) * k, (px + lw / 2) * k, (py + lw / 2) * k],
                            fill=_rgba(col if f else themes.mix(accent, color, 0.05), 255))
         arc = arc.reduce(k)
-        out = base.reduce(k)
+        out = _cached(("ringbase", d, accent, icon, id(pal)), base_make)
         if frac > 0:
             glow = arc.filter(ImageFilter.GaussianBlur(max(1.5, g * 0.45)))
             ga = glow.getchannel("A").point(lambda v: int(min(255, v * 1.6 * pal["glow"])))
@@ -364,21 +377,21 @@ def bar_pad(bh):
     return max(3, int(round(bh * 0.9)))
 
 
-def bar(length, bh, px, color, accent, pal):
-    """Value bar: a glowing gradient capsule px pixels long on a track of `length` (the track is part of the card).
-    PhotoImage of (length + 2 g) x (bh + 2 g), g = bar_pad(bh); place its top-left at (x0 - g, y0 - g)."""
-    length, bh = max(4, int(round(length))), max(3, int(round(bh)))
-    px = int(max(0, min(length, px)))
+def _qcol(c, step=6):
+    """Colour rounded to a coarse grid: the value colour glides through many shades, the caches stay small."""
+    return "#%02x%02x%02x" % tuple(min(255, int(round(v / step) * step)) for v in _rgb(c))
+
+
+def _bar_full(length, bh, color, accent, pal):
+    """The whole glowing capsule (full track length) as a PIL image: built once per size / colour; bar() cuts the
+    current value out of it (caps kept, middle stretched), which is ~20x cheaper than painting it again."""
     g = bar_pad(bh)
-    key = ("bar", length, bh, px, color, accent, id(pal))
+    key = ("barfull", length, bh, color, accent, id(pal))
 
     def make():
         W, H = length + 2 * g, bh + 2 * g
-        out = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        if px <= 0:
-            return ImageTk.PhotoImage(out)
         k = 3
-        L = max(px, bh)
+        L = length
         grad = Image.new("RGBA", (256, 1))
         c0 = themes.mix(accent, color, 0.35)
         grad.putdata([_rgba(themes.mix(c0, color, i / 255), 200 + 55 * i / 255) for i in range(256)])
@@ -391,12 +404,43 @@ def bar(length, bh, px, color, accent, pal):
         lay.alpha_composite(fill, (g, g))
         glow = lay.filter(ImageFilter.GaussianBlur(g * 0.55))
         glow.putalpha(glow.getchannel("A").point(lambda v: int(min(255, v * 1.3 * pal["glow"]))))
-        out = Image.alpha_composite(out, glow)
+        out = Image.alpha_composite(Image.new("RGBA", (W, H), (0, 0, 0, 0)), glow)
         out = Image.alpha_composite(out, lay)
         hl = Image.new("RGBA", (W, H), (0, 0, 0, 0))          # a thin highlight along the top of the capsule
         ImageDraw.Draw(hl).line([g + bh / 2, g + bh * 0.28, g + L - bh / 2, g + bh * 0.28],
                                 fill=(255, 255, 255, 70), width=max(1, int(bh * 0.18)))
-        out = Image.alpha_composite(out, hl)
+        return Image.alpha_composite(out, hl)
+    return _cached(key, make)
+
+
+def bar(length, bh, px, color, accent, pal):
+    """Value bar: a glowing gradient capsule px pixels long on a track of `length` (the track is part of the card).
+    PhotoImage of (length + 2 g) x (bh + 2 g), g = bar_pad(bh); place its top-left at (x0 - g, y0 - g)."""
+    length, bh = max(4, int(round(length))), max(3, int(round(bh)))
+    px = int(max(0, min(length, px)))
+    g = bar_pad(bh)
+    color, accent = _qcol(color), _qcol(accent)
+    key = ("bar", length, bh, px, color, accent, id(pal))
+
+    def make():
+        W, H = length + 2 * g, bh + 2 * g
+        out = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        if px <= 0:
+            return ImageTk.PhotoImage(out)
+        full = _bar_full(length, bh, color, accent, pal)
+        L = max(px, bh)
+        cap = g + (bh + 1) // 2                       # glow + half the capsule: kept as it is at both ends
+        mid_src = length + 2 * g - 2 * cap
+        mid = L + 2 * g - 2 * cap
+        if mid <= 0 or mid_src <= 0:                   # (tiny value: just the two caps)
+            left = full.crop((0, 0, (L + 2 * g) // 2, H))
+            right = full.crop((W - (L + 2 * g - left.width), 0, W, H))
+            out.paste(left, (0, 0))
+            out.paste(right, (left.width, 0))
+        else:
+            out.paste(full.crop((0, 0, cap, H)), (0, 0))
+            out.paste(full.crop((cap, 0, cap + mid_src, H)).resize((mid, H), Image.BILINEAR), (cap, 0))
+            out.paste(full.crop((W - cap, 0, W, H)), (cap + mid, 0))
         return ImageTk.PhotoImage(out)
     return _cached(key, make)
 
