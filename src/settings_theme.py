@@ -10,6 +10,7 @@ from tkinter import colorchooser
 import gfx
 import helptexts
 import i18n
+import config
 import themes
 import uikit
 from i18n import t
@@ -38,6 +39,8 @@ i18n.register({
         "th_auto": "Otomatik: her satırın sınırlarından 4 eşit bant",
         "th_thresholds": "Eşikler", "th_steps_hint": "Satır aralığının yüzdesi: 2-4 artan değer (örn. 50, 75, 90) = 3-5 bant.",
         "th_pv_hint": "Önizleme: kaydedilmemiş seçimin görünümü",
+        "th_motion": "Hareket (Aurora)", "th_motion_auto": "Otomatik (Windows animasyon ayarı)",
+        "th_motion_on": "Açık", "th_motion_off": "Kapalı (durgun resim)",
     },
     "en": {
         "st_tab_theme": "Theme", "th_pick": "Choose a theme",
@@ -59,6 +62,8 @@ i18n.register({
         "th_thresholds": "Thresholds", "th_steps_hint": "% of each row's range: 2-4 ascending values "
                                                        "(e.g. 50, 75, 90) = 3-5 bands.",
         "th_pv_hint": "Preview: the unsaved choice",
+        "th_motion": "Motion (Aurora)", "th_motion_auto": "Automatic (Windows animation setting)",
+        "th_motion_on": "On", "th_motion_off": "Off (still picture)",
     },
 })
 
@@ -135,7 +140,8 @@ class ThemeTab:
             name = themes.DEFAULT
         return {"theme": name, "theme_overrides": themes.clean_overrides(cfg.get("theme_overrides")),
                 "value_color_mode": themes.norm_mode(cfg.get("value_color_mode")),
-                "value_steps": list(themes.norm_steps(cfg.get("value_steps")))}
+                "value_steps": list(themes.norm_steps(cfg.get("value_steps"))),
+                "motion": config.norm_motion(cfg.get("motion"))}
 
     def __init__(self, ui, cfg):
         import settings_ui as su          # (imported late: settings_ui imports this module)
@@ -146,6 +152,7 @@ class ThemeTab:
         self.ov = themes.clean_overrides(cfg.get("theme_overrides"))
         self.mode = themes.norm_mode(cfg.get("value_color_mode"))
         self.steps = themes.norm_steps(cfg.get("value_steps"))
+        self.motion = config.norm_motion(cfg.get("motion"))
         self._lock = False
         self._imgs = []
         self.swatch, self.cards, self.fcombo = {}, {}, {}
@@ -173,7 +180,7 @@ class ThemeTab:
 
     def read(self):
         return {"theme": self.name, "theme_overrides": dict(self.ov), "value_color_mode": self.mode,
-                "value_steps": list(self.steps)}
+                "value_steps": list(self.steps), "motion": self.motion}
 
     def set_token(self, tok, val):
         """Override a token; a value equal to the theme's own value just removes the override."""
@@ -256,6 +263,11 @@ class ThemeTab:
             cb.bind("<<ComboboxSelected>>", lambda e, k=tok, c=cb: self.on_font(k, c))
             self.fcombo[tok] = cb
             ui.row(card, t(lbl), cb, help="th_fonts")
+        self.motion_vals = ["auto", "on", "off"]
+        self.cb_motion = ui.combo(card.body, [t("th_motion_" + v) for v in self.motion_vals],
+                                  self.motion_vals.index(self.motion), 28)
+        self.cb_motion.bind("<<ComboboxSelected>>", self.on_motion)
+        ui.row(card, t("th_motion"), self.cb_motion)
 
     def _build_values(self, p):
         C, ui, su = self.C, self.ui, self.su
@@ -334,6 +346,9 @@ class ThemeTab:
     def on_font(self, tok, cb):
         i = cb.current()
         self.set_token(tok, "" if i <= 0 else families()[i - 1])
+
+    def on_motion(self, e=None):
+        self.motion = self.motion_vals[max(0, self.cb_motion.current())]
 
     def on_mode(self, e=None):
         self.mode = self.mode_vals[max(0, self.cb_mode.current())]

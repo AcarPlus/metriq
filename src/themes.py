@@ -14,7 +14,8 @@ import re
 
 import i18n
 
-DEFAULT = "dark"
+DEFAULT = "aurora"
+AUTO = {"aurora": ("aurora_night", "aurora_day")}       # follows the Windows app mode: (dark, light)
 MAIN = ("bg", "card", "stripe", "border", "track", "text", "name", "dim", "faint")
 ACCENTS = ("accent_clock", "accent_power", "accent_temp", "accent_fan", "accent_net", "accent_fps")
 GRADIENT = ("grad0", "grad1", "grad2", "grad3", "grad4")
@@ -35,14 +36,28 @@ def _theme(bg, card, stripe, border, track, text, name, dim, faint, clock, power
     d = dict(bg=bg, card=card, stripe=stripe, border=border, track=track, text=text, name=name, dim=dim,
              faint=faint, accent_clock=clock, accent_power=power, accent_temp=temp, accent_fan=fan,
              accent_net=net, accent_fps=fps, ui=ui, select=select, radius=radius, row_spacing=spacing,
-             font_text="", font_num="", font_head="")
+             font_text="", font_num="", font_head="", fx="")
     d.update(zip(GRADIENT, grad))
     d.update(zip(STATUS, status))
     return d
 
 
+_AURORA_NIGHT = dict(_theme(     # glass on flowing clouds (aurora.py draws the effects), night
+    "#080b1c", "#151a38", "#191f40", "#2b3264", "#242b55", "#f3f5ff", "#d3d8f6", "#a0a7d2", "#767eaf",
+    "#7d93ff", "#ffc85a", "#ff6b9a", "#3de0c8", "#a68bff", "#5ef0a8",
+    ("#3de0c8", "#7fe39a", "#ffd166", "#ff9566", "#ff4d7a"),
+    ("#3de0a0", "#ffd166", "#ff9566", "#ff4d7a"), "#3de0c8", "#2c2a6b", radius=18), fx="aurora")
+_AURORA_DAY = dict(_theme(       # ... and day
+    "#eef1fa", "#fbfcff", "#f3f5fc", "#d6dcf0", "#e2e6f5", "#141833", "#2c3258", "#565d86", "#737a9f",
+    "#4a63e8", "#b97f00", "#e0457b", "#0f9e8c", "#7a5cff", "#178f5c",
+    ("#13a58c", "#58b04a", "#d39d00", "#e2702f", "#de2f5e"),
+    ("#13a072", "#c29200", "#d8662a", "#de2f5e"), "#7a5cff", "#d9d2ff", radius=18), fx="aurora")
+
 # order = order in the picker
 THEMES = {
+    "aurora": dict(_AURORA_NIGHT),          # (placeholder tokens: Style() picks night or day, see AUTO)
+    "aurora_night": _AURORA_NIGHT,
+    "aurora_day": _AURORA_DAY,
     "dark": _theme(      # the original look
         "#0b0f14", "#121820", "#151c25", "#1f2833", "#1e2630", "#f0f6fc", "#c9d1d9", "#9198a1", "#6e7681",
         "#58a6ff", "#e3b341", "#ff7b72", "#39c5cf", "#bc8cff", "#7ee787",
@@ -96,10 +111,12 @@ THEMES = {
 }
 
 _NAMES = {
-    "en": {"dark": "Dark (default)", "oled": "OLED Black", "nord": "Nord", "dracula": "Dracula",
+    "en": {"aurora": "Aurora (default)", "aurora_night": "Aurora Night", "aurora_day": "Aurora Day",
+           "dark": "Dark", "oled": "OLED Black", "nord": "Nord", "dracula": "Dracula",
            "catppuccin": "Catppuccin Mocha", "tokyo": "Tokyo Night", "gruvbox": "Gruvbox Dark",
            "solarized": "Solarized Dark", "light": "Light", "contrast": "High contrast"},
-    "tr": {"dark": "Koyu (varsayılan)", "oled": "OLED Siyah", "nord": "Nord", "dracula": "Dracula",
+    "tr": {"aurora": "Aurora (varsayılan)", "aurora_night": "Aurora Gece", "aurora_day": "Aurora Gündüz",
+           "dark": "Koyu", "oled": "OLED Siyah", "nord": "Nord", "dracula": "Dracula",
            "catppuccin": "Catppuccin Mocha", "tokyo": "Tokyo Night", "gruvbox": "Gruvbox Dark",
            "solarized": "Solarized Dark", "light": "Açık", "contrast": "Yüksek kontrast"},
 }
@@ -108,6 +125,32 @@ i18n.register({lang: {"theme_" + k: v for k, v in d.items()} for lang, d in _NAM
 
 def theme_label(name):
     return i18n.t("theme_" + name)
+
+
+def windows_light():
+    """Windows Settings > Personalisation > Colours > app mode is light (False when unknown)."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
+            return bool(winreg.QueryValueEx(k, "AppsUseLightTheme")[0])
+    except Exception:
+        return False
+
+
+def resolve(name, light=None):
+    """The concrete theme behind a name: an automatic one picks its day or night variant."""
+    if name not in THEMES:
+        name = DEFAULT
+    if name in AUTO:
+        night, day = AUTO[name]
+        return day if (windows_light() if light is None else light) else night
+    return name
+
+
+def base_tokens(name):
+    """The tokens a theme name stands for right now (without user overrides)."""
+    return THEMES[resolve(name)]
 
 
 # ---------------------------------------------------------------- colour helpers
@@ -187,8 +230,9 @@ class Style:
 
     def __init__(self, name=DEFAULT, overrides=None, mode="smooth", steps=None):
         self.name = name if name in THEMES else DEFAULT
+        self.variant = resolve(self.name)               # aurora -> aurora_night / aurora_day
         self.overrides = clean_overrides(overrides)
-        self.tokens = dict(THEMES[self.name])
+        self.tokens = dict(THEMES[self.variant])
         self.tokens.update(self.overrides)
         self.mode, self.steps = norm_mode(mode), norm_steps(steps or [])
         self.lut = self._build_lut()

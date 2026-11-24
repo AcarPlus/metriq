@@ -1382,7 +1382,7 @@ class SettingsWindow:
             cfg = self.api.cfg
             d.update({"theme": self._theme0["theme"], "theme_overrides": dict(self._theme0["theme_overrides"]),
                       "value_color_mode": self._theme0["value_color_mode"],
-                      "value_steps": list(self._theme0["value_steps"])})
+                      "value_steps": list(self._theme0["value_steps"]), "motion": self._theme0["motion"]})
         return d
 
     def validate(self):

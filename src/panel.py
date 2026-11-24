@@ -15,6 +15,7 @@ import webbrowser
 import winsound
 
 import alerts
+import aurora
 import backend
 import basicmode
 import config
@@ -123,7 +124,7 @@ def repair_csv_tails(folder, newest=5):
 # every colour / style comes from the active theme (themes.py); C is refreshed in place when the theme changes
 C = themes.palette()
 mix = themes.mix
-THEME_KEYS = {"theme", "theme_overrides", "value_color_mode", "value_steps"}
+THEME_KEYS = {"theme", "theme_overrides", "value_color_mode", "value_steps", "motion"}
 
 
 def round_rect(cv, x0, y0, x1, y1, r, **kw):
@@ -344,7 +345,9 @@ def main():
           "mon": config.pick_monitor(cfg["monitor"]), "mode": str(cfg["window_mode"]).lower(),
           "upd": None, "upd_busy": False, "upd_prog": 0, "upd_err": 0, "upd_gen": 0, "upd_after": None,
           "closing": False, "t0": time.time(), "upd_dismissed": None, "tips": {},
-          "bsections": [], "bauto_n": -1, "bauto_t": 0.0}
+          "bsections": [], "bauto_n": -1, "bauto_t": 0.0,
+          "fx": {"on": False, "motion": False, "sky": None, "gauges": {}, "entry": [], "keep": [], "job": None,
+                 "t_bg": 0.0, "last": 0.0, "t0": aurora.clock()}}
     upd_q = queue.Queue()          # worker threads -> Tk (drained by upd_pump via root.after)
 
     def hwinfo_managed():
@@ -440,6 +443,174 @@ def main():
             text = text[:-1]
         return text + "…"
 
+    # ------------------------------------------------------------ Aurora effects (aurora.py)
+    def fx_begin(W, H):
+        """Start of a canvas build: the effect palette when the theme is an Aurora one (sky placed first, at the
+        bottom of the stacking order), else None."""
+        FX = st["fx"]
+        if FX.get("job"):
+            try:
+                root.after_cancel(FX["job"])
+            except tk.TclError:
+                pass
+        pal = aurora.fx() if (GFX and aurora.AVAILABLE) else None
+        FX.update(on=pal is not None, pal=pal, gauges={}, entry=[], keep=[], job=None, W=W, H=H, ring_row=None,
+                  t_bg=0.0, last=aurora.clock())
+        FX["motion"] = pal is not None and aurora.motion_on(cfg.get("motion"))
+        if not pal:
+            return None
+        if FX.get("sky") is None or FX["sky"].pal is not pal:
+            FX["sky"] = aurora.Sky(pal)
+        FX["photo"] = fx_sky_photo()
+        FX["bg"] = cv.create_image(0, 0, anchor="nw", image=FX["photo"])
+        return pal
+
+    def fx_sky_photo():
+        FX = st["fx"]
+        t_ = (aurora.clock() - FX["t0"]) if FX["motion"] else 40.0      # still picture: one pleasant moment
+        FX["t_bg"] = aurora.clock()
+        return aurora.sky_photo(FX["sky"], FX["W"], FX["H"], t_ + 40.0)
+
+    def fx_bar_box(bar_x0, bar_x1, my, rh):
+        """Whole-pixel geometry of a bar track: (x, y, length, height)."""
+        bh = int(round(max(4, rh * 0.22)))
+        return int(round(bar_x0)), int(round(my - bh / 2)), int(round(bar_x1 - bar_x0)), bh
+
+    def fx_section(sec, accent, cx0, cx1, yy, ch, hh, rp, R, inset, col_name, isz, hy, bar_x0, bar_x1, with_bar, rh,
+                   pal):
+        """Glass card + ring gauge of one section. Returns the x where the title starts."""
+        FX = st["fx"]
+        bx0, by0 = int(round(cx0)), int(round(yy))
+        w, h = int(round(cx1)) - bx0, int(round(yy + ch)) - by0
+        stripes, tracks = [], []
+        ry = yy + hh
+        for i, row in enumerate(sec.rows):
+            if i % 2:
+                stripes.append((ry - by0, ry + rp - by0, inset))
+            if row.bar and with_bar:
+                x, y, L, bh = fx_bar_box(bar_x0, bar_x1, ry + rp / 2, rh)
+                tracks.append((x - bx0, y - by0, x - bx0 + L, y - by0 + bh))
+            ry += rp
+        d = int(round(isz * 3.4))
+        rcx = col_name + isz * 1.7
+        img, gpad = aurora.glass_card(w, h, R, pal, accent, (int(rcx - bx0), int(hy - by0), int(d * 1.5)), stripes,
+                                      int(round(yy + hh - 1 - by0)), tracks)
+        FX["keep"].append(img)
+        cv.create_image(bx0 - gpad, by0 - gpad, image=img, anchor="nw")
+        FX["box"] = (bx0 - gpad - 1, by0 - gpad - 1, bx0 + w + gpad + 1, by0 + h + gpad + 1)
+        # the ring shows the first row with a scale (load before temperature: rows with a bar first)
+        scaled = [r for r in sec.rows if r.limits and not r.textual]
+        rrow = next((r for r in scaled if r.bar), scaled[0] if scaled else None)
+        key = ("ring", id(sec))
+        draw = (lambda q, col, d=d, a=accent, ic=sec.icon: aurora.ring(d, q, col, a, ic, pal))
+        photo = draw(0, accent)
+        item = cv.create_image(rcx, hy, image=photo)
+        FX["gauges"][key] = {"item": item, "cur": 0.0, "tgt": 0.0, "col": accent, "shown": (0, accent),
+                             "photo": photo, "q": aurora.ring_q, "draw": draw, "hold": 0.0}
+        FX["ring_row"], FX["ring_key"] = rrow, key
+        return col_name + isz * 4.1
+
+    def fx_bar(row, bar_x0, bar_x1, my, rh, accent, pal):
+        """Glowing value bar (an image over the track baked into the card). Returns (gauge key, item, bargeo)."""
+        FX = st["fx"]
+        x, y, L, bh = fx_bar_box(bar_x0, bar_x1, my, rh)
+        g = aurora.bar_pad(bh)
+        key = ("bar", id(row))
+        draw = (lambda q, col, L=L, bh=bh, a=accent: aurora.bar(L, bh, q, col, a, pal))
+        photo = draw(0, accent)
+        item = cv.create_image(x - g, y - g, image=photo, anchor="nw")
+        FX["gauges"][key] = {"item": item, "cur": 0.0, "tgt": 0.0, "col": accent, "shown": (0, accent),
+                             "photo": photo, "q": lambda f, L=L: int(round(f * L)), "draw": draw, "hold": 0.0}
+        return key, item, (x, x + L, y, y + bh)
+
+    def fx_end(boxes, rh):
+        """End of a build: cards rise into place one after another (motion on), then the effect loop runs."""
+        FX = st["fx"]
+        now = aurora.clock()
+        if FX["motion"]:
+            dy = int(max(18, rh * 1.6))
+            for i, box in enumerate(boxes):
+                tag = "fxsec%d" % i
+                cv.addtag_enclosed(tag, *box)
+                t0 = now + 0.08 + 0.075 * i
+                cv.move(tag, 0, dy)
+                cv.itemconfig(tag, state="hidden")
+                FX["entry"].append({"tag": tag, "t0": t0, "dur": 0.85, "dy": dy, "applied": dy, "hidden": True})
+                for iid in cv.find_withtag(tag):               # a gauge draws itself once its card is there
+                    for g in FX["gauges"].values():
+                        if g["item"] == iid:
+                            g["hold"] = t0 + 0.12
+        fx_kick()
+
+    def fx_target(key, frac, col):
+        """New value for a ring / bar gauge (0..1); the effect loop glides it there."""
+        g = st["fx"]["gauges"].get(key)
+        if g is None:
+            return
+        g["tgt"], g["col"] = min(1.0, max(0.0, frac or 0.0)), col
+
+    def fx_kick(delay=15):
+        FX = st["fx"]
+        if not FX["on"] or st["closing"]:
+            return
+        if FX.get("job"):
+            try:
+                root.after_cancel(FX["job"])
+            except tk.TclError:
+                pass
+        FX["job"] = root.after(delay, fx_step)
+
+    def fx_step():
+        """One frame of the Aurora motion: card entry (spring), gauge glides, the slow sky. Runs at ~30 fps only while
+        something moves, else at the sky's few frames per second (or not at all: still picture, minimised, tray)."""
+        FX = st["fx"]
+        FX["job"] = None
+        if st["closing"] or not FX["on"]:
+            return
+        now = aurora.clock()
+        dt = min(0.2, now - FX["last"])
+        FX["last"] = now
+        paused = bool(st.get("mini") or st.get("hidden"))
+        busy = False
+        try:
+            for e in list(FX["entry"]):
+                x = (now - e["t0"]) / e["dur"]
+                if x < 0:
+                    busy = True
+                    continue
+                if e["hidden"]:
+                    cv.itemconfig(e["tag"], state="normal")
+                    e["hidden"] = False
+                off = int(round(e["dy"] * (1 - aurora.spring(x))))
+                if off != e["applied"]:
+                    cv.move(e["tag"], 0, off - e["applied"])
+                    e["applied"] = off
+                if x >= 1 and off == 0:
+                    FX["entry"].remove(e)
+                else:
+                    busy = True
+            for g in FX["gauges"].values():
+                if now < g["hold"]:
+                    busy = busy or g["tgt"] != g["cur"]
+                    continue
+                g["cur"] = aurora.approach(g["cur"], g["tgt"], dt) if FX["motion"] else g["tgt"]
+                if g["cur"] != g["tgt"]:
+                    busy = True
+                shown = (g["q"](g["cur"]), g["col"])
+                if shown != g["shown"] and not paused:
+                    g["shown"] = shown
+                    g["photo"] = g["draw"](*shown)
+                    cv.itemconfig(g["item"], image=g["photo"])
+            if FX["motion"] and not paused and now - FX["t_bg"] >= 1.0 / aurora.Sky.FPS:
+                FX["photo"] = fx_sky_photo()
+                cv.itemconfig(FX["bg"], image=FX["photo"])
+        except tk.TclError:
+            return
+        if busy and not paused:
+            FX["job"] = root.after(33, fx_step)
+        elif FX["motion"] and not paused:
+            FX["job"] = root.after(max(15, int((FX["t_bg"] + 1.0 / aurora.Sky.FPS - aurora.clock()) * 1000)), fx_step)
+
     def build(W, H):
         cv.delete("all")
         if GFX:
@@ -453,6 +624,9 @@ def main():
         HEAD, FOOT, STATUS = layout.HEAD, layout.FOOT, layout.STATUS    # in row heights
         sty = themes.current()
         R, sp = sty.radius, sty.spacing                  # card corner radius, row pitch factor
+        pal = fx_begin(W, H)                              # Aurora: sky + glass + glowing gauges (None otherwise)
+        FX = st["fx"]
+        sec_boxes = []
         p = layout.plan(sections, W, H, cfg["columns"], 100, sp)
         rh, m, g = p.rh, p.m, p.g
         rp = rh * sp                                      # row pitch (rows keep the font size of rh)
@@ -518,7 +692,11 @@ def main():
                 ch = hh + len(sec.rows) * rp + pb
                 hy = yy + hh * 0.5
                 bubble = mix(C["card"], accent, 0.16)
-                if GFX:
+                if pal:
+                    title_x = fx_section(sec, accent, cx0, cx1, yy, ch, hh, rp, R, inset, col_name, isz, hy,
+                                         bar_x0, bar_x1, p.with_bar, rh, pal)
+                    sec_boxes.append(FX["box"])
+                elif GFX:
                     bx0, by0 = int(round(cx0)), int(round(yy))
                     cv.create_image(bx0, by0, image=gfx.card(int(round(cx1)) - bx0, int(round(yy + ch)) - by0, R,
                                                              C["card"], C["border"], accent), anchor="nw")
@@ -529,7 +707,8 @@ def main():
                     cv.create_oval(col_name, hy - isz * 1.6, col_name + isz * 3.2, hy + isz * 1.6, fill=bubble,
                                    outline="")
                     draw_icon(cv, sec.icon, col_name + isz * 1.6, hy, isz, accent, bubble)
-                title_x = col_name + isz * 3.9
+                if not pal:
+                    title_x = col_name + isz * 3.9
                 title_avail = (col_now + 6 + unit_w - lbl_now_w) - title_x - 10
                 hs = -fs_head
                 f_title = meas_font(F_HEAD, -hs, "bold")
@@ -544,10 +723,11 @@ def main():
                 for hk, lbl, xx in heads:
                     cv.create_text(xx, hy, text=lbl, anchor="e", font=f_col, fill=mix(C["dim"], accent, 0.45),
                                    tags=("hdr_" + hk,))
-                cv.create_line(cx0 + pad * 0.6, yy + hh - 1, cx1 - pad * 0.6, yy + hh - 1, fill=C["border"])
+                if not pal:                                  # (Aurora: header line, stripes and tracks are in the glass)
+                    cv.create_line(cx0 + pad * 0.6, yy + hh - 1, cx1 - pad * 0.6, yy + hh - 1, fill=C["border"])
                 ry = yy + hh
                 for i, row in enumerate(sec.rows):
-                    if i % 2:
+                    if i % 2 and not pal:
                         cv.create_rectangle(cx0 + inset, ry, cx1 - inset, ry + rp, fill=C["stripe"], outline="")
                     my = ry + rp / 2
                     hint_row = basic and row.rid == "hint_cpu_temp"      # "CPU temperature needs HWiNFO": no value, so the name may use the whole row
@@ -565,7 +745,11 @@ def main():
                         cv.tag_bind(nm_id, "<Enter>", lambda e: cv.config(cursor="hand2"), add="+")
                         cv.tag_bind(nm_id, "<Leave>", lambda e: cv.config(cursor=""), add="+")
                     it = {"accent": accent}
-                    if row.bar and p.with_bar:
+                    if row is FX.get("ring_row"):
+                        it["ring"] = FX["ring_key"]
+                    if row.bar and p.with_bar and pal:
+                        it["gauge"], it["bar"], it["bargeo"] = fx_bar(row, bar_x0, bar_x1, my, rh, accent, pal)
+                    elif row.bar and p.with_bar:
                         bh = max(4, rh * 0.22)
                         round_rect(cv, bar_x0, my - bh / 2, bar_x1, my + bh / 2, bh / 2, fill=C["track"], outline="")
                         it["bar"] = cv.create_rectangle(bar_x0, my - bh / 2, bar_x0, my + bh / 2, fill=accent,
@@ -596,7 +780,13 @@ def main():
         s = st["status"]
         s.clear()
         s["gfx"] = GFX
-        if GFX:
+        hx = aurora.hexa
+        if pal:
+            bx0, by0 = int(round(sx0)), int(round(sy))
+            img, gpad = aurora.glass_card(int(round(sx1)) - bx0, int(round(sy + sb_h)) - by0, R, pal)
+            FX["keep"].append(img)
+            cv.create_image(bx0 - gpad, by0 - gpad, image=img, anchor="nw")
+        elif GFX:
             bx0, by0 = int(round(sx0)), int(round(sy))
             cv.create_image(bx0, by0, image=gfx.card(int(round(sx1)) - bx0, int(round(sy + sb_h)) - by0, R,
                                                      C["card"], C["border"]), anchor="nw")
@@ -612,7 +802,8 @@ def main():
         if basic:
             pw = -6.0                                # nothing drawn; the mode chip may start at the bar's left edge
         elif GFX:
-            s["pill_fn"] = lambda on: gfx.pill(pw, ph, mix(C["card"], C["green"] if on else C["red"], 0.18),
+            s["pill_fn"] = lambda on: gfx.pill(pw, ph, hx(C["green"] if on else C["red"], 0x2c) if pal else
+                                               mix(C["card"], C["green"] if on else C["red"], 0.18),
                                                C["green"] if on else C["red"], 6 + rs * 0.38, rs * 0.18)
             s["pill"] = cv.create_image(int(round(px0)), int(round(my - ph / 2)), image=s["pill_fn"](cfg["logging"]),
                                         anchor="nw", tags="logbtn")
@@ -664,8 +855,8 @@ def main():
             if GFX:                                  # whole pixels: the track image and the knob stay aligned
                 tx0, sw_w, sw_h = float(round(tx0)), float(round(sw_w)), float(2 * round(sw_h / 2))
                 kmy = round(my - sw_h / 2) + sw_h / 2
-                s["track_fn"] = lambda all_: gfx.track(sw_w, sw_h, mix(C["track"], C["ui"], 0.55) if all_ else C["track"],
-                                                       C["border"])
+                s["track_fn"] = (lambda all_: gfx.track(sw_w, sw_h, hx(C["ui"], 0x80) if all_ else hx(C["fg"], 0x16),
+                                                        hx(C["fg"], 0x34))) if pal else                     (lambda all_: gfx.track(sw_w, sw_h, mix(C["track"], C["ui"], 0.55) if all_ else C["track"], C["border"]))
                 s["sw_track"] = cv.create_image(tx0, round(my - sw_h / 2), image=s["track_fn"](cfg.get("log_all", False)),
                                                 anchor="nw", tags="modebtn")
             else:
@@ -691,7 +882,8 @@ def main():
         acc_chip = themes.accent("gauge")
         if GFX:
             cv.create_image(int(round(chx0)), int(round(chy0)),
-                            image=gfx.card(int(round(sum(seg_w))), int(round(ch_h)), ch_h / 2, C["track"], C["border"]),
+                            image=gfx.card(int(round(sum(seg_w))), int(round(ch_h)), ch_h / 2,
+                                           *((hx(C["fg"], 0x10), hx(C["fg"], 0x2a)) if pal else (C["track"], C["border"]))),
                             anchor="nw", tags="uimodebtn")
         else:
             round_rect(cv, chx0, chy0, chx0 + sum(seg_w), chy0 + ch_h, ch_h / 2, fill=C["track"], outline=C["border"],
@@ -701,7 +893,8 @@ def main():
             on = i == mode_cur
             if on:
                 ix0, iy0, iw, ih = int(round(xx + 2)), int(round(chy0 + 2)), int(round(w_ - 4)), int(round(ch_h - 4))
-                fill_, line_ = mix(C["card"], acc_chip, 0.30), mix(C["card"], acc_chip, 0.75)
+                fill_, line_ = ((hx(acc_chip, 0x4c), hx(acc_chip, 0xb0)) if pal else
+                                (mix(C["card"], acc_chip, 0.30), mix(C["card"], acc_chip, 0.75)))
                 if GFX:
                     cv.create_image(ix0, iy0, image=gfx.card(iw, ih, ih / 2, fill_, line_), anchor="nw",
                                     tags="uimodebtn")
@@ -711,14 +904,15 @@ def main():
                            fill=C["fg"] if on else C["faint"], tags="uimodebtn")
             xx += w_
         # right end: [interval label] [spinbox] [chart] [reset button] [gear button]
+        btn_rest = "#00000000" if pal else C["card"]           # Aurora: the button disc is clear glass until hovered
         if GFX:
-            s["gear_bg"] = cv.create_image(gx, my, image=gfx.button("gear", hit, gs, C["dim"], C["card"]),
+            s["gear_bg"] = cv.create_image(gx, my, image=gfx.button("gear", hit, gs, C["dim"], btn_rest),
                                            tags="gearbtn")
             if not basic:
-                s["reset_bg"] = cv.create_image(rx, my, image=gfx.button("reset", hit, gs, C["dim"], C["card"]),
+                s["reset_bg"] = cv.create_image(rx, my, image=gfx.button("reset", hit, gs, C["dim"], btn_rest),
                                                 tags="resetbtn")
             if not basic:
-                s["view_bg"] = cv.create_image(vx, my, image=gfx.button("chart", hit, gs, C["dim"], C["card"]),
+                s["view_bg"] = cv.create_image(vx, my, image=gfx.button("chart", hit, gs, C["dim"], btn_rest),
                                                tags="viewbtn")
         else:
             s["gear_bg"] = cv.create_oval(gx - hit, my - hit, gx + hit, my + hit, fill=C["card"], outline="",
@@ -751,7 +945,7 @@ def main():
         acc = themes.accent("gauge")
 
         def gear_hover(on):
-            bgc = mix(C["card"], acc, 0.16) if on else C["card"]
+            bgc = (hx(acc, 0x30) if on else btn_rest) if pal else (mix(C["card"], acc, 0.16) if on else C["card"])
             if GFX:
                 cv.itemconfig(s["gear_bg"], image=gfx.button("gear", hit, gs, acc if on else C["dim"], bgc))
                 return
@@ -760,14 +954,14 @@ def main():
             cv.itemconfig(s["gear_bg"], fill=bgc)
 
         def reset_hover(on):
-            bgc = mix(C["card"], acc, 0.16) if on else C["card"]
+            bgc = (hx(acc, 0x30) if on else btn_rest) if pal else (mix(C["card"], acc, 0.16) if on else C["card"])
             if GFX:
                 cv.itemconfig(s["reset_bg"], image=gfx.button("reset", hit, gs, acc if on else C["dim"], bgc))
                 return
             cv.itemconfig("reset_fill", fill=acc if on else C["dim"], outline=acc if on else C["dim"])
             cv.itemconfig(s["reset_bg"], fill=bgc)
         def view_hover(on):
-            bgc = mix(C["card"], acc, 0.16) if on else C["card"]
+            bgc = (hx(acc, 0x30) if on else btn_rest) if pal else (mix(C["card"], acc, 0.16) if on else C["card"])
             if GFX:
                 cv.itemconfig(s["view_bg"], image=gfx.button("chart", hit, gs, acc if on else C["dim"], bgc))
                 return
@@ -786,6 +980,8 @@ def main():
                          ("resetbtn", "resetbtn"), ("viewbtn", "viewbtn"), ("gearbtn", "gearbtn"), ("intlbl", "interval_lbl"),
                          ("uimodebtn", "uimodebtn")):
             help_tip(tag, key)
+        if pal:
+            fx_end(sec_boxes, rh)
         refresh_status()
 
     def help_tip(tag, key):
@@ -917,6 +1113,8 @@ def main():
             w = int(tw + th)
             x0, y0 = int(round(cx - w / 2)), int(round(y - ph))
             fill, line = mix(C["card"], col, 0.22), mix(C["card"], col, 0.6)
+            if st["fx"]["on"]:                  # Aurora: frosted toast (nearly opaque: it must stay readable)
+                fill, line = aurora.hexa(fill, 0xe8), aurora.hexa(line, 0xc0)
             tags = ("toast", "updbtn") if kind == "upd" else ("toast", "hwrestart") if kind == "hwbtn" else ("toast",)
             if GFX:
                 cv.create_image(x0, y0, image=gfx.card(w, int(ph), th / 2, fill, line), anchor="nw", tags=tags)
@@ -1269,6 +1467,8 @@ def main():
         if THEME_KEYS & set(real):
             apply_theme()
             need_build = True
+        if "motion" in real:
+            need_build = True
         if "topmost" in real:
             root.attributes("-topmost", bool(cfg["topmost"]))
         if "minimode" in real:
@@ -1570,10 +1770,14 @@ def main():
                 set_text(it["now"], "–", C["dim"])
                 if "status" in it:
                     set_text(it["status"], "", C["dim"])
-                if "bar" in it:
+                if "gauge" in it:
+                    fx_target(it["gauge"], 0.0, it["accent"])
+                elif "bar" in it:
                     x0, x1, y0, y1 = it["bargeo"]
                     st["last"].pop(it["bar"], None)
                     cv.coords(it["bar"], x0, y0, x0, y1)
+                if "ring" in it:
+                    fx_target(it["ring"], 0.0, it["accent"])
                 continue
             if r:
                 v = r["value"]
@@ -1598,10 +1802,14 @@ def main():
                         set_text(it[k], "")                  # a state / reason code: no min / max / average
                         continue
                     set_text(it[k], row.fmt_value(val), mix(layout.value_color(row, val, C["fg"]), C["card"], 0.18))
-                if "bar" in it:
+                bcol = it["accent"] if basic and row.status != "temp" else col        # Basic: calm accent bars
+                if "ring" in it:
+                    fx_target(it["ring"], layout.frac(row, v), bcol)
+                if "gauge" in it:                                    # Aurora: glowing bar, glides (effect loop)
+                    fx_target(it["gauge"], layout.frac(row, v), bcol)
+                elif "bar" in it:
                     x0, x1, y0, y1 = it["bargeo"]
                     bx = int(round(x0 + (x1 - x0) * layout.frac(row, v)))
-                    bcol = it["accent"] if basic and row.status != "temp" else col    # Basic: calm accent bars
                     if st["last"].get(it["bar"]) != (bx, bcol):      # skip the redraw of an unchanged bar
                         st["last"][it["bar"]] = (bx, bcol)
                         cv.coords(it["bar"], x0, y0, bx, y1)
@@ -1621,9 +1829,25 @@ def main():
             except Exception:
                 st["log_err"] = time.time()
         refresh_status()
+        fx_tick(now)
         # HWiNFO: cheap (unchanged polls are skipped) -> 2 Hz; the other sources re-sample each tick -> 1 Hz
         slow = (mini and not cfg["logging"] and not mm.visible) or (src.active != "hwinfo" and not (cfg["logging"] and cfg["interval"] < 1))
         root.after(1000 if slow else 500, tick)
+
+    def fx_tick(now):
+        """Per data tick: wake the effect loop (new gauge values, back from the tray), and let the automatic Aurora
+        theme follow a day / night switch of the Windows app mode (checked every 20 s)."""
+        name = str(cfg.get("theme") or "").strip().lower()
+        if name in themes.AUTO and now - st.get("fx_mode_t", 0) > 20:
+            st["fx_mode_t"] = now
+            if themes.resolve(name) != themes.current().variant:
+                apply_theme()
+                mm.reconfigure()
+                if st["size"]:
+                    build(*st["size"])
+                return
+        if st["fx"]["on"]:
+            fx_kick()
 
     # ------------------------------------------------------------ alerts (alerts.py)
     def alert_text(rule, v, row=None):
