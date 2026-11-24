@@ -125,6 +125,7 @@ def repair_csv_tails(folder, newest=5):
 C = themes.palette()
 mix = themes.mix
 FXPROF = os.environ.get("METRIQ_FXPROF")
+FXBENCH = os.environ.get("METRIQ_FXBENCH")       # tools/bench_fx.py --hover: sweep the row hover over every row
 THEME_KEYS = {"theme", "theme_overrides", "value_color_mode", "value_steps", "motion"}
 
 
@@ -357,8 +358,9 @@ def main():
           "upd": None, "upd_busy": False, "upd_prog": 0, "upd_err": 0, "upd_gen": 0, "upd_after": None,
           "closing": False, "t0": time.time(), "upd_dismissed": None, "tips": {},
           "bsections": [], "bauto_n": -1, "bauto_t": 0.0,
-          "fx": {"on": False, "motion": False, "sky": None, "gauges": {}, "entry": [], "keep": [], "job": None,
-                 "t_bg": 0.0, "last": 0.0, "t0": aurora.clock()}}
+          "fx": {"on": False, "pal": None, "motion": False, "sky": None, "gauges": {}, "entry": [], "keep": [],
+                 "anims": {}, "job": None, "t_bg": 0.0, "last": 0.0, "t0": aurora.clock()},
+          "entry_next": True, "hovers": []}
     upd_q = queue.Queue()          # worker threads -> Tk (drained by upd_pump via root.after)
 
     def hwinfo_managed():
@@ -454,41 +456,191 @@ def main():
             text = text[:-1]
         return text + "…"
 
-    # ------------------------------------------------------------ hover: clickable row names swell a little
-    def hover_grow(nm_id, icon, fs, accent):
-        """Name of a row that opens the process window: on hover it grows (eased, ~150 ms) and lights up, the (i)
-        icon moves along so it stays right behind the name."""
+    # ------------------------------------------------------------ one animation loop for everything that moves
+    # Every animation (hover swell, number count, bar glide, row entry, mode chip, Aurora gauges) is a step of
+    # fx_step, the single root.after loop: it runs at ~60 fps only while something moves and stops when all is still.
+    # Steps only reconfigure their own canvas items, so Tk repaints just those regions over the baked background.
+    NUM_S = 0.35                                    # number count-up / count-down length (seconds)
+    FONTS = {}                                      # (family, px) -> tkfont.Font (px_font)
+
+    def anim_wake():
+        FX = st["fx"]
+        if FX["on"] and not st["closing"] and not FX.get("job"):
+            FX["job"] = root.after(1, fx_step)
+
+    def anim_set(key, fn):
+        """fn(now, dt) -> still moving? is called once per frame until it returns False (same key: replaced)."""
+        st["fx"]["anims"][key] = fn
+        anim_wake()
+
+    def px_font(family, px):
+        """A named Tk font of `px` pixels, kept alive: a hover step only switches between ready fonts (no font is
+        created or freed per frame)."""
+        key = (family, px)
+        f = FONTS.get(key)
+        if f is None:
+            f = FONTS[key] = tkfont.Font(root=root, family=family, size=-px)
+        return f
+
+    def ease_out(x):
+        return 1 - (1 - x) ** 3
+
+    # ------------------------------------------------------------ hover: row names with a balloon swell a little
+    def hover_grow(nm_id, fs, accent, avail, num=None, num_fs=None):
+        """Name of a row with a hover balloon (top programs, plain-language help): on hover it grows (eased, ~150 ms)
+        and lights up, the row's number swells a little with it. Never wider than `avail` px (the bar column)."""
         size0 = -fs                                     # (font sizes are negative = pixels)
         size1 = size0 + max(2, int(round(size0 * 0.16)))
+        try:
+            w0 = meas_font(F_TXT, fs).measure(cv.itemcget(nm_id, "text"))
+        except tk.TclError:
+            w0 = 0
+        if w0 > 0 and avail > 0:
+            size1 = max(size0, min(size1, int(size0 * avail / w0)))
+        n0 = -num_fs if num is not None and num_fs else 0
+        n1 = n0 + max(1, int(round(n0 * 0.10))) if n0 else 0
         fill0, fill1 = C["name"], mix(C["fg"], accent, 0.35)
-        a = {"v": 0.0, "to": 0.0, "job": None, "size": size0}
+        a = {"v": 0.0, "to": 0.0, "size": size0, "nsize": n0}
 
-        def step():
-            a["job"] = None
-            try:
+        def step(now, dt):
+            FX = st["fx"]
+            if FX["motion"]:
                 d = a["to"] - a["v"]
-                a["v"] = a["to"] if abs(d) < 0.07 else a["v"] + d * 0.38
-                e = a["v"]
-                size = int(round(size0 + (size1 - size0) * e))
-                x1_old = cv.bbox(nm_id)[2]
-                if size != a["size"]:
-                    a["size"] = size
-                    cv.itemconfig(nm_id, font=(F_TXT, -size))
-                cv.itemconfig(nm_id, fill=mix(fill0, fill1, e))
-                if icon is not None:
-                    cv.move(icon, cv.bbox(nm_id)[2] - x1_old, 0)
-            except (tk.TclError, TypeError):
-                return
-            if a["v"] != a["to"]:
-                a["job"] = root.after(16, step)
+                a["v"] = a["to"] if abs(d) < 0.02 else a["v"] + d * (1 - math.exp(-dt / 0.045))
+            else:
+                a["v"] = a["to"]
+            e = a["v"]
+            size = int(round(size0 + (size1 - size0) * e))
+            if size != a["size"]:
+                a["size"] = size
+                cv.itemconfig(nm_id, font=px_font(F_TXT, size))
+            cv.itemconfig(nm_id, fill=mix(fill0, fill1, e))
+            if n0:
+                ns = int(round(n0 + (n1 - n0) * e))
+                if ns != a["nsize"]:
+                    a["nsize"] = ns
+                    cv.itemconfig(num, font=px_font(F_NUM, ns))
+            return a["v"] != a["to"]
 
         def go(to):
             a["to"] = to
-            if a["job"] is None:
-                a["job"] = root.after(0, step)
-        for it_ in (nm_id, icon) if icon is not None else (nm_id,):
-            cv.tag_bind(it_, "<Enter>", lambda e: go(1.0), add="+")
-            cv.tag_bind(it_, "<Leave>", lambda e: go(0.0), add="+")
+            anim_set(("hover", nm_id), step)
+        cv.tag_bind(nm_id, "<Enter>", lambda e: go(1.0), add="+")
+        cv.tag_bind(nm_id, "<Leave>", lambda e: go(0.0), add="+")
+        go.item = nm_id
+        st["hovers"].append(go)
+        return go
+
+    def tween_num(it, row, v, fmt, col):
+        """Show a new value: the number counts from what is on screen to it (~0.35 s, eased) in the animation loop.
+        Set at once: textual / special rows, the first value, motion off, and small steps (a count would show fewer
+        than four different numbers: 45 -> 46 °C just changes, 3 -> 48 % counts)."""
+        key = ("num", it["now"])
+        old = it.get("v_shown")
+        FX = st["fx"]
+        if (old is None or old == v or not FX["motion"] or not FX["on"] or row.textual or row.special
+                or len({fmt(old + (v - old) * k / 3) for k in range(4)}) < 4):
+            FX["anims"].pop(key, None)
+            it["v_shown"] = v
+            set_text(it["now"], fmt(v), col)
+            return
+        t0, v0 = aurora.clock(), old
+
+        def step(now, dt):
+            x = min(1.0, (now - t0) / NUM_S)
+            if x < 1.0 and FX["frame"] % 2:
+                return True                      # digits change at half rate (~30 Hz): the eye sees no difference
+            val = v if x >= 1.0 else v0 + (v - v0) * ease_out(x)
+            it["v_shown"] = val
+            set_text(it["now"], fmt(val), col)
+            return x < 1.0
+        anim_set(key, step)
+
+    def bar_glide(it, frac, col):
+        """Plain (non-Aurora) value bar: glides to its new length in the animation loop (motion on)."""
+        x0, x1, y0, y1 = it["bargeo"]
+        tgt = x0 + (x1 - x0) * min(1.0, max(0.0, frac or 0.0))
+        if it.get("bar_tgt") == (tgt, col):
+            return
+        it["bar_tgt"] = (tgt, col)
+        cv.itemconfig(it["bar"], fill=col)
+        FX = st["fx"]
+        if not FX["motion"] or not FX["on"] or "bar_x" not in it:
+            it["bar_x"] = tgt
+            FX["anims"].pop(("bar", it["bar"]), None)
+            cv.coords(it["bar"], x0, y0, int(round(tgt)), y1)
+            return
+
+        def step(now, dt):
+            cur = it["bar_x"]
+            d = tgt - cur
+            cur = tgt if abs(d) < 0.6 else cur + d * (1 - math.exp(-dt / 0.14))
+            it["bar_x"] = cur
+            px = int(round(cur))
+            if px != it.get("bar_px"):
+                it["bar_px"] = px
+                cv.coords(it["bar"], x0, y0, px, y1)
+            return cur != tgt
+        anim_set(("bar", it["bar"]), step)
+
+    def bench_hover():
+        """METRIQ_FXBENCH (tools/bench_fx.py): sweep the hover swell over the rows to measure its frame cost."""
+        if st["closing"]:
+            return
+        hv = st["hovers"]
+        if hv:
+            n = st.get("bench_i", 0) % len(hv)
+            st["bench_i"] = n + 1
+            hv[n](1.0)
+            root.after(260, lambda g=hv[n]: g(0.0))
+        root.after(300, bench_hover)
+
+    def ui_check(out_path):
+        """METRIQ_UICHECK=<file> (tools/check_hover_anim.py): drive the real panel once and write what happened as
+        JSON: (i) icons left, rows with a hover swell, does a hovered name grow and shrink back, does the entry finish,
+        does the mode chip switch the view. Then the program ends."""
+        import json
+        res = {"mode0": cfg["ui_mode"]}
+
+        def snap(key):
+            res[key] = {"rows": len(st["items"]), "uinfo": len(cv.find_withtag("uinfo")),
+                        "hovers": len(st["hovers"]), "entry_left": len(st["fx"]["entry"]),
+                        "hidden": sum(1 for i in cv.find_all() if cv.itemcget(i, "state") == "hidden"),
+                        "anims": len(st["fx"]["anims"]), "names": sum(1 for r in layout.all_rows(view_sections()))}
+
+        def width(i):
+            b = cv.bbox(i)
+            return (b[2] - b[0]) if b else 0
+
+        def s1():
+            snap("start")
+            hv = st["hovers"]
+            if hv:
+                res["w0"] = width(hv[0].item)
+                hv[0](1.0)
+            root.after(450, s2)
+
+        def s2():
+            hv = st["hovers"]
+            if hv:
+                res["w1"] = width(hv[0].item)
+                hv[0](0.0)
+            root.after(450, s3)
+
+        def s3():
+            hv = st["hovers"]
+            if hv:
+                res["w2"] = width(hv[0].item)
+            toggle_ui_mode()
+            root.after(1800, s4)
+
+        def s4():
+            res["mode1"] = cfg["ui_mode"]
+            snap("after_toggle")
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(res, f)
+            full_exit()
+        root.after(3500, s1)
 
     # ------------------------------------------------------------ Aurora effects (aurora.py)
     def fx_begin(W, H):
@@ -501,9 +653,12 @@ def main():
             except tk.TclError:
                 pass
         pal = aurora.fx() if (GFX and aurora.AVAILABLE) else None
-        FX.update(on=pal is not None, pal=pal, gauges={}, entry=[], keep=[], cards=[], job=None, W=W, H=H,
+        # the loop serves every theme (hover, numbers, bars, entry); gauges / sky / glass only with Aurora (pal)
+        FX.update(on=True, pal=pal, gauges={}, entry=[], keep=[], cards=[], anims={}, job=None, W=W, H=H,
                   ring_row=None, t_bg=0.0, last=aurora.clock(), frame=0)
-        FX["motion"] = pal is not None and aurora.motion_on(cfg.get("motion"))
+        FX["motion"] = aurora.motion_on(cfg.get("motion"))
+        st["hovers"] = []
+        st["mode_sliding"] = False
         if not pal:
             return None
         if FX.get("sky") is None or FX["sky"].pal is not pal:
@@ -619,6 +774,7 @@ def main():
         P.setdefault("dn", []).append(t0 - P.get("prev_t0", t0))
         P["prev_t0"] = t0
         P["max"] = max(P["max"], t2 - t0)
+        P.setdefault("cost", []).append(t2 - t0)
         P["last"] = t2
         if t2 - P["t"] >= 3.0:
             n = P["n"]
@@ -631,7 +787,11 @@ def main():
                 P["dn"] = []
                 L_ = sorted(P["late"])
                 f.write("   late median %.1f ms  p90 %.1f ms\n" % (L_[len(L_) // 2] * 1000, L_[int(len(L_) * 0.9)] * 1000))
+                c_ = sorted(P["cost"])
+                f.write("   frame cost p50 %.1f ms  p95 %.1f ms\n" % (c_[len(c_) // 2] * 1000,
+                                                                   c_[int(len(c_) * 0.95)] * 1000))
             P["late"] = []
+            P["cost"] = []
             P.update(n=0, step=0.0, paint=0.0, gap=0.0, t=t2, max=0.0)
 
     def fx_hires(on):
@@ -648,8 +808,9 @@ def main():
             pass
 
     def fx_step():
-        """One frame of the Aurora motion: card entry (spring), gauge glides, the slow sky. Runs at ~30 fps only while
-        something moves, else at the sky's few frames per second (or not at all: still picture, minimised, tray)."""
+        """One frame of the animation loop: row entry (spring), Aurora gauge glides, and every step registered with
+        anim_set (hover swell, number counts, plain bars, mode chip). Runs at ~60 fps only while something moves,
+        not at all otherwise (still picture, minimised, tray)."""
         FX = st["fx"]
         FX["job"] = None
         if st["closing"] or not FX["on"]:
@@ -696,6 +857,17 @@ def main():
                     g["shown"] = shown
                     g["photo"] = g["draw"](*shown)
                     cv.itemconfig(g["item"], image=g["photo"])
+            if not paused:
+                anims = FX["anims"]
+                for k, fn in list(anims.items()):
+                    try:
+                        more = fn(now, dt)
+                    except (tk.TclError, TypeError, ValueError):
+                        more = False                     # its items are gone (canvas rebuilt)
+                    if more:
+                        busy = True
+                    elif anims.get(k) is fn:
+                        del anims[k]
             FX["frame"] += 1
         except tk.TclError:
             return
@@ -723,6 +895,11 @@ def main():
         pal = fx_begin(W, H)                              # Aurora: sky + glass + glowing gauges (None otherwise)
         FX = st["fx"]
         sec_boxes = []
+        # entry (start, view / theme / language change; not a resize): titles and rows come in one after another
+        entry = bool(sections) and FX["motion"] and st["entry_next"]
+        if sections:
+            st["entry_next"] = False
+        entry_tags, ent_k, ent_n = [], 0, 0             # (tag, column, order in its column)
         p = layout.plan(sections, W, H, cfg["columns"], 100, sp)
         rh, m, g = p.rh, p.m, p.g
         rp = rh * sp                                      # row pitch (rows keep the font size of rh)
@@ -781,6 +958,7 @@ def main():
             col_min, col_max = (cx0 + cw * fr["mn"], cx0 + cw * fr["mx"]) if not basic else (0, 0)
             stat_w = col_avg - (col_now + 6 + unit_w) - 8   # room for the status word (Basic)
             yy = m
+            ent_n = 0
             rp, gc = p.pitch[ci], p.gaps[ci]
             for sec in col_secs:
                 accent = themes.accent_for(sec.icon, sec.color)
@@ -811,14 +989,18 @@ def main():
                 if f_title.measure(sec.title) > title_avail > 0:
                     hs = max(10, int(hs * max(0.7, title_avail / f_title.measure(sec.title))))
                     f_title = meas_font(F_HEAD, -hs, "bold")
+                ent_k += 1
+                ent_tag = "ent%d" % ent_k
+                entry_tags.append((ent_tag, ci, ent_n))
+                ent_n += 1
                 cv.create_text(title_x, hy, text=fit_text(f_title, sec.title, title_avail), anchor="w",
-                               font=(F_HEAD, -hs, "bold"), fill=C["fg"])
+                               font=(F_HEAD, -hs, "bold"), fill=C["fg"], tags=(ent_tag,))
                 heads = ((("now", t("col_now"), col_now + 6 + unit_w), ("status", t("col_status"), col_avg)) if basic else
                          (("now", t("col_now"), col_now + 6 + unit_w), ("min", t("col_min"), col_min),
                           ("max", t("col_max"), col_max), ("avg", t("col_avg"), col_avg)))
                 for hk, lbl, xx in heads:
                     cv.create_text(xx, hy, text=lbl, anchor="e", font=f_col, fill=mix(C["dim"], accent, 0.45),
-                                   tags=("hdr_" + hk,))
+                                   tags=("hdr_" + hk, ent_tag))
                 if not pal:                                  # (Aurora: header line, stripes and tracks are in the glass)
                     cv.create_line(cx0 + pad * 0.6, yy + hh - 1, cx1 - pad * 0.6, yy + hh - 1, fill=C["border"])
                 ry = yy + hh
@@ -826,19 +1008,22 @@ def main():
                     if i % 2 and not pal:
                         cv.create_rectangle(cx0 + inset, ry, cx1 - inset, ry + rp, fill=C["stripe"], outline="")
                     my = ry + rp / 2
+                    ent_k += 1
+                    ent_tag = "ent%d" % ent_k
+                    entry_tags.append((ent_tag, ci, ent_n))
+                    ent_n += 1
                     hint_row = basic and row.rid == "hint_cpu_temp"      # "CPU temperature needs HWiNFO": no value, so the name may use the whole row
                     nm_right = (fr["now"] * cw - nw - 10 if not p.with_bar else fr["now"] * cw - 10) if hint_row else name_right
-                    nm_id = cv.create_text(col_name, my, text=fit_text(fnt_name, row.name, name_avail + nm_right - name_right - (26 if hint_row else 0)),
-                                           anchor="w", font=f_name, fill=C["name"])
-                    tagged = procs.tag_row(cv, nm_id, row, cx0 + nm_right, info=not basic)   # CPU / RAM / GPU / VRAM / disk rows open the process window (+ (i) balloon)
-                    if tagged:                                      # rows with a hover balloon: the name swells
-                        hover_grow(nm_id, tagged[1], fs_name, accent)
-                    if row.help:                                        # e.g. throttling: what it is, which source it needs
-                        Tooltip.for_canvas(cv, nm_id, lambda k=row.help: t("hp_" + k))
-                        if basic:       # Basic: every row has the same (i); the hint row's one also opens the HWiNFO setting
-                            procs.help_icon(cv, nm_id, lambda k=row.help: t("hp_" + k), cx0 + nm_right,
-                                            show_hw_setting if row.rid == "hint_cpu_temp" else None)
-                    if basic and row.rid == "hint_cpu_temp":
+                    nm_id = cv.create_text(col_name, my, text=fit_text(fnt_name, row.name, name_avail + nm_right - name_right),
+                                           anchor="w", font=f_name, fill=C["name"], tags=(ent_tag,))
+                    # one balloon per row name, no (i) icons: CPU / RAM / GPU / VRAM / disk / network rows list their
+                    # top programs (and open the process window on a click); a row with an explanation (every Basic
+                    # row, e.g. throttling in Advanced) shows it, above the program list when it has one
+                    note = (lambda k=row.help: t("hp_" + k)) if row.help else None
+                    tagged = procs.tag_row(cv, nm_id, row, note)
+                    if note and not tagged:
+                        Tooltip.for_canvas(cv, nm_id, note)
+                    if hint_row:                                    # the hint row leads to the HWiNFO setting
                         cv.tag_bind(nm_id, "<Button-1>", lambda e: show_hw_setting(), add="+")
                         cv.tag_bind(nm_id, "<Enter>", lambda e: cv.config(cursor="hand2"), add="+")
                         cv.tag_bind(nm_id, "<Leave>", lambda e: cv.config(cursor=""), add="+")
@@ -853,16 +1038,26 @@ def main():
                         it["bar"] = cv.create_rectangle(bar_x0, my - bh / 2, bar_x0, my + bh / 2, fill=accent,
                                                         outline="")
                         it["bargeo"] = (bar_x0, bar_x1, my - bh / 2, my + bh / 2)
-                    it["now"] = cv.create_text(col_now, my, text="" if hint_row else "–", anchor="e", font=f_num, fill=C["fg"])
+                        if entry:
+                            it["bar_x"] = bar_x0                     # entry: the bar draws itself in from zero
+                    it["now"] = cv.create_text(col_now, my, text="" if hint_row else "–", anchor="e", font=f_num,
+                                               fill=C["fg"], tags=(ent_tag,))
+                    if entry and not hint_row and not row.textual and not row.special:
+                        it["v_shown"] = 0.0                         # entry: the number counts up from zero
                     it["unit"] = cv.create_text(col_now + 6, my, text=row.unit_eff, anchor="w", font=f_unit,
-                                                fill=C["faint"])
+                                                fill=C["faint"], tags=(ent_tag,))
                     if basic:
                         if row.status:
-                            it["status"] = cv.create_text(col_avg, my, text="", anchor="e", font=f_stat, fill=C["dim"])
+                            it["status"] = cv.create_text(col_avg, my, text="", anchor="e", font=f_stat, fill=C["dim"],
+                                                          tags=(ent_tag,))
                             it["stat_w"] = stat_w
                     else:
                         for k, xx in (("min", col_min), ("max", col_max), ("avg", col_avg)):
-                            it[k] = cv.create_text(xx, my, text="–", anchor="e", font=f_num, fill=C["dim"])
+                            it[k] = cv.create_text(xx, my, text="–", anchor="e", font=f_num, fill=C["dim"],
+                                                   tags=(ent_tag,))
+                    if tagged or note:                              # rows with a hover balloon: the row swells
+                        hover_grow(nm_id, fs_name, accent, nm_right - pad,
+                                   None if hint_row else it["now"], None if hint_row else fs_num_e)
                     st["items"][id(row)] = it
                     ry += rp
                 yy += ch + gc
@@ -987,6 +1182,8 @@ def main():
             round_rect(cv, chx0, chy0, chx0 + sum(seg_w), chy0 + ch_h, ch_h / 2, fill=C["track"], outline=C["border"],
                        tags="uimodebtn")
         xx = chx0
+        if len(seg) == 2:                            # the lit half slides to the other word on a click (toggle_ui_mode)
+            s["chip_slide"] = seg_w[0] if mode_cur == 0 else -seg_w[0]
         for i, w_ in zip(seg, seg_w):
             on = i == mode_cur
             if on:
@@ -995,12 +1192,14 @@ def main():
                                 (mix(C["card"], acc_chip, 0.30), mix(C["card"], acc_chip, 0.75)))
                 if GFX:
                     cv.create_image(ix0, iy0, image=gfx.card(iw, ih, ih / 2, fill_, line_), anchor="nw",
-                                    tags="uimodebtn")
+                                    tags=("uimodebtn", "uimode_hl"))
                 else:
-                    round_rect(cv, ix0, iy0, ix0 + iw, iy0 + ih, ih / 2, fill=fill_, outline=line_, tags="uimodebtn")
+                    round_rect(cv, ix0, iy0, ix0 + iw, iy0 + ih, ih / 2, fill=fill_, outline=line_,
+                               tags=("uimodebtn", "uimode_hl"))
             cv.create_text(xx + w_ / 2, my, text=mode_labels[i], anchor="center", font=f_sw,
-                           fill=C["fg"] if on else C["faint"], tags="uimodebtn")
+                           fill=C["fg"] if on else C["faint"], tags=("uimodebtn", "uimode_txt"))
             xx += w_
+        cv.tag_raise("uimode_txt")                   # both words stay above the sliding lit half
         # right end: [interval label] [spinbox] [chart] [reset button] [gear button]
         btn_rest = "#00000000" if pal else C["card"]           # Aurora: the button disc is clear glass until hovered
         if GFX:
@@ -1094,6 +1293,15 @@ def main():
             help_tip(tag, key)
         if pal:
             fx_end(sec_boxes, rh)
+        if entry and entry_tags:
+            t0 = aurora.clock()
+            dy = max(6, int(round(rh * 0.45)))
+            gap = min(0.035, 0.6 / max(1, max(n for _, _, n in entry_tags)))     # whole entry stays under ~1 s
+            for tag, ci, n in entry_tags:
+                cv.itemconfig(tag, state="hidden")
+                FX["entry"].append({"tag": tag, "t0": t0 + 0.06 + gap * n + 0.05 * ci, "dur": 0.5, "dy": dy,
+                                    "applied": 0, "hidden": True})
+            anim_wake()
         refresh_status()
 
     def help_tip(tag, key):
@@ -1225,7 +1433,7 @@ def main():
             w = int(tw + th)
             x0, y0 = int(round(cx - w / 2)), int(round(y - ph))
             fill, line = mix(C["card"], col, 0.22), mix(C["card"], col, 0.6)
-            if st["fx"]["on"]:                  # Aurora: frosted toast (nearly opaque: it must stay readable)
+            if st["fx"]["pal"]:                 # Aurora: frosted toast (nearly opaque: it must stay readable)
                 fill, line = aurora.hexa(fill, 0xe8), aurora.hexa(line, 0xc0)
             tags = ("toast", "updbtn") if kind == "upd" else ("toast", "hwrestart") if kind == "hwbtn" else ("toast",)
             if GFX:
@@ -1379,8 +1587,37 @@ def main():
             mm.toggle()
 
     def toggle_ui_mode(e=None):
-        """Basic <-> Advanced, live (status bar chip and the B key)."""
-        apply_settings({"ui_mode": "advanced" if is_basic() else "basic"})
+        """Basic <-> Advanced, live (status bar chip and the B key). Motion on: the lit half of the chip slides over
+        first (~0.16 s), then the new view is built and comes in row by row."""
+        to = "advanced" if is_basic() else "basic"
+        s = st["status"]
+        if st.get("mode_sliding"):
+            return
+        geo = s.get("chip_slide")
+        if not geo or not st["fx"]["motion"] or not st["fx"]["on"]:
+            apply_settings({"ui_mode": to})
+            return
+        dx = geo
+        t0 = aurora.clock()
+        a = {"applied": 0}
+        st["mode_sliding"] = True
+
+        def done():
+            st["mode_sliding"] = False
+            apply_settings({"ui_mode": to})
+
+        def step(now, dt):
+            x = min(1.0, (now - t0) / 0.16)
+            e = 1 - (1 - x) ** 3
+            off = int(round(dx * e))
+            if off != a["applied"]:
+                cv.move("uimode_hl", off - a["applied"], 0)
+                a["applied"] = off
+            if x >= 1.0:
+                root.after(0, done)               # (never rebuild the canvas inside the frame that walks it)
+                return False
+            return True
+        anim_set("mode_chip", step)
 
     def key_ui_mode(e):
         if root.focus_get() is not spin:
@@ -1581,6 +1818,8 @@ def main():
             need_build = True
         if "motion" in real:
             need_build = True
+        if {"ui_mode", "language", "motion"} & set(real) or THEME_KEYS & set(real):
+            st["entry_next"] = True        # the new view comes in row by row (motion on)
         if "topmost" in real:
             root.attributes("-topmost", bool(cfg["topmost"]))
         if "minimode" in real:
@@ -1879,15 +2118,15 @@ def main():
                     s[0], s[1], s[2], s[3] = min(s[0], v), max(s[1], v), s[2] + v, s[3] + 1
                 continue
             if stale:                            # frozen HWiNFO data: no values, statistics keep what they have
+                st["fx"]["anims"].pop(("num", it["now"]), None)
+                it.pop("v_shown", None)
                 set_text(it["now"], "–", C["dim"])
                 if "status" in it:
                     set_text(it["status"], "", C["dim"])
                 if "gauge" in it:
                     fx_target(it["gauge"], 0.0, it["accent"])
                 elif "bar" in it:
-                    x0, x1, y0, y1 = it["bargeo"]
-                    st["last"].pop(it["bar"], None)
-                    cv.coords(it["bar"], x0, y0, x0, y1)
+                    bar_glide(it, 0.0, it["accent"])
                 if "ring" in it:
                     fx_target(it["ring"], 0.0, it["accent"])
                 continue
@@ -1903,7 +2142,10 @@ def main():
                 else:
                     col, bt = layout.value_color(row, v, C["fg"]), None
                 set_text(it["unit"], bt[1] if bt else row.unit_eff)
-                set_text(it["now"], bt[0] if bt else row.fmt_value(v), col)
+                if bt:                                   # RAM / VRAM in Basic: "11,0 / 32" counts as well
+                    tween_num(it, row, v, lambda x, r=row: (basicmode.value_text(r, x) or ("",))[0], col)
+                else:
+                    tween_num(it, row, v, row.fmt_value, col)
                 if "status" in it:
                     set_text(it["status"], fit_text(st["fnt_stat"], basicmode.status_text(row, v), it["stat_w"]),
                              col)
@@ -1919,13 +2161,8 @@ def main():
                     fx_target(it["ring"], layout.frac(row, v), bcol)
                 if "gauge" in it:                                    # Aurora: glowing bar, glides (effect loop)
                     fx_target(it["gauge"], layout.frac(row, v), bcol)
-                elif "bar" in it:
-                    x0, x1, y0, y1 = it["bargeo"]
-                    bx = int(round(x0 + (x1 - x0) * layout.frac(row, v)))
-                    if st["last"].get(it["bar"]) != (bx, bcol):      # skip the redraw of an unchanged bar
-                        st["last"][it["bar"]] = (bx, bcol)
-                        cv.coords(it["bar"], x0, y0, bx, y1)
-                        cv.itemconfig(it["bar"], fill=bcol)
+                elif "bar" in it:                                    # plain themes: the bar glides too
+                    bar_glide(it, layout.frac(row, v), bcol)
         logger.ext.update()                 # process sampling runs only while the recording needs it
         if not frozen and not stale and ok and cfg["logging"] and rows and now - logger.last >= cfg["interval"] - 0.05:
             logger.last = now
@@ -2177,6 +2414,12 @@ def main():
     if is_basic() and cfg["logging"]:                 # e.g. a hand-edited config: Basic never records
         toggle()
     root.after(400, tick)
+    if FXBENCH:
+        root.after(3000, bench_hover)
+    if os.environ.get("METRIQ_UICHECK"):
+        ui_check(os.environ["METRIQ_UICHECK"])
+    if os.environ.get("METRIQ_QUIT_AFTER"):           # tools/bench_fx.py: end cleanly after a measurement
+        root.after(int(float(os.environ["METRIQ_QUIT_AFTER"]) * 1000), full_exit)
     root.after(300, upd_pump)
     root.after(150, tray_poll)
     upd_reschedule(5000)
