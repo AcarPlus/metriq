@@ -66,6 +66,17 @@
   .strip .bar-mini i { font-style: normal; color: #4fe3cf; }
   .strip .bar-mini i.w { color: #f2c14e; }
   .strip kbd { position: absolute; right: 12px; bottom: 12px; }
+  .aur { position: relative; height: 150px; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: #070b16; }
+  .aur .sky { position: absolute; inset: -40%; background: radial-gradient(40% 30% at 30% 45%, rgba(79, 227, 207, .85), transparent 70%), radial-gradient(35% 28% at 65% 40%, rgba(122, 168, 255, .8), transparent 70%), radial-gradient(30% 25% at 50% 60%, rgba(176, 120, 255, .65), transparent 70%); filter: blur(14px); animation: aurflow 14s ease-in-out infinite alternate; }
+  @keyframes aurflow { 0% { transform: translate(-6%, 2%) rotate(-4deg) scale(1); } 100% { transform: translate(6%, -3%) rotate(5deg) scale(1.12); } }
+  @media (prefers-reduced-motion: reduce) { .aur .sky { animation: none; } }
+  .aur .themes { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .aur .themes span { font-size: 12px; padding: 5px 10px; border-radius: 999px; color: #dfe8ff; background: rgba(8, 12, 22, .5); border: 1px solid rgba(255, 255, 255, .14); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+  .aur .themes span.on { color: #03201b; background: linear-gradient(135deg, #4fe3cf, #7aa8ff); border-color: transparent; font-weight: 600; }
+  .tip { margin-top: 18px; display: grid; gap: 6px; padding: 12px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--card-hi); font-size: 13px; }
+  .tip .tip-h { font-size: 11px; font-weight: 700; letter-spacing: .08em; color: var(--faint); text-transform: uppercase; }
+  .tip div:not(.tip-h) { display: flex; justify-content: space-between; color: var(--muted); }
+  .tip b { color: var(--fg); font-variant-numeric: tabular-nums; }
   .langs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 18px; }
   .langs span { font: 600 12px/1 var(--mono); padding: 6px 8px; border-radius: 7px; background: var(--card-hi); border: 1px solid var(--line); color: var(--muted); }
   .upd { display: flex; align-items: center; gap: 12px; margin-top: 20px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); font-size: 13.5px; }
@@ -101,7 +112,7 @@
 <section class="hero" style="padding-top:64px">
   <div class="wrap">
     <div class="rv">
-      <a class="pill" href="https://github.com/AcarPlus/metriq/releases/latest"><b data-ver>v1.8.0</b><span data-tr>Yeni: sınır aşılınca uyarı</span><span data-en>New: alerts when a value runs hot</span></a>
+      <a class="pill" href="https://github.com/AcarPlus/metriq/releases/latest"><b data-ver>v1.10.0</b><span data-tr>Yeni: Aurora teması ve canlı animasyonlar</span><span data-en>New: the Aurora theme and lively motion</span></a>
       <h1><span data-tr>Bilgisayarının nabzı, <span class="grad">tek bakışta.</span></span><span data-en>Your PC's pulse, <span class="grad">at a glance.</span></span></h1>
       <p class="lead" data-tr>metriQ, Windows'ta her zaman üstte duran küçük bir panel: işlemci ve ekran kartı sıcaklığı, kullanım, güç, fanlar, ağ, disk ve FPS canlı olarak, yeşilden kırmızıya renkle.</p>
       <p class="lead" data-en>metriQ is a small always-on-top panel for Windows: CPU and GPU temperatures, load, power, fans, network, disks and FPS, live and coloured from green to red.</p>
@@ -206,6 +217,20 @@
           <div><b>LibreHardwareMonitor</b><span data-tr>açık kaynak</span><span data-en>open source</span></div>
           <div><b data-tr>Windows yerleşik</b><b data-en>Windows built-in</b><span data-tr>kurulumsuz</span><span data-en>no install</span></div>
         </div>
+      </div>
+      <div class="card w2 rv">
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg></div>
+        <h3 data-tr>Aurora teması ve akıcı hareket</h3><h3 data-en>The Aurora theme, in fluid motion</h3>
+        <p data-tr>Akan bir kuzey ışıkları gökyüzü, cam kartlar, parlayan halka göstergeler. Sayılar akarak değişir, çubuklar kayar, ~60 fps. 12 tema daha var; seçtiğin tema Basit ve Gelişmiş görünümde ortak.</p>
+        <p data-en>A flowing northern-lights sky, glass cards and glowing ring gauges. Numbers count to their new value and bars glide, at ~60 fps. Twelve more themes, and the one you pick is shared by the Basic and Advanced views.</p>
+        <div class="viz aur"><div class="sky"></div><div class="themes"><span class="on">Aurora</span><span data-tr>Koyu</span><span data-en>Dark</span><span>OLED</span><span>Nord</span><span>Dracula</span><span>Tokyo Night</span><span data-tr>Açık</span><span data-en>Light</span><span>+6</span></div></div>
+      </div>
+      <div class="card rv">
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M4 4l7 17 2.5-7.5L21 11z"/></svg></div>
+        <h3 data-tr>Üzerine gel, kim kullanıyor gör</h3><h3 data-en>Hover to see who's using it</h3>
+        <p data-tr>Bir satırın adının üzerine gelince satır büyür ve o kaynağı en çok kullanan 5 program açılır.</p>
+        <p data-en>Hover a row's name and it swells, showing the five programs using that resource the most.</p>
+        <div class="viz tip"><div class="tip-h"><span data-tr>CPU kullanımı</span><span data-en>CPU usage</span></div><div><span>game.exe</span><b>21%</b></div><div><span>browser.exe</span><b>7%</b></div><div><span>obs64.exe</span><b>4%</b></div></div>
       </div>
       <div class="card rv">
         <div class="ic"><svg viewBox="0 0 24 24"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg></div>
