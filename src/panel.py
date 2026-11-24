@@ -124,6 +124,7 @@ def repair_csv_tails(folder, newest=5):
 # every colour / style comes from the active theme (themes.py); C is refreshed in place when the theme changes
 C = themes.palette()
 mix = themes.mix
+FXPROF = os.environ.get("METRIQ_FXPROF")
 THEME_KEYS = {"theme", "theme_overrides", "value_color_mode", "value_steps", "motion"}
 
 
@@ -489,22 +490,16 @@ def main():
             except tk.TclError:
                 pass
         pal = aurora.fx() if (GFX and aurora.AVAILABLE) else None
-        FX.update(on=pal is not None, pal=pal, gauges={}, entry=[], keep=[], job=None, W=W, H=H, ring_row=None,
-                  t_bg=0.0, last=aurora.clock())
+        FX.update(on=pal is not None, pal=pal, gauges={}, entry=[], keep=[], cards=[], job=None, W=W, H=H,
+                  ring_row=None, t_bg=0.0, last=aurora.clock(), frame=0)
         FX["motion"] = pal is not None and aurora.motion_on(cfg.get("motion"))
         if not pal:
             return None
         if FX.get("sky") is None or FX["sky"].pal is not pal:
             FX["sky"] = aurora.Sky(pal)
-        FX["photo"] = fx_sky_photo()
-        FX["bg"] = cv.create_image(0, 0, anchor="nw", image=FX["photo"])
+        # the background (sky + every glass card) is baked into this one opaque image at the end of the build
+        FX["bg"] = cv.create_image(0, 0, anchor="nw")
         return pal
-
-    def fx_sky_photo():
-        FX = st["fx"]
-        t_ = (aurora.clock() - FX["t0"]) if FX["motion"] else 40.0      # still picture: one pleasant moment
-        FX["t_bg"] = aurora.clock()
-        return aurora.sky_photo(FX["sky"], FX["W"], FX["H"], t_ + 40.0)
 
     def fx_bar_box(bar_x0, bar_x1, my, rh):
         """Whole-pixel geometry of a bar track: (x, y, length, height)."""
@@ -528,10 +523,9 @@ def main():
             ry += rp
         d = int(round(isz * 3.4))
         rcx = col_name + isz * 1.7
-        img, gpad = aurora.glass_card(w, h, R, pal, accent, (int(rcx - bx0), int(hy - by0), int(d * 1.5)), stripes,
-                                      int(round(yy + hh - 1 - by0)), tracks)
-        FX["keep"].append(img)
-        cv.create_image(bx0 - gpad, by0 - gpad, image=img, anchor="nw")
+        img, gpad = aurora.glass_card_pil(w, h, R, pal, accent, (int(rcx - bx0), int(hy - by0), int(d * 1.5)),
+                                          stripes, int(round(yy + hh - 1 - by0)), tracks)
+        FX["cards"].append((img, bx0 - gpad, by0 - gpad))
         FX["box"] = (bx0 - gpad - 1, by0 - gpad - 1, bx0 + w + gpad + 1, by0 + h + gpad + 1)
         # the ring shows the first row with a scale (load before temperature: rows with a bar first)
         scaled = [r for r in sec.rows if r.limits and not r.textual]
@@ -551,30 +545,35 @@ def main():
         x, y, L, bh = fx_bar_box(bar_x0, bar_x1, my, rh)
         g = aurora.bar_pad(bh)
         key = ("bar", id(row))
-        draw = (lambda q, col, L=L, bh=bh, a=accent: aurora.bar(L, bh, q, col, a, pal))
-        photo = draw(0, accent)
-        item = cv.create_image(x - g, y - g, image=photo, anchor="nw")
-        FX["gauges"][key] = {"item": item, "cur": 0.0, "tgt": 0.0, "col": accent, "shown": (0, accent),
-                             "photo": photo, "q": lambda f, L=L: int(round(f * L)), "draw": draw, "hold": 0.0}
+        # the strip carries the value colours along its length (the end of the bar shows the value's colour)
+        if (is_basic() and row.status != "temp") or not row.limits:
+            colors = [accent] * 2
+        else:
+            green, red = row.limits
+            sty = themes.current()
+            colors = [sty.color_at(f if red >= green else 1 - f) for f in (i / 63 for i in range(64))]
+            colors = [mix(accent, c, 0.35 + 0.65 * i / 63) for i, c in enumerate(colors[:8])] + colors[8:]
+        sb = aurora.StripBar(L, bh, colors, pal)
+        item = cv.create_image(x - g, y - g, image=sb.dst, anchor="nw")
+        FX["gauges"][key] = {"item": item, "cur": 0.0, "tgt": 0.0, "col": accent, "shown": None, "strip": sb,
+                             "q": lambda f, L=L: int(round(f * L)), "hold": 0.0}
         return key, item, (x, x + L, y, y + bh)
 
     def fx_end(boxes, rh):
         """End of a build: cards rise into place one after another (motion on), then the effect loop runs."""
         FX = st["fx"]
         now = aurora.clock()
-        if FX["motion"]:
-            dy = int(max(18, rh * 1.6))
+        sky = FX["sky"].frame(FX["W"], FX["H"], 40.0)
+        FX["photo"] = aurora.bake(sky, FX["cards"])
+        FX["cards"] = []
+        cv.itemconfig(FX["bg"], image=FX["photo"])
+        if FX["motion"]:            # entry: the gauges of each card draw themselves in from zero, card after card
+            by_item = {g["item"]: g for g in FX["gauges"].values()}
             for i, box in enumerate(boxes):
-                tag = "fxsec%d" % i
-                cv.addtag_enclosed(tag, *box)
-                t0 = now + 0.08 + 0.075 * i
-                cv.move(tag, 0, dy)
-                cv.itemconfig(tag, state="hidden")
-                FX["entry"].append({"tag": tag, "t0": t0, "dur": 0.85, "dy": dy, "applied": dy, "hidden": True})
-                for iid in cv.find_withtag(tag):               # a gauge draws itself once its card is there
-                    for g in FX["gauges"].values():
-                        if g["item"] == iid:
-                            g["hold"] = t0 + 0.12
+                for iid in cv.find_enclosed(*box):
+                    g = by_item.get(iid)
+                    if g is not None:
+                        g["hold"] = now + 0.1 + 0.07 * i
         fx_kick()
 
     def fx_target(key, frac, col):
@@ -595,12 +594,55 @@ def main():
                 pass
         FX["job"] = root.after(delay, fx_step)
 
+    def fx_prof(t0, busy):
+        """METRIQ_FXPROF=<file>: per-frame cost of the effect step and of Tk's repaint (diagnostics only)."""
+        P = st.setdefault("prof", {"n": 0, "step": 0.0, "paint": 0.0, "gap": 0.0, "last": t0, "t": t0, "max": 0.0})
+        t1 = aurora.clock()
+        root.update_idletasks()
+        t2 = aurora.clock()
+        P["n"] += 1
+        P["step"] += t1 - t0
+        P["paint"] += t2 - t1
+        P["gap"] += t0 - P["last"]
+        P.setdefault("late", []).append(t0 - st["fx"].get("due", t0))
+        P.setdefault("dn", []).append(t0 - P.get("prev_t0", t0))
+        P["prev_t0"] = t0
+        P["max"] = max(P["max"], t2 - t0)
+        P["last"] = t2
+        if t2 - P["t"] >= 3.0:
+            n = P["n"]
+            with open(FXPROF, "a", encoding="utf-8") as f:
+                f.write("fps %.1f  step %.1f ms  paint %.1f ms  gap %.1f ms  max %.1f ms  busy %s  gauges %d\n" % (
+                    n / (t2 - P["t"]), P["step"] / n * 1000, P["paint"] / n * 1000, P["gap"] / n * 1000, P["max"] * 1000,
+                    busy, len(st["fx"]["gauges"])))
+                dn = sorted(P["dn"])
+                f.write("   start-to-start median %.1f ms  p10 %.1f  p90 %.1f\n" % (dn[len(dn)//2]*1000, dn[len(dn)//10]*1000, dn[int(len(dn)*0.9)]*1000))
+                P["dn"] = []
+                L_ = sorted(P["late"])
+                f.write("   late median %.1f ms  p90 %.1f ms\n" % (L_[len(L_) // 2] * 1000, L_[int(len(L_) * 0.9)] * 1000))
+            P["late"] = []
+            P.update(n=0, step=0.0, paint=0.0, gap=0.0, t=t2, max=0.0)
+
+    def fx_hires(on):
+        """Windows timers tick every 15.6 ms by default, so after(16) waits ~31 ms (30 fps at best): ask for 1 ms
+        resolution only while an animation runs, give it back when everything is still."""
+        FX = st["fx"]
+        if bool(FX.get("hires")) == on or os.name != "nt":
+            return
+        try:
+            import ctypes
+            (ctypes.windll.winmm.timeBeginPeriod if on else ctypes.windll.winmm.timeEndPeriod)(1)
+            FX["hires"] = on
+        except Exception:
+            pass
+
     def fx_step():
         """One frame of the Aurora motion: card entry (spring), gauge glides, the slow sky. Runs at ~30 fps only while
         something moves, else at the sky's few frames per second (or not at all: still picture, minimised, tray)."""
         FX = st["fx"]
         FX["job"] = None
         if st["closing"] or not FX["on"]:
+            fx_hires(False)
             return
         now = aurora.clock()
         dt = min(0.2, now - FX["last"])
@@ -631,20 +673,28 @@ def main():
                 g["cur"] = aurora.approach(g["cur"], g["tgt"], dt) if FX["motion"] else g["tgt"]
                 if g["cur"] != g["tgt"]:
                     busy = True
+                if paused:
+                    continue
+                if "strip" in g:                         # bar: two Tk copies into its own picture
+                    g["strip"].show(g["q"](g["cur"]))
+                    continue
+                if FX["frame"] % 2 and g["cur"] != g["tgt"]:
+                    continue                             # rings (PIL work) glide at half rate
                 shown = (g["q"](g["cur"]), g["col"])
-                if shown != g["shown"] and not paused:
+                if shown != g["shown"]:
                     g["shown"] = shown
                     g["photo"] = g["draw"](*shown)
                     cv.itemconfig(g["item"], image=g["photo"])
-            if FX["motion"] and not paused and now - FX["t_bg"] >= 1.0 / aurora.Sky.FPS:
-                FX["photo"] = fx_sky_photo()
-                cv.itemconfig(FX["bg"], image=FX["photo"])
+            FX["frame"] += 1
         except tk.TclError:
             return
-        if busy and not paused:
-            FX["job"] = root.after(33, fx_step)
-        elif FX["motion"] and not paused:
-            FX["job"] = root.after(max(15, int((FX["t_bg"] + 1.0 / aurora.Sky.FPS - aurora.clock()) * 1000)), fx_step)
+        if FXPROF:
+            fx_prof(now, busy)
+        fx_hires(busy and not paused)
+        if busy and not paused:                          # ~60 fps while something moves, nothing otherwise
+            _d = max(1, int(16 - (aurora.clock() - now) * 1000))
+            FX["due"] = aurora.clock() + _d / 1000
+            FX["job"] = root.after(_d, fx_step)
 
     def build(W, H):
         cv.delete("all")
@@ -820,9 +870,8 @@ def main():
         hx = aurora.hexa
         if pal:
             bx0, by0 = int(round(sx0)), int(round(sy))
-            img, gpad = aurora.glass_card(int(round(sx1)) - bx0, int(round(sy + sb_h)) - by0, R, pal)
-            FX["keep"].append(img)
-            cv.create_image(bx0 - gpad, by0 - gpad, image=img, anchor="nw")
+            img, gpad = aurora.glass_card_pil(int(round(sx1)) - bx0, int(round(sy + sb_h)) - by0, R, pal)
+            FX["cards"].append((img, bx0 - gpad, by0 - gpad))
         elif GFX:
             bx0, by0 = int(round(sx0)), int(round(sy))
             cv.create_image(bx0, by0, image=gfx.card(int(round(sx1)) - bx0, int(round(sy + sb_h)) - by0, R,

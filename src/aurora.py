@@ -229,7 +229,13 @@ def card_pad(h):
 
 
 def glass_card(w, h, r, pal, accent=None, glow_at=None, stripes=(), sep=None, tracks=()):
-    """Glass card w x h (+ shadow): PhotoImage of (w + 2 pad) x (h + 2 pad); place it at (x0 - pad, y0 - pad).
+    """glass_card_pil() as a PhotoImage (for small separate pictures, e.g. the settings preview)."""
+    img, pad = glass_card_pil(w, h, r, pal, accent, glow_at, stripes, sep, tracks)
+    return _cached(("cardtk", id(img)), lambda: ImageTk.PhotoImage(img)), pad
+
+
+def glass_card_pil(w, h, r, pal, accent=None, glow_at=None, stripes=(), sep=None, tracks=()):
+    """Glass card w x h (+ shadow): PIL RGBA of (w + 2 pad) x (h + 2 pad); place it at (x0 - pad, y0 - pad).
     glow_at: (x, y, radius) of the accent glow (card coordinates); stripes: [(y0, y1, inset)];
     sep: y of the header line; tracks: [(x0, y0, x1, y1)] bar tracks."""
     w, h = max(4, int(w)), max(4, int(h))
@@ -290,8 +296,17 @@ def glass_card(w, h, r, pal, accent=None, glow_at=None, stripes=(), sep=None, tr
         fade.putdata([int(255 * (1 - 0.55 * min(1.0, i / 40))) for i in range(64)])
         e.putalpha(ImageChops.multiply(e.getchannel("A"), fade.resize((w, h), Image.BILINEAR)))
         out.alpha_composite(e, (pad, pad))
-        return ImageTk.PhotoImage(out)
+        return out
     return _cached(key, make), pad
+
+
+def bake(sky_img, cards):
+    """The whole still background in one opaque picture: the sky with every glass card composited on it.
+    Tk then blits one opaque image per repaint instead of blending many large translucent ones (the frame-rate killer)."""
+    base = sky_img.convert("RGBA")
+    for img, x, y in cards:
+        base.alpha_composite(img, (int(x), int(y)))
+    return ImageTk.PhotoImage(base.convert("RGB"))
 
 
 # --------------------------------------------------------------------------- ring gauge
@@ -413,6 +428,75 @@ def _bar_full(length, bh, color, accent, pal):
     return _cached(key, make)
 
 
+def _capsule(L, Lk, bh, colors, pal):
+    """Glowing capsule Lk px long whose colour at column x is colors[x / L] (absolute along the full track L): the
+    full strip (Lk = L) and the right caps of shorter values share one gradient, so a cut strip + cap look seamless."""
+    g = bar_pad(bh)
+    Lk = max(bh, int(Lk))
+    W, H = Lk + 2 * g, bh + 2 * g
+    k = 3
+    n = len(colors)
+    grad = Image.new("RGBA", (n, 1))
+    grad.putdata([_rgba(c, 225 + 30 * i / max(1, n - 1)) for i, c in enumerate(colors)])
+    full = grad.resize((L * k, bh * k), Image.BILINEAR).crop((0, 0, Lk * k, bh * k))
+    m = Image.new("L", (Lk * k, bh * k), 0)
+    ImageDraw.Draw(m).rounded_rectangle([0, 0, Lk * k - 1, bh * k - 1], radius=bh * k / 2, fill=255)
+    full.putalpha(ImageChops.multiply(full.getchannel("A"), m))
+    fill = full.reduce(k)
+    lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    lay.alpha_composite(fill, (g, g))
+    glow = lay.filter(ImageFilter.GaussianBlur(g * 0.55))
+    glow.putalpha(glow.getchannel("A").point(lambda v: int(min(255, v * 1.3 * pal["glow"]))))
+    out = Image.alpha_composite(Image.new("RGBA", (W, H), (0, 0, 0, 0)), glow)
+    out = Image.alpha_composite(out, lay)
+    hl = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(hl).line([g + bh / 2, g + bh * 0.28, g + Lk - bh / 2, g + bh * 0.28],
+                            fill=(255, 255, 255, 70), width=max(1, int(bh * 0.18)))
+    return Image.alpha_composite(out, hl)
+
+
+class StripBar:
+    """A value bar updated entirely inside Tk: the full glowing strip and a few right caps are made once, every frame
+    only copies the filled part + the matching cap into the bar's own PhotoImage (two Tk 'copy' calls, no PIL work)."""
+    CAPS = 40
+
+    def __init__(self, length, bh, colors, pal):
+        self.L, self.bh = max(4, int(length)), max(3, int(bh))
+        self.g = bar_pad(self.bh)
+        self.colors, self.pal = tuple(colors), pal
+        self.W, self.H = self.L + 2 * self.g, self.bh + 2 * self.g
+        key = ("strip", self.L, self.bh, self.colors, id(pal))
+        self.src = _cached(key, lambda: ImageTk.PhotoImage(_capsule(self.L, self.L, self.bh, list(self.colors), pal)))
+        self.dst = ImageTk.PhotoImage(Image.new("RGBA", (self.W, self.H), (0, 0, 0, 0)))
+        self.r = (self.bh + 1) // 2
+        self.px = -1
+
+    def _cap(self, k):
+        Lk = max(self.bh, int(round(self.L * k / self.CAPS)))
+
+        def make():
+            im = _capsule(self.L, Lk, self.bh, list(self.colors), self.pal)
+            w = self.r + self.g
+            return ImageTk.PhotoImage(im.crop((im.width - w, 0, im.width, im.height)))
+        return _cached(("stripcap", self.L, self.bh, self.colors, id(self.pal), k), make)
+
+    def show(self, px):
+        px = int(max(0, min(self.L, px)))
+        if px == self.px:
+            return
+        self.px = px
+        d = self.dst
+        tkc = d.tk.call
+        tkc(str(d), "blank")
+        if px <= 0:
+            return
+        Lp = max(px, self.bh)
+        left = self.g + Lp - self.r
+        tkc(str(d), "copy", str(self.src), "-from", 0, 0, left, self.H, "-to", 0, 0)
+        cap = self._cap(int(round(Lp / self.L * self.CAPS)))
+        tkc(str(d), "copy", str(cap), "-to", left, 0)
+
+
 def bar(length, bh, px, color, accent, pal):
     """Value bar: a glowing gradient capsule px pixels long on a track of `length` (the track is part of the card).
     PhotoImage of (length + 2 g) x (bh + 2 g), g = bar_pad(bh); place its top-left at (x0 - g, y0 - g)."""
@@ -452,4 +536,4 @@ def hexa(c, a):
 
 
 def clock():
-    return time.monotonic()
+    return time.perf_counter()
