@@ -29,7 +29,7 @@ config.DEFAULTS.setdefault("proc_detail", False)               # side file "<nam
 config.DEFAULTS.setdefault("proc_log_filter", "all")           # programs of the side file: "all" or [exe names]
 config.DEFAULTS.setdefault("log_max_mb", 0)                    # start a new CSV file above this size (0 = no limit)
 config.DEFAULTS.setdefault("log_keep_days", 0)                 # delete our CSV files older than this at start (0 = keep)
-config.DEFAULTS.setdefault("usage_popup_top", 1)               # programs listed in the (i) balloons of the panel (1..10)
+config.DEFAULTS.setdefault("usage_popup_top", 5)               # programs listed in the hover balloons of the panel rows (1..10)
 
 # a row of the side file is only written when the program is above one of these
 DETAIL_MIN_PCT, DETAIL_MIN_MB, DETAIL_MIN_DISK = 0.5, 50.0, 0.5

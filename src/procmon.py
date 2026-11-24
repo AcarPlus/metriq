@@ -64,7 +64,7 @@ _S_HEAD = struct.Struct("<IIQ")            # 0: NextEntryOffset, NumberOfThreads
 _S_TIME = struct.Struct("<qqq")            # 32: CreateTime, UserTime, KernelTime (100 ns units)
 _S_NAME = struct.Struct("<HHIQ")           # 56: ImageName (UNICODE_STRING)
 _S_ID = struct.Struct("<QQII")             # 80: UniqueProcessId, ParentId, HandleCount, SessionId
-_S_IO = struct.Struct("<qq")               # 232: ReadTransferCount, WriteTransferCount
+_S_IO = struct.Struct("<qqq")              # 232: ReadTransferCount, WriteTransferCount, OtherTransferCount
 _ENTRY_MIN = 256
 _NCPU = max(1, os.cpu_count() or 1)
 _SYSROOT = (os.environ.get("SystemRoot") or r"C:\Windows").lower().rstrip("\\") + "\\"
@@ -75,20 +75,21 @@ _SKIP_WIN_TITLES = ("Program Manager",)
 
 
 class Proc:
-    __slots__ = ("pid", "name", "exe", "cat", "cpu", "ram", "gpu", "vram", "disk")
+    # dread / dwrite: file read / write (MB/s); net: established TCP connections (count)
+    __slots__ = ("pid", "name", "exe", "cat", "cpu", "ram", "gpu", "vram", "disk", "dread", "dwrite", "net")
 
     def __init__(self, pid, name, exe, cat):
         self.pid, self.name, self.exe, self.cat = pid, name, exe, cat
-        self.cpu = self.ram = self.gpu = self.vram = self.disk = 0.0
+        self.cpu = self.ram = self.gpu = self.vram = self.disk = self.dread = self.dwrite = self.net = 0.0
 
 
 class Group:
     """All processes of one executable (e.g. every chrome.exe)."""
-    __slots__ = ("key", "name", "cat", "procs", "cpu", "ram", "gpu", "vram", "disk")
+    __slots__ = ("key", "name", "cat", "procs", "cpu", "ram", "gpu", "vram", "disk", "dread", "dwrite", "net")
 
     def __init__(self, key, name):
         self.key, self.name, self.cat, self.procs = key, name, "background", []
-        self.cpu = self.ram = self.gpu = self.vram = self.disk = 0.0
+        self.cpu = self.ram = self.gpu = self.vram = self.disk = self.dread = self.dwrite = self.net = 0.0
 
     def value(self, metric):
         return getattr(self, metric)
@@ -132,13 +133,13 @@ class _ProcTable:
             create, user, kern = _S_TIME.unpack_from(raw, off + 32)
             nlen, _ml, _pad, nptr = _S_NAME.unpack_from(raw, off + 56)
             pid, _ppid, _hc, sess = _S_ID.unpack_from(raw, off + 80)
-            rd, wr = _S_IO.unpack_from(raw, off + 232)
+            rd, wr, oth = _S_IO.unpack_from(raw, off + 232)
             name = ""
             if nlen and nptr:
                 o = nptr - base
                 if 0 <= o and o + nlen <= len(raw):
                     name = raw[o:o + nlen].decode("utf-16-le", "replace")
-            out.append((pid, name, create, user + kern, wsp, rd + wr, sess))
+            out.append((pid, name, create, user + kern, wsp, (rd, wr, oth), sess))
             if not nxt:
                 break
             off += nxt
@@ -171,6 +172,37 @@ def _image_path(pid):
         return None
     finally:
         _k32.CloseHandle(h)
+
+
+_TCP_ROW4 = struct.Struct("<IIIIII")         # MIB_TCPROW_OWNER_PID: state, local addr/port, remote addr/port, pid
+_TCP_ROW6 = struct.Struct("<16sII16sIIII")   # MIB_TCP6ROW_OWNER_PID: ..., state, pid
+_TCP_ESTABLISHED = 5
+
+
+def tcp_connections_by_pid():
+    """{pid: number of established TCP connections} (IPv4 + IPv6), without admin rights (GetExtendedTcpTable).
+    Windows only gives per-program network *speed* to elevated tools (ETW), so the panel shows who is connected."""
+    out = {}
+    try:
+        ip = ctypes.WinDLL("iphlpapi")
+    except OSError:
+        return out
+    for family, row, state_at, pid_at in ((2, _TCP_ROW4, 0, 5), (23, _TCP_ROW6, 6, 7)):
+        size = wintypes.DWORD(0)
+        ip.GetExtendedTcpTable(None, ctypes.byref(size), False, family, 4, 0)     # 4 = TCP_TABLE_OWNER_PID_ALL
+        if not size.value:
+            continue
+        buf = ctypes.create_string_buffer(size.value + 4096)
+        size = wintypes.DWORD(len(buf))
+        if ip.GetExtendedTcpTable(buf, ctypes.byref(size), False, family, 4, 0) != 0:
+            continue
+        raw = buf.raw
+        n = struct.unpack_from("<I", raw, 0)[0]
+        for i in range(n):
+            f = row.unpack_from(raw, 4 + i * row.size)
+            if f[state_at] == _TCP_ESTABLISHED:
+                out[f[pid_at]] = out.get(f[pid_at], 0) + 1
+    return out
 
 
 def windowed_pids():
@@ -333,6 +365,7 @@ class ProcMon:
         rows = self._table.read()
         gpu, vram, gpu_ok, ded = self._gpu()
         wins = windowed_pids()
+        conns = tcp_connections_by_pid()
         dt = (now - self._prev_t) if self._prev_t else 0.0
         prev, cur = self._prev, {}
         groups = {}
@@ -354,10 +387,13 @@ class ProcMon:
             p.ram = wsp / MB
             p.gpu = min(100.0, gpu.get(pid, 0.0))
             p.vram = vram.get(pid, 0.0)
+            p.net = float(conns.get(pid, 0))
             pv = prev.get(pid)
             if pv and pv[0] == create and dt > 0:
                 p.cpu = max(0.0, min(100.0, (cpu100 - pv[1]) * 1e-7 / dt / _NCPU * 100.0))
-                p.disk = max(0.0, (io - pv[2]) / dt / MB)
+                p.dread = max(0.0, (io[0] - pv[2][0]) / dt / MB)
+                p.dwrite = max(0.0, (io[1] - pv[2][1]) / dt / MB)
+                p.disk = p.dread + p.dwrite
             key = nm.lower()
             g = groups.get(key)
             if g is None:
@@ -374,6 +410,9 @@ class ProcMon:
                 g.gpu += p.gpu
                 g.vram += p.vram
                 g.disk += p.disk
+                g.dread += p.dread
+                g.dwrite += p.dwrite
+                g.net += p.net
             g.gpu = min(100.0, g.gpu)
             cats = {p.cat for p in g.procs}
             g.cat = "apps" if "apps" in cats else ("windows" if cats == {"windows"} else "background")
@@ -398,5 +437,5 @@ if __name__ == "__main__":
     time.sleep(1.5)
     s = m.sample()
     print("groups:", len(s.groups), "procs:", sum(len(g.procs) for g in s.groups), "gpu counters:", s.gpu_ok)
-    for met in ("cpu", "ram", "gpu", "vram", "disk"):
+    for met in ("cpu", "ram", "gpu", "vram", "disk", "dread", "dwrite", "net"):
         print(met, [(g.name, round(g.value(met), 1), g.cat) for g in s.top(met, 5)])

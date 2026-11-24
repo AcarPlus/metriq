@@ -158,6 +158,16 @@ def draw_icon(cv, kind, cx, cy, s, col, bg, tags=()):
         cv.create_oval(cx - s * 0.30, cy - s * 0.30, cx + s * 0.30, cy + s * 0.30, fill=bg, outline="",
                        tags=tuple(tags) + ("gear_hole",))
         return
+    if kind == "procs":
+        t_ = tuple(tags) + ("procs_fill",)
+        w_ = max(2, s * 0.2)
+        for yy, ln in ((-0.62, 1.0), (0.0, 0.72), (0.62, 0.46)):
+            r_ = w_ * 0.72
+            cv.create_oval(cx - s * 0.78 - r_, cy + yy * s - r_, cx - s * 0.78 + r_, cy + yy * s + r_, fill=col,
+                           outline="", tags=t_)
+            cv.create_line(cx - s * 0.36, cy + yy * s, cx - s * 0.36 + ln * s * 1.26, cy + yy * s, fill=col, width=w_,
+                           capstyle="round", tags=t_)
+        return
     if kind == "chart":
         t_ = tuple(tags) + ("chart_fill",)
         w_ = max(2, s * 0.2)
@@ -465,7 +475,8 @@ def main():
                     a["size"] = size
                     cv.itemconfig(nm_id, font=(F_TXT, -size))
                 cv.itemconfig(nm_id, fill=mix(fill0, fill1, e))
-                cv.move(icon, cv.bbox(nm_id)[2] - x1_old, 0)
+                if icon is not None:
+                    cv.move(icon, cv.bbox(nm_id)[2] - x1_old, 0)
             except (tk.TclError, TypeError):
                 return
             if a["v"] != a["to"]:
@@ -475,7 +486,7 @@ def main():
             a["to"] = to
             if a["job"] is None:
                 a["job"] = root.after(0, step)
-        for it_ in (nm_id, icon):
+        for it_ in (nm_id, icon) if icon is not None else (nm_id,):
             cv.tag_bind(it_, "<Enter>", lambda e: go(1.0), add="+")
             cv.tag_bind(it_, "<Leave>", lambda e: go(0.0), add="+")
 
@@ -820,7 +831,7 @@ def main():
                     nm_id = cv.create_text(col_name, my, text=fit_text(fnt_name, row.name, name_avail + nm_right - name_right - (26 if hint_row else 0)),
                                            anchor="w", font=f_name, fill=C["name"])
                     tagged = procs.tag_row(cv, nm_id, row, cx0 + nm_right, info=not basic)   # CPU / RAM / GPU / VRAM / disk rows open the process window (+ (i) balloon)
-                    if tagged and tagged[1] is not None:            # clickable (i) rows: the name swells on hover
+                    if tagged:                                      # rows with a hover balloon: the name swells
                         hover_grow(nm_id, tagged[1], fs_name, accent)
                     if row.help:                                        # e.g. throttling: what it is, which source it needs
                         Tooltip.for_canvas(cv, nm_id, lambda k=row.help: t("hp_" + k))
@@ -910,8 +921,9 @@ def main():
         vx = rx - hit * 2 - 4
         if basic:
             vx = gx                                  # no viewer button: the chip ends just before the gear
+        qx = vx - hit * 2 - 4                        # programs window button
         spin_w = max(44.0, min(sw_span * 0.1, rs * 3.2))
-        spin_r = vx - hit - 6
+        spin_r = qx - hit - 6
         lbl_r = spin_r - spin_w - 8                                  # right edge of the interval label
         mode_labels = (t("ui_basic"), t("ui_advanced"))
         mode_cur = 0 if basic else 1
@@ -922,7 +934,7 @@ def main():
         lx = px0 + pw + min(sw_span * 0.05, rs * 1.2)
         if basic:
             fs_sw, show_lbl, show_left = fs_sw0, False, False
-            chip_r = vx - hit - 10
+            chip_r = qx - hit - 10
             fb_ = tkfont.Font(family=F_TXT, size=fs_sw, weight="bold")
             cpad_ = max(6.0, rs * 0.45)
             chip_compact = chip_r - sum(fb_.measure(x) + 2 * cpad_ for x in mode_labels) < px0 + pw + 8
@@ -1000,6 +1012,8 @@ def main():
             if not basic:
                 s["view_bg"] = cv.create_image(vx, my, image=gfx.button("chart", hit, gs, C["dim"], btn_rest),
                                                tags="viewbtn")
+            s["proc_bg"] = cv.create_image(qx, my, image=gfx.button("procs", hit, gs, C["dim"], btn_rest),
+                                           tags="procbtn")
         else:
             s["gear_bg"] = cv.create_oval(gx - hit, my - hit, gx + hit, my + hit, fill=C["card"], outline="",
                                           tags="gearbtn")
@@ -1012,6 +1026,9 @@ def main():
                 s["view_bg"] = cv.create_oval(vx - hit, my - hit, vx + hit, my + hit, fill=C["card"], outline="",
                                               tags="viewbtn")
                 draw_icon(cv, "chart", vx, my, gs, C["dim"], C["card"], tags=("viewbtn",))
+            s["proc_bg"] = cv.create_oval(qx - hit, my - hit, qx + hit, my + hit, fill=C["card"], outline="",
+                                          tags="procbtn")
+            draw_icon(cv, "procs", qx, my, gs, C["dim"], C["card"], tags=("procbtn",))
         if show_lbl:                             # hidden when it would overlap the switch; the spinbox keeps its tooltip
             cv.create_text(lbl_r, my, text=t("interval_lbl"), anchor="e", font=(F_TXT, fs_sw),
                            fill=C["dim"], tags="intlbl")
@@ -1023,7 +1040,7 @@ def main():
         s["toast_geo"] = ((sx0 + sx1) / 2, sy - max(4.0, rs * 0.25), sw_span - 2 * spad)
         s["f_toast"], s["f_toast_t"] = meas_font(F_TXT, ft, "bold"), (F_TXT, ft, "bold")
         for tag, fn in (("logbtn", toggle), ("modebtn", toggle_mode), ("gearbtn", open_settings),
-                        ("uimodebtn", toggle_ui_mode), ("resetbtn", reset_stats), ("viewbtn", lambda e=None: logview.show(api)), ("updbtn", upd_click), ("updx", upd_dismiss), ("hwrestart", hw_restart_click)):
+                        ("uimodebtn", toggle_ui_mode), ("resetbtn", reset_stats), ("viewbtn", lambda e=None: logview.show(api)), ("procbtn", lambda e=None: procs.open()), ("updbtn", upd_click), ("updx", upd_dismiss), ("hwrestart", hw_restart_click)):
             cv.tag_bind(tag, "<Button-1>", fn)
             cv.tag_bind(tag, "<Enter>", lambda e: cv.config(cursor="hand2"))
             cv.tag_bind(tag, "<Leave>", lambda e: cv.config(cursor=""))
@@ -1053,6 +1070,15 @@ def main():
                 return
             cv.itemconfig("chart_fill", fill=acc if on else C["dim"])
             cv.itemconfig(s["view_bg"], fill=bgc)
+        def proc_hover(on):
+            bgc = (hx(acc, 0x30) if on else btn_rest) if pal else (mix(C["card"], acc, 0.16) if on else C["card"])
+            if GFX:
+                cv.itemconfig(s["proc_bg"], image=gfx.button("procs", hit, gs, acc if on else C["dim"], bgc))
+                return
+            cv.itemconfig("procs_fill", fill=acc if on else C["dim"])
+            cv.itemconfig(s["proc_bg"], fill=bgc)
+        cv.tag_bind("procbtn", "<Enter>", lambda e: (cv.config(cursor="hand2"), proc_hover(True)))
+        cv.tag_bind("procbtn", "<Leave>", lambda e: (cv.config(cursor=""), proc_hover(False)))
         cv.tag_bind("viewbtn", "<Enter>", lambda e: (cv.config(cursor="hand2"), view_hover(True)))
         cv.tag_bind("viewbtn", "<Leave>", lambda e: (cv.config(cursor=""), view_hover(False)))
         cv.tag_bind("resetbtn", "<Enter>", lambda e: (cv.config(cursor="hand2"), reset_hover(True)))
@@ -1063,7 +1089,7 @@ def main():
         # hover help (after the binds above, which replace earlier <Enter> / <Leave> handlers of the same tags)
         for tag, key in (("hdr_now", "hdr_now"), ("hdr_min", "hdr_min"), ("hdr_max", "hdr_max"),
                          ("hdr_avg", "hdr_avg"), ("logbtn", "logbtn"), ("modebtn", "modebtn"),
-                         ("resetbtn", "resetbtn"), ("viewbtn", "viewbtn"), ("gearbtn", "gearbtn"), ("intlbl", "interval_lbl"),
+                         ("resetbtn", "resetbtn"), ("viewbtn", "viewbtn"), ("procbtn", "procbtn"), ("gearbtn", "gearbtn"), ("intlbl", "interval_lbl"),
                          ("uimodebtn", "uimodebtn")):
             help_tip(tag, key)
         if pal:

@@ -93,6 +93,7 @@ i18n.register({
                       "sensor. Click to switch.",
         "hp_resetbtn": "Starts MIN, MAX and AVG over from now (or press R). Recording is not affected.",
         "hp_viewbtn": "Opens the recording viewer (or press V).",
+        "hp_procbtn": "Opens the programs window: what uses the CPU, RAM, GPU, VRAM and disk.",
         "hp_gearbtn": "Opens the settings (or press S).",
         "hp_interval_lbl": "Seconds between readings and CSV lines. You can also change it in Settings > Logging.",
         "hp_bg": "Normally closing the panel (X) ends metriQ. Tick a situation here and, while it is active, closing "
@@ -182,6 +183,7 @@ i18n.register({
                       "her sensör. Değiştirmek için tıklayın.",
         "hp_resetbtn": "MİN, MAKS ve ORT değerlerini şu andan başlatır (veya R'ye basın). Kayıt etkilenmez.",
         "hp_viewbtn": "Kayıt görüntüleyiciyi açar (veya V'ye basın).",
+        "hp_procbtn": "Programlar penceresini açar: CPU, RAM, GPU, VRAM ve diski neyin kullandığı.",
         "hp_gearbtn": "Ayarları açar (veya S'ye basın).",
         "hp_interval_lbl": "Okumalar ve CSV satırları arasındaki saniye. Ayarlar > Kayıt'tan da değiştirebilirsiniz.",
         "hp_bg": "Normalde paneli kapatmak (X) metriQ'yu sonlandırır. Buradan bir durum işaretlerseniz, o durum "
