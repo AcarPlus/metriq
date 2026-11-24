@@ -30,13 +30,13 @@
 
   // Family cards: the other apps, rendered from one list so every site shows the same thing.
   var APPS = [
-    { id: 'metriq', name: 'metriQ', url: 'https://acarplus.github.io/metriq/', c1: '#4fe3cf', c2: '#7aa8ff',
+    { id: 'metriq', name: 'metriQ', url: 'https://acarplus.github.io/metriq/', c1: '#4fe3cf', c2: '#7aa8ff', logo: 'logo.png',
       glyph: '<path d="M4 16.5a8 8 0 0 1 16 0"/><path d="M12 16.5l4.2-5"/>',
       tr: 'Her zaman üstte duran sensör paneli', en: 'Always-on-top sensor dashboard' },
-    { id: 'surround', name: 'Surround', url: 'https://acarplus.github.io/surround/', c1: '#8ea2ff', c2: '#5cc8f2',
+    { id: 'surround', name: 'Surround', url: 'https://acarplus.github.io/surround/', c1: '#8ea2ff', c2: '#5cc8f2', logo: 'logo.png',
       glyph: '<path d="M12 7.4L12 1.4M14.3 8.02L17.3 2.82M15.98 9.7L18.49 8.25M16.6 12L20.69 12M15.98 14.3L20.67 17.01M14.3 15.98L15.14 17.44M12 16.6L12 17.62M9.7 15.98L8.86 17.44M8.02 14.3L3.33 17.01M7.4 12L3.31 12M8.02 9.7L5.51 8.25M9.7 8.02L6.7 2.82" stroke-width="1.7"/><circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/>',
       tr: 'Tüm hoparlörler tek çevresel ses sistemi', en: 'Every speaker, one surround system' },
-    { id: 'perde', name: 'Perde', url: 'https://acarplus.github.io/perde/', c1: '#ff5a6e', c2: '#8b5cf6',
+    { id: 'perde', name: 'Perde', url: 'https://acarplus.github.io/perde/', c1: '#ff5a6e', c2: '#8b5cf6', logo: 'logo.svg',
       glyph: '<path d="M3 4h18M5 4v15c2.5 0 4-2 4-5V4M19 4v15c-2.5 0-4-2-4-5V4M8 21h8"/>',
       tr: 'Projeksiyon için sade ana ekran', en: 'Clean home screen for projectors' },
     { id: 'stremio-offline', name: 'Stremio Offline', url: 'https://acarplus.github.io/stremio-offline/', c1: '#22c55e', c2: '#8b7cf6',
@@ -47,7 +47,8 @@
   if (fam) {
     fam.innerHTML = APPS.filter(function (a) { return a.id !== b.getAttribute('data-app'); }).map(function (a) {
       return '<a class="card fam" href="' + a.url + '" style="--c1:' + a.c1 + ';--c2:' + a.c2 + '">' +
-        '<span class="mark"><svg viewBox="0 0 24 24" aria-hidden="true">' + a.glyph + '</svg></span>' +
+        (a.logo ? '<img class="logo" src="' + a.url + a.logo + '" alt="" width="46" height="46" loading="lazy">'
+          : '<span class="mark"><svg viewBox="0 0 24 24" aria-hidden="true">' + a.glyph + '</svg></span>') +
         '<span><b>' + a.name + '</b><small data-tr>' + a.tr + '</small><small data-en>' + a.en + '</small></span>' +
         '<span class="go"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg></span></a>';
     }).join('');

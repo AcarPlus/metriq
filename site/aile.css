@@ -205,6 +205,10 @@ kbd { border-bottom-width: 2px; }
 .fam { display: flex; align-items: center; gap: 16px; padding: 20px 22px; text-decoration: none; }
 .fam .mark { width: 46px; height: 46px; border-radius: 14px; }
 .fam .mark svg { width: 24px; height: 24px; }
+/* the app's real icon, where it has one (nav, footer, family cards) */
+.logo { flex: none; display: block; width: 34px; height: 34px; border-radius: 9px; box-shadow: 0 6px 20px -8px rgba(var(--a-rgb), .6); }
+.fam .logo { width: 46px; height: 46px; border-radius: 12px; box-shadow: 0 8px 22px -10px rgba(0, 0, 0, .6); }
+.foot .brand .logo { width: 28px; height: 28px; border-radius: 7px; }
 .fam b { display: block; font: 650 17px/1.3 var(--display); }
 .fam small { display: block; color: var(--muted); font-size: 14.5px; }
 .fam .go { margin-left: auto; flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; border: 1px solid var(--line-2); transition: transform .3s, background .3s; }
