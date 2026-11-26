@@ -185,9 +185,11 @@ class UsageTip(Tooltip):
 
     def _watch_start(self):
         if self._wd is None:
-            self._wd = self.w.after(1000, self._watch)
+            self._wd = self.w.after(1000, self._gone_check)
 
-    def _watch(self):
+    def _gone_check(self):
+        # (not named _watch: Tooltip keeps its own timer id in self._watch, which hid this method, so the line
+        # above ran after(1000, None) - a ONE SECOND SLEEP of the UI thread every time a usage row was pointed at)
         """The panel redraws its canvas now and then: the item under the pointer may be gone without a <Leave>."""
         self._wd = None
         try:

@@ -211,12 +211,22 @@ def windowed_pids():
     pids = set()
     cls = ctypes.create_unicode_buffer(64)
 
+    me = os.getpid()
+
     def cb(hwnd, lparam):
         try:
             if not _u32.IsWindowVisible(hwnd) or _u32.GetWindow(hwnd, 4):          # GW_OWNER: owned popups
                 return True
             ex = _u32.GetWindowLongW(hwnd, -20) & 0xFFFFFFFF                       # GWL_EXSTYLE
             if ex & 0x80 and not ex & 0x40000:                                     # tool window w/o APPWINDOW
+                return True
+            pid = wintypes.DWORD(0)
+            _u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value == me:
+                # our own window: never ask its title. For a window of this process GetWindowTextLength SENDS a
+                # message to the UI thread and waits for it; with the UI thread waiting for this thread (GIL / Tcl)
+                # the panel froze for a second, every second the sampler ran (row hover)
+                pids.add(me)
                 return True
             if _u32.GetWindowTextLengthW(hwnd) <= 0:
                 return True
@@ -227,8 +237,6 @@ def windowed_pids():
             _u32.GetClassNameW(hwnd, cls, 64)
             if cls.value in ("Progman", "WorkerW"):
                 return True
-            pid = wintypes.DWORD(0)
-            _u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
             if pid.value:
                 pids.add(pid.value)
         except Exception:

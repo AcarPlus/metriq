@@ -2585,10 +2585,54 @@ def main():
     if is_basic() and cfg["logging"]:                 # e.g. a hand-edited config: Basic never records
         toggle()
     root.after(400, tick)
+    def bench_sweep():
+        """METRIQ_FXBENCH=sweep: a 1000 Hz mouse moving down and up over the row names (synthetic <Motion> events,
+        the real pointer is never touched), to measure what real mouse movement costs."""
+        import tooltip as _tt
+        _tt.Tooltip._pointer_over = lambda self: True
+        hv = st["hovers"]
+        if not hv:
+            root.after(500, bench_sweep)
+            return
+        boxes = [cv.bbox(g.item) for g in hv if cv.bbox(g.item)]
+        x = boxes[0][0] + 12
+        y0, y1 = min(b[1] for b in boxes), max(b[3] for b in boxes)
+        S = {"y": float(y0), "d": 1.0, "n": 0}
+        def mv():
+            if st["closing"]:
+                return
+            S["y"] += S["d"] * 0.6                    # 600 px/s at 1000 events per second
+            if S["y"] > y1 or S["y"] < y0:
+                S["d"] = -S["d"]
+            t0_ = time.perf_counter()
+            if FXPROF and not S.get("fh"):
+                import faulthandler
+                S["fh"] = open(FXPROF + ".stacks", "w")
+                S["fhm"] = faulthandler
+            if FXPROF:
+                S["fhm"].dump_traceback_later(0.3, repeat=False, file=S["fh"])
+            cv.event_generate("<Motion>", x=x, y=int(S["y"]))
+            if FXPROF:
+                S["fhm"].cancel_dump_traceback_later()
+            st.setdefault("ev_cost", []).append(time.perf_counter() - t0_)
+            S["n"] += 1
+            if S["n"] % 500 == 0 and FXPROF:
+                c_ = sorted(st.pop("ev_cost"))
+                with open(FXPROF, "a", encoding="utf-8") as f_:
+                    f_.write("   motion event cost p50 %.2f ms p90 %.2f ms max %.1f ms" % (
+                        c_[len(c_) // 2] * 1000, c_[int(len(c_) * 0.9)] * 1000, c_[-1] * 1000))
+            st["sweep_n"] = S["n"]
+            root.after(1, mv)
+        mv()
+
     if FXBENCH:
-        if FXBENCH == "row0":
+        if FXBENCH == "sweep":
+            st["ptr_in"] = True
+            _warm(True)
+            root.after(3000, bench_sweep)
+        elif FXBENCH == "row0":
             st["ptr_in"] = True                      # measure as with the pointer on the panel (data_snap)
-        root.after(3000, bench_hover)
+            root.after(3000, bench_hover)
     if os.environ.get("METRIQ_UICHECK"):
         ui_check(os.environ["METRIQ_UICHECK"])
     if os.environ.get("METRIQ_QUIT_AFTER"):           # tools/bench_fx.py: end cleanly after a measurement
