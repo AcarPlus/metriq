@@ -424,22 +424,56 @@ def main():
     pacer = vsync.Pacer(lambda: int(root.wm_frame(), 16))     # frames locked to the refresh of the panel's monitor
     frame = winframe.Frameless.inactive()            # replaced by the real one once the window is placed (below)
 
-    def set_fullscreen(on):
-        on = bool(on)
+    def is_fullscreen():
+        if frame.active:
+            return bool(st.get("fs"))
         try:
-            if bool(root.attributes("-fullscreen")) != on:
-                root.attributes("-fullscreen", on)
+            return bool(root.attributes("-fullscreen"))
+        except tk.TclError:
+            return False
+
+    def set_fullscreen(on):
+        """Full screen = the whole monitor the panel is on (taskbar included). Windows: done here (winframe), since
+        Tk's own full screen always opens on the primary monitor; leaving it brings back the window as it was
+        (maximised again if it was)."""
+        on = bool(on)
+        if on == is_fullscreen():
+            return
+        if frame.active:
+            if on:
+                zoomed = root.state() == "zoomed"
+                if zoomed:
+                    root.state("normal")
+                    root.update_idletasks()
+                st["fs_back"] = (zoomed, root.geometry())      # the normal size, kept for a later restore
+                st["fs"] = frame.fullscreen(True)
+            else:
+                st["fs"] = False
+                frame.fullscreen(False)
+                zoomed, geo = st.pop("fs_back", (False, None))
+                if geo:
+                    root.geometry(geo)
+                if zoomed:
+                    root.state("zoomed")
+            return
+        try:
+            root.attributes("-fullscreen", on)
         except tk.TclError:
             pass
-        if frame.active and not on:
-            frame.reframe()
 
     place()
     # no Windows title bar: the status row at the top is the panel's own title bar (window buttons at its right end,
     # its empty parts move the window). Aero Snap, Win+arrows, the system menu and the shadow stay (winframe.py)
     frame = winframe.Frameless(root)
     if frame.active:
-        frame.set_colors(themes.current().is_dark(), C["border"])
+        frame.set_colors(themes.current().is_dark(), C["border"], C["bg"])
+        root.bind("<Map>", lambda e: frame.ensure() if e.widget is root else None, add="+")
+        try:                                     # started in Tk's full screen (before this frame existed): ours
+            if bool(root.attributes("-fullscreen")):
+                root.attributes("-fullscreen", False)
+                set_fullscreen(True)
+        except tk.TclError:
+            pass
 
     spin = tk.Spinbox(root, from_=config.INTERVAL_MIN, to=config.INTERVAL_MAX, increment=0.5, format="%.1f",
                       width=5, bg=C["track"], fg=C["fg"], insertbackground=C["fg"], buttonbackground=C["track"],
@@ -456,6 +490,8 @@ def main():
         apply_fonts()
         root.configure(bg=C["bg"])
         cv.configure(bg=C["bg"])
+        if frame.active:
+            frame.set_colors(themes.current().is_dark(), C["border"], C["bg"])
         spin.config(bg=C["track"], fg=C["fg"], insertbackground=C["fg"], buttonbackground=C["track"])
 
     def current_hint():
@@ -536,9 +572,9 @@ def main():
 
     def title_row(W, sy, sb_h, wb_x0, wb_w, R, pal):
         """The status row is the window's title bar (no Windows caption, winframe.Frameless):
-        * every empty part of it, and the margin above it, moves the window (Windows' own move loop: Aero Snap, drag
-          to the top to maximise, shake); double-click maximises / restores; right-click opens the system menu;
-          the top 5 px resize the window (not maximised);
+        * every empty part of it, and the margin above it, moves the window (Windows' own move loop, started by a
+          POSTED message - see winframe: Aero Snap, drag to the top to maximise, shake); double-click maximises /
+          restores; right-click opens the system menu; the window's own thin top border resizes it;
         * [ – ] [ □ ] [ ✕ ] at its right end, fading into their hover colour (close turns red)."""
         y1 = sy + sb_h
         ph = tk.PhotoImage(master=root, width=max(1, int(W)), height=max(1, int(y1)))   # transparent, still picked
@@ -547,27 +583,13 @@ def main():
 
         def zoomed():
             try:
-                return root.state() == "zoomed" or bool(root.attributes("-fullscreen"))
+                return root.state() == "zoomed" or is_fullscreen()
             except tk.TclError:
                 return False
 
-        def edge(e):
-            return e.y < 5 and not zoomed()
-
-        def press(e):
-            if edge(e):
-                frame.start_size("top", cv, e)
-            else:
-                frame.start_move(cv, e)
-
-        def motion(e):
-            cv.config(cursor="sb_v_double_arrow" if edge(e) else "")
-
-        cv.tag_bind(drag, "<Button-1>", press)
-        cv.tag_bind(drag, "<Double-Button-1>", lambda e: None if edge(e) else toggle_max())
+        cv.tag_bind(drag, "<Button-1>", lambda e: frame.start_move(cv, e))
+        cv.tag_bind(drag, "<Double-Button-1>", lambda e: toggle_max())
         cv.tag_bind(drag, "<Button-3>", lambda e: frame.system_menu(e.x_root, e.y_root))
-        cv.tag_bind(drag, "<Motion>", motion)
-        cv.tag_bind(drag, "<Leave>", lambda e: cv.config(cursor=""))
         # ---- window buttons
         inset = max(3.0, sb_h * 0.10)
         by0, by1 = sy + inset, y1 - inset
@@ -627,7 +649,7 @@ def main():
     def toggle_max():
         """Maximise / restore (the title bar's double-click and its middle button); full screen is left first."""
         try:
-            if bool(root.attributes("-fullscreen")):
+            if is_fullscreen():
                 set_fullscreen(False)
                 return
             root.state("normal" if root.state() == "zoomed" else "zoomed")
@@ -943,6 +965,12 @@ def main():
         FX = st["fx"]
         now = anim_now()
         sky = FX["sky"].frame(FX["W"], FX["H"], 40.0)
+        if frame.active:                        # the thin native top border in the colour of the sky's top edge
+            try:
+                px_ = sky.convert("RGB").resize((1, 1), box=(0, 0, FX["W"], 2)).getpixel((0, 0))
+                frame.set_colors(themes.current().is_dark(), C["border"], "#%02x%02x%02x" % px_[:3])
+            except Exception:
+                pass
         FX["photo"] = aurora.bake(sky, FX["cards"])
         FX["cards"] = []
         cv.itemconfig(FX["bg"], image=FX["photo"])
@@ -1875,7 +1903,7 @@ def main():
     root.bind("<KeyPress-b>", key_ui_mode)
     root.bind("<KeyPress-B>", key_ui_mode)
     cv.bind("<Button-1>", lambda e: cv.focus_set(), add="+")
-    root.bind("<F11>", lambda e: set_fullscreen(not root.attributes("-fullscreen")))
+    root.bind("<F11>", lambda e: set_fullscreen(not is_fullscreen()))
     root.bind("<Escape>", lambda e: set_fullscreen(False))
 
     def on_resize(e):
