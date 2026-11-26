@@ -1133,7 +1133,7 @@ def main():
                     note = (lambda k=row.help: t("hp_" + k)) if row.help else None
                     tagged = procs.tag_row(cv, hit, row, note)
                     if note and not tagged:
-                        Tooltip.for_canvas(cv, hit, note)
+                        Tooltip.for_canvas(cv, hit, note, delay_ms=50)
                     if hint_row:                                    # the hint row leads to the HWiNFO setting
                         cv.tag_bind(hit, "<Button-1>", lambda e: show_hw_setting(), add="+")
                         cv.tag_bind(hit, "<Enter>", lambda e: cv.config(cursor="hand2"), add="+")

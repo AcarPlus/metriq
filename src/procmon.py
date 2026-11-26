@@ -311,6 +311,9 @@ class ProcMon:
                     self.error = ""
                 except Exception as ex:          # keep going: a single failed round must not end sampling
                     self.error = str(ex)
+                snap = self._snap
+                if snap is not None and not snap.warm:
+                    per = 0.3                    # rates need a second round: soon, so a balloon has numbers at once
                 self._wake.wait(max(0.05, per - (time.perf_counter() - t0)))
                 self._wake.clear()
         except BaseException:

@@ -17,7 +17,7 @@ import themes
 
 DELAY_MS = 350
 WRAP_PX = 360
-FADE_IN_S = 0.14          # opening: fades in and rises a few pixels into place (ease-out)
+FADE_IN_S = 0.09          # opening: fades in and rises a few pixels into place (ease-out)
 FADE_OUT_S = 0.09         # closing: fades out
 RISE_PX = 6
 SWITCH_S = 0.5            # a balloon closed less than this ago: the next one opens at once (moving along rows)

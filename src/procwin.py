@@ -56,7 +56,7 @@ _ROW_LABELS = (
 _INFO = ("cpu", "gpu", "ram", "vram")            # rows whose balloon lists the programs by their own metric
 # hover balloon of a row: its metric (network / disk rows by their row id: read and write are listed apart)
 _TIP_BY_RID = {"download": "net", "upload": "net", "disk_read": "dread", "disk_write": "dwrite"}
-TIP_DELAY_MS = 140                               # the balloon opens almost at once: hovering the name is the request
+TIP_DELAY_MS = 50                                # the balloon opens almost at once: hovering the name is the request
 
 
 def tip_metric_for_row(row):
@@ -158,11 +158,11 @@ class UsageTip(Tooltip):
         super()._enter(e)
 
     def show(self):
-        """A cold sampler has no rates yet: wait for its second round (up to ~1.3 s) instead of opening a "measuring"
+        """A cold sampler has no rates yet: wait for its second round (up to 0.4 s; it comes ~0.3 s after the first) instead of opening a "measuring"
         balloon that changes its size a moment later."""
         snap = procmon.MON.snapshot()
         cold = snap is None or (self.metric in ("cpu", "dread", "dwrite") and not snap.warm)
-        if self.tip is None and cold and getattr(self, "_cold", 0) < 13:
+        if self.tip is None and cold and getattr(self, "_cold", 0) < 4:
             self._cold = getattr(self, "_cold", 0) + 1
             self._after = self.w.after(100, self.show)
             return
