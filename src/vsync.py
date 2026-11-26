@@ -16,12 +16,16 @@ import sys
 import threading
 import time
 
-PHASE = float(os.environ.get("METRIQ_VSYNC_PHASE", "0.002"))   # s after the vblank a frame starts
+# where in the refresh interval a frame starts: mid-interval, so the frame (a few ms of drawing) is done well before
+# the compositor takes the window's picture at the next blank. Drawing right after the blank (2 ms) raced the
+# compositor and frames landed 11 / 22 ms apart (measured on screen: 30 - 48 uneven intervals per 160, now ~8)
+PHASE_FRAC = 0.55
+PHASE = float(os.environ["METRIQ_VSYNC_PHASE"]) if os.environ.get("METRIQ_VSYNC_PHASE") else None
 
 if sys.platform == "win32":
     from ctypes import wintypes as W
-    _u32 = ctypes.windll.user32
-    _gdi = ctypes.windll.gdi32
+    _u32 = ctypes.WinDLL("user32")         # own instance: other modules set different argtypes on windll.user32
+    _gdi = ctypes.WinDLL("gdi32")
     _u32.MonitorFromWindow.argtypes = [W.HWND, W.DWORD]
     _u32.MonitorFromWindow.restype = W.HMONITOR
     _gdi.CreateDCW.restype = W.HDC
@@ -143,10 +147,15 @@ class Pacer:
 
     # ------------------------------------------------------------ monitor
     def refresh_monitor(self):
+        """hwnd may be a callable: Tk gives the window its final frame handle only when it is mapped, so a handle
+        taken at start can be gone by the time frames run (the monitor was then never found)."""
         if not self._ok or not self.hwnd:
             return
         try:
-            mon, dev, hz = _monitor_of(self.hwnd)
+            hwnd = self.hwnd() if callable(self.hwnd) else self.hwnd
+            mon, dev, hz = _monitor_of(hwnd)
+            if not dev:
+                return
         except Exception:
             return
         if mon != self.mon or hz != self.hz:
@@ -158,7 +167,10 @@ class Pacer:
         """Diagnostics (METRIQ_FXPROF): refresh rate, frames per refresh, vblank lock."""
         vb = self._vb
         return "hz %.2f k %d period %.3f ms vblank %s" % (self.hz, self.frame_k(), self.refresh_period() * 1000,
-                                                       "locked" if vb and time.perf_counter() - vb < 0.5 else "none")
+                                                       "locked" if vb and time.perf_counter() - vb < 0.5 else
+                                                       "none (ok %s, thread %s, dev %s)" % (
+                                                           self._ok, bool(self._thread and self._thread.is_alive()),
+                                                           self.dev))
 
     def refresh_period(self):
         return self._vb_period or 1.0 / self.hz
@@ -189,8 +201,9 @@ class Pacer:
         nxt = (self._next + F) if self._next is not None else now + F
         vb = self._vb
         if vb is not None and now - vb < 0.5:
-            n = round((nxt - vb - PHASE) / P)              # snap to the vblank grid of that monitor
-            nxt = vb + n * P + PHASE
+            ph = PHASE if PHASE is not None else PHASE_FRAC * P
+            n = round((nxt - vb - ph) / P)                 # snap to the vblank grid of that monitor
+            nxt = vb + n * P + ph
         while nxt < now + 0.0015:                          # a frame was missed: the next refresh, not a burst
             nxt += P
         self._next = nxt

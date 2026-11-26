@@ -420,7 +420,7 @@ def main():
         elif mode != "window":
             root.state("zoomed")
 
-    pacer = vsync.Pacer(int(root.wm_frame(), 16))     # animation frames locked to the display's refresh
+    pacer = vsync.Pacer(lambda: int(root.wm_frame(), 16))     # frames locked to the refresh of the panel's monitor
 
     def set_fullscreen(on):
         on = bool(on)
@@ -618,7 +618,7 @@ def main():
         old = it.get("v_shown")
         FX = st["fx"]
         if (old is None or old == v or not FX["motion"] or not FX["on"] or row.textual or row.special
-                or len({fmt(old + (v - old) * k / 3) for k in range(4)}) < 4):
+                or data_snap() or len({fmt(old + (v - old) * k / 3) for k in range(4)}) < 4):
             FX["anims"].pop(key, None)
             it["v_shown"] = v
             set_text(it["now"], fmt(v), col)
@@ -633,6 +633,16 @@ def main():
             return x < 1.0
         anim_set(key, step)
 
+    def data_snap():
+        """The pointer is on the panel: new readings take their place at once instead of gliding / counting.
+        A glide moves gauges and numbers all over the panel, so every frame repaints nearly the whole window
+        (13 - 30 ms with ~50 rows on a tall screen); with the pointer there that time goes to what it is doing
+        (the row swell, the balloon), which then stay at 60 fps."""
+        return bool(st.get("ptr_in"))
+
+    def hover_moving():
+        return any(k[0] == "hover" for k in st["fx"]["anims"] if isinstance(k, tuple))
+
     def bar_glide(it, frac, col):
         """Plain (non-Aurora) value bar: glides to its new length in the animation loop (motion on)."""
         x0, x1, y0, y1 = it["bargeo"]
@@ -642,7 +652,7 @@ def main():
         it["bar_tgt"] = (tgt, col)
         cv.itemconfig(it["bar"], fill=col)
         FX = st["fx"]
-        if not FX["motion"] or not FX["on"] or "bar_x" not in it:
+        if not FX["motion"] or not FX["on"] or "bar_x" not in it or data_snap():
             it["bar_x"] = tgt
             FX["anims"].pop(("bar", it["bar"]), None)
             cv.coords(it["bar"], x0, y0, int(round(tgt)), y1)
@@ -948,7 +958,7 @@ def main():
                 if now < g["hold"]:
                     busy = busy or g["tgt"] != g["cur"]
                     continue
-                g["cur"] = aurora.approach(g["cur"], g["tgt"], dt) if FX["motion"] else g["tgt"]
+                g["cur"] = aurora.approach(g["cur"], g["tgt"], dt) if FX["motion"] and not data_snap() else g["tgt"]
                 if g["cur"] != g["tgt"]:
                     busy = True
                 if paused:
@@ -1986,6 +1996,7 @@ def main():
     # the pointer on the panel warms the process sampler up (its first round is the costly one), so the top-programs
     # balloon of a row opens with numbers and the hover swell never waits for it
     def _warm(on):
+        st["ptr_in"] = on
         try:
             (procmon.MON.acquire if on else procmon.MON.release)("panel", *((1.0,) if on else ()))
         except Exception:
@@ -2147,6 +2158,12 @@ def main():
 
     # ------------------------------------------------------------ data
     def tick():
+        # a row swell is moving: the new readings (a repaint of the whole panel) wait the ~0.15 s until it ends
+        if st.get("ptr_in") and hover_moving() and st.get("tick_wait", 0) < 12:
+            st["tick_wait"] = st.get("tick_wait", 0) + 1
+            root.after(20, tick)
+            return
+        st["tick_wait"] = 0
         if FXPROF:                                   # diagnostics: how long a data tick holds the UI thread
             t0_ = aurora.clock()
             try:
@@ -2569,6 +2586,8 @@ def main():
         toggle()
     root.after(400, tick)
     if FXBENCH:
+        if FXBENCH == "row0":
+            st["ptr_in"] = True                      # measure as with the pointer on the panel (data_snap)
         root.after(3000, bench_hover)
     if os.environ.get("METRIQ_UICHECK"):
         ui_check(os.environ["METRIQ_UICHECK"])

@@ -67,6 +67,8 @@ def main():
     ap.add_argument("--mode", choices=("basic", "advanced"))
     ap.add_argument("--secs", type=float, default=12.0)
     ap.add_argument("--src", default=os.path.join(ROOT, "src"))
+    ap.add_argument("--exe", help="a built metriQ.exe instead of src/panel.py (e.g. the installed one)")
+    ap.add_argument("--prof", action="store_true", help="also write METRIQ_FXPROF and print its slow callbacks")
     a = ap.parse_args()
     d = tempfile.mkdtemp(prefix="metriq_vfps_")
     try:
@@ -83,7 +85,10 @@ def main():
     where = os.path.join(d, "row.txt")
     env = dict(os.environ, METRIQ_DIR=d, METRIQ_FXBENCH="row0", METRIQ_FXBENCH_OUT=where,
                METRIQ_QUIT_AFTER=str(a.secs + 6))
-    p = subprocess.Popen([sys.executable, os.path.join(a.src, "panel.py")], env=env, cwd=a.src)
+    if a.prof:
+        env["METRIQ_FXPROF"] = os.path.join(d, "fxprof.txt")
+    cmd = [a.exe] if a.exe else [sys.executable, os.path.join(a.src, "panel.py")]
+    p = subprocess.Popen(cmd, env=env, cwd=os.path.dirname(a.exe) if a.exe else a.src)
     t_end = time.time() + 20
     while not os.path.isfile(where) and time.time() < t_end:
         time.sleep(0.05)
@@ -120,6 +125,9 @@ def main():
     durs = [b[-1] - b[0] for b in bursts]
     gaps = [(y - x) * 1000 for b in bursts for x, y in zip(b, b[1:])]
     fps = [(len(b) - 1) / (b[-1] - b[0]) for b in bursts if b[-1] > b[0]]
+    if a.prof and os.path.isfile(env["METRIQ_FXPROF"]):
+        txt = open(env["METRIQ_FXPROF"], encoding="utf-8").read().splitlines()
+        print(chr(10).join(l for l in txt if l.startswith("fps") or "slow" in l or "pacer" in l or "tick n" in l)[:3000])
     if os.environ.get("VFPS_DEBUG"):
         for b_ in bursts[:8]:
             print("   ", " ".join("%.0f" % ((y - x) * 1000) for x, y in zip(b_, b_[1:])))
@@ -141,7 +149,8 @@ def main():
     print(f"theme {cfg.get('theme')} / {cfg.get('ui_mode')}: {len(bursts)} motions, pictures per motion median "
           f"{statistics.median(frames):.0f}, motion {statistics.median(durs) * 1000:.0f} ms, on-screen fps median "
           f"{statistics.median(fps):.0f}, frame gap median {statistics.median(gaps):.1f} ms, max {max(gaps):.1f} ms, "
-          f"gaps over 25 ms {sum(1 for g in gaps if g > 25)} of {len(gaps)}")
+          f"gaps over 25 ms {sum(1 for g in gaps if g > 25)} of {len(gaps)}, uneven (outside 13-20 ms) "
+          f"{sum(1 for g in gaps if not 13 <= g <= 20)}")
 
 
 if __name__ == "__main__":
