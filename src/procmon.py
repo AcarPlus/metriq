@@ -31,6 +31,7 @@ METRICS = ("cpu", "ram", "gpu", "vram", "disk")
 CATS = ("apps", "background", "windows")
 MB = 1024.0 * 1024.0
 MIN_PERIOD = 1.0                                   # never sample faster than once a second
+GRACE_S = 30.0                                     # after the last release the sampler stays warm this long
 
 _ntdll = ctypes.WinDLL("ntdll")
 _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -210,12 +211,22 @@ def windowed_pids():
     pids = set()
     cls = ctypes.create_unicode_buffer(64)
 
+    me = os.getpid()
+
     def cb(hwnd, lparam):
         try:
             if not _u32.IsWindowVisible(hwnd) or _u32.GetWindow(hwnd, 4):          # GW_OWNER: owned popups
                 return True
             ex = _u32.GetWindowLongW(hwnd, -20) & 0xFFFFFFFF                       # GWL_EXSTYLE
             if ex & 0x80 and not ex & 0x40000:                                     # tool window w/o APPWINDOW
+                return True
+            pid = wintypes.DWORD(0)
+            _u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value == me:
+                # our own window: never ask its title. For a window of this process GetWindowTextLength SENDS a
+                # message to the UI thread and waits for it; with the UI thread waiting for this thread (GIL / Tcl)
+                # the panel froze for a second, every second the sampler ran (row hover)
+                pids.add(me)
                 return True
             if _u32.GetWindowTextLengthW(hwnd) <= 0:
                 return True
@@ -226,8 +237,6 @@ def windowed_pids():
             _u32.GetClassNameW(hwnd, cls, 64)
             if cls.value in ("Progman", "WorkerW"):
                 return True
-            pid = wintypes.DWORD(0)
-            _u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
             if pid.value:
                 pids.add(pid.value)
         except Exception:
@@ -246,6 +255,7 @@ class ProcMon:
         self._snap = None
         self._thread = None
         self._wake = threading.Event()
+        self._idle_since = None              # last time the owners went away (None while somebody holds it)
         self.error = ""
         # state of the sampler thread (only touched there)
         self._table = None
@@ -270,7 +280,8 @@ class ProcMon:
     def release(self, owner):
         with self._lock:
             self._owners.pop(owner, None)
-        self._wake.set()
+            if not self._owners:
+                self._idle_since = time.perf_counter()
 
     def active(self):
         with self._lock:
@@ -281,17 +292,26 @@ class ProcMon:
 
     # ---- thread
     def _period(self):
+        """Sampling period now, None when the thread may end. Without owners it keeps sampling once a second for
+        GRACE_S: the first round of a cold start (PDH counters, the image path of every process) costs ~0.2 s of CPU
+        and holds the UI thread, so moving the pointer from one panel row to the next must never pay it again."""
         with self._lock:
-            return min(self._owners.values()) if self._owners else None
+            if self._owners:
+                self._idle_since = None
+            return self._period_locked()
 
     def _run(self):
+        me = threading.current_thread()
         try:
             while True:
                 per = self._period()
                 if per is None:
-                    time.sleep(0.2)              # grace: a quick release / acquire does not restart everything
-                    if self._period() is None:
-                        break
+                    with self._lock:             # end only if nobody acquired meanwhile; an acquire after this
+                        if self._period_locked() is None:   # sees no thread and starts a fresh one
+                            self._reset_locked()
+                            if self._thread is me:
+                                self._thread = None
+                            return
                     continue
                 t0 = time.perf_counter()
                 try:
@@ -299,20 +319,35 @@ class ProcMon:
                     self.error = ""
                 except Exception as ex:          # keep going: a single failed round must not end sampling
                     self.error = str(ex)
+                snap = self._snap
+                if snap is not None and not snap.warm:
+                    per = 0.3                    # rates need a second round: soon, so a balloon has numbers at once
                 self._wake.wait(max(0.05, per - (time.perf_counter() - t0)))
                 self._wake.clear()
-        finally:
-            self._reset()
+        except BaseException:
+            with self._lock:
+                self._reset_locked()
+                if self._thread is me:
+                    self._thread = None
+            raise
 
-    def _reset(self):
-        if self._pdh is not None:
+    def _period_locked(self):
+        if self._owners:
+            return min(self._owners.values())
+        if self._idle_since is not None and time.perf_counter() - self._idle_since < GRACE_S:
+            return MIN_PERIOD
+        return None
+
+    def _reset_locked(self):
+        if self._pdh:
             try:
                 self._pdh.close()
             except Exception:
                 pass
         self._pdh = None
         self._prev, self._prev_t, self._static = {}, None, {}
-        self._snap = None if not self.active() else self._snap
+        if not self._owners:
+            self._snap = None
 
     def _gpu(self):
         """({pid: GPU %}, {pid: VRAM MB}, ok, adapter dedicated MB or None)"""

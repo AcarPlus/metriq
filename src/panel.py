@@ -30,12 +30,15 @@ import proclog
 import logview
 import minimode
 import perf_core
+import procmon
+import textsprite
 import procwin
 import settings_ui
 import themes
 import throttle
 import tray
 import updater
+import vsync
 from tooltip import Tooltip
 from i18n import t
 
@@ -334,6 +337,24 @@ def main():
     root.configure(bg=C["bg"])
     root.attributes("-topmost", bool(cfg["topmost"]))
     root.minsize(400, 480)
+    if FXPROF:                     # diagnostics: name every root.after callback that holds the UI thread > 12 ms
+        _after = root.after
+
+        def _timed_after(ms, func=None, *args):
+            if func is None:
+                return _after(ms)
+
+            def run(*a):
+                t0_ = time.perf_counter()
+                try:
+                    return func(*a)
+                finally:
+                    d_ = time.perf_counter() - t0_
+                    if d_ > 0.012:
+                        with open(FXPROF, "a", encoding="utf-8") as f_:
+                            f_.write("   slow %s %.1f ms\n" % (getattr(func, "__qualname__", func), d_ * 1000))
+            return _after(ms, run, *args)
+        root.after = _timed_after
 
     F_TXT = F_HEAD = F_NUM = "TkDefaultFont"
 
@@ -388,16 +409,26 @@ def main():
         else:
             w, h = min(900, root.winfo_screenwidth() - 40), min(1400, root.winfo_screenheight() - 80)
             x, y = 20, 20
-        root.attributes("-fullscreen", False)
+        set_fullscreen(False)
         root.state("normal")
         root.geometry(f"{w}x{h}+{x}+{y}")
         if not final:
             return
         root.update_idletasks()
         if mode == "fullscreen":
-            root.attributes("-fullscreen", True)
+            set_fullscreen(True)
         elif mode != "window":
             root.state("zoomed")
+
+    pacer = vsync.Pacer(lambda: int(root.wm_frame(), 16))     # frames locked to the refresh of the panel's monitor
+
+    def set_fullscreen(on):
+        on = bool(on)
+        try:
+            if bool(root.attributes("-fullscreen")) != on:
+                root.attributes("-fullscreen", on)
+        except tk.TclError:
+            pass
 
     place()
 
@@ -461,12 +492,18 @@ def main():
     # fx_step, the single root.after loop: it runs at ~60 fps only while something moves and stops when all is still.
     # Steps only reconfigure their own canvas items, so Tk repaints just those regions over the baked background.
     NUM_S = 0.35                                    # number count-up / count-down length (seconds)
+    HOVER_S = 0.16                                  # row name swell length (seconds)
     FONTS = {}                                      # (family, px) -> tkfont.Font (px_font)
+
+    def anim_now():
+        """Current time of the animation clock (fx_step): start times of animations are taken from it."""
+        return st["fx"].get("vnow", 0.0)
 
     def anim_wake():
         FX = st["fx"]
         if FX["on"] and not st["closing"] and not FX.get("job"):
-            FX["job"] = root.after(1, fx_step)
+            # the first frame right after the event (no timer: a Windows timer at rest rounds up to ~16 ms)
+            FX["job"] = root.after_idle(fx_step)
 
     def anim_set(key, fn):
         """fn(now, dt) -> still moving? is called once per frame until it returns False (same key: replaced)."""
@@ -486,48 +523,90 @@ def main():
         return 1 - (1 - x) ** 3
 
     # ------------------------------------------------------------ hover: row names with a balloon swell a little
-    def hover_grow(nm_id, fs, accent, avail, num=None, num_fs=None):
-        """Name of a row with a hover balloon (top programs, plain-language help): on hover it grows (eased, ~150 ms)
-        and lights up, the row's number swells a little with it. Never wider than `avail` px (the bar column)."""
-        size0 = -fs                                     # (font sizes are negative = pixels)
-        size1 = size0 + max(2, int(round(size0 * 0.16)))
+    def hit_area(nm_id, tags):
+        """An invisible image over a row name that takes its pointer events (hover swell, balloon, click). The name
+        itself can then be swapped for its swell image without the pointer "leaving" it. Images are picked by their
+        box, transparent or not."""
+        bb = cv.bbox(nm_id)
+        if not bb:
+            return nm_id
+        ph = tk.PhotoImage(master=root, width=max(1, bb[2] - bb[0]), height=max(1, bb[3] - bb[1]))
+        st.setdefault("hit_imgs", []).append(ph)
+        return cv.create_image(bb[0], bb[1], anchor="nw", image=ph, tags=tags)
+
+    def hover_grow(nm_id, fs, accent, avail, hit=None):
+        """Name of a row with a hover balloon (top programs, plain-language help): on hover it grows (~0.2 s, eased in
+        and out) and lights up. Never wider than `avail` px (the bar column).
+        While it moves the name is an anti-aliased image at a fractional size (textsprite.py): Tk fonts only have whole
+        pixel sizes, which gave 2 - 3 different pictures per swell (stutter at any frame rate). At rest the Tk text item
+        is shown again. The text item stays under the image (invisible) and keeps the pointer events."""
+        size0 = float(-fs)                              # (font sizes are negative = pixels)
+        size1 = size0 + max(2.0, size0 * 0.16)
         try:
             w0 = meas_font(F_TXT, fs).measure(cv.itemcget(nm_id, "text"))
         except tk.TclError:
             w0 = 0
         if w0 > 0 and avail > 0:
-            size1 = max(size0, min(size1, int(size0 * avail / w0)))
-        n0 = -num_fs if num is not None and num_fs else 0
-        n1 = n0 + max(1, int(round(n0 * 0.10))) if n0 else 0
+            size1 = max(size0, min(size1, size0 * avail / w0))
         fill0, fill1 = C["name"], mix(C["fg"], accent, 0.35)
-        a = {"v": 0.0, "to": 0.0, "size": size0, "nsize": n0}
+        a = {"e": 0.0, "to": 0.0, "e0": 0.0, "t": 0.0, "size": int(size0), "img": None}
+        sprite = textsprite.Sprite.for_family(F_TXT) if GFX else None
+
+        def rest():
+            if a["img"] is not None:
+                cv.delete(a["img"])
+                a["img"] = None
+            cv.itemconfig(nm_id, fill=fill0, font=px_font(F_TXT, int(size0)), state="normal")
+            a["size"] = int(size0)
 
         def step(now, dt):
             FX = st["fx"]
-            if FX["motion"]:
-                d = a["to"] - a["v"]
-                a["v"] = a["to"] if abs(d) < 0.02 else a["v"] + d * (1 - math.exp(-dt / 0.045))
-            else:
-                a["v"] = a["to"]
-            e = a["v"]
-            size = int(round(size0 + (size1 - size0) * e))
-            if size != a["size"]:
-                a["size"] = size
-                cv.itemconfig(nm_id, font=px_font(F_TXT, size))
-            cv.itemconfig(nm_id, fill=mix(fill0, fill1, e))
-            if n0:
-                ns = int(round(n0 + (n1 - n0) * e))
-                if ns != a["nsize"]:
-                    a["nsize"] = ns
-                    cv.itemconfig(num, font=px_font(F_NUM, ns))
-            return a["v"] != a["to"]
+            e0, to = a["e0"], a["to"]
+            a["t"] += dt
+            # from wherever it is now (a reversal never jumps): grows at once (ease-out), settles back softly
+            x = min(1.0, a["t"] / (HOVER_S * max(0.35, abs(to - e0)))) if FX["motion"] else 1.0
+            k = 1 - (1 - x) ** 3 if to > e0 else x * x * (3 - 2 * x)
+            a["e"] = e = e0 + (to - e0) * k
+            col = mix(fill0, fill1, e)
+            if e <= 0.0:
+                rest()
+                return x < 1.0
+            sz = size0 + (size1 - size0) * e
+            ph = None
+            if sprite is not None:
+                try:
+                    xy = cv.coords(nm_id)
+                    if xy:
+                        ph = sprite.photo(cv.itemcget(nm_id, "text"), sz, col, size1)
+                except tk.TclError:
+                    ph = None
+            if ph is not None:
+                img, dx = ph
+                if a["img"] is None or not cv.type(a["img"]):
+                    # (disabled: never the pointer's item; the hit area above the name keeps the events)
+                    a["img"] = cv.create_image(xy[0] - dx, xy[1], anchor="w", image=img, state="disabled")
+                    cv.itemconfig(nm_id, state="hidden")
+                else:
+                    cv.coords(a["img"], xy[0] - dx, xy[1])
+                    cv.itemconfig(a["img"], image=img)
+            else:                                       # no sprite: whole-pixel Tk font steps
+                size = int(round(sz))
+                if size != a["size"]:
+                    a["size"] = size
+                    cv.itemconfig(nm_id, font=px_font(F_TXT, size))
+                cv.itemconfig(nm_id, fill=col)
+            return x < 1.0
 
         def go(to):
-            a["to"] = to
+            if to == a["to"]:
+                return
+            a["to"], a["e0"], a["t"] = to, a["e"], 0.0
             anim_set(("hover", nm_id), step)
-        cv.tag_bind(nm_id, "<Enter>", lambda e: go(1.0), add="+")
-        cv.tag_bind(nm_id, "<Leave>", lambda e: go(0.0), add="+")
+        src = hit if hit is not None else nm_id
+        cv.tag_bind(src, "<Enter>", lambda e: go(1.0), add="+")
+        cv.tag_bind(src, "<Leave>", lambda e: go(0.0), add="+")
         go.item = nm_id
+        go.shown = lambda: a["img"] if a["img"] is not None and cv.type(a["img"]) else nm_id    # what is on screen
         st["hovers"].append(go)
         return go
 
@@ -539,22 +618,30 @@ def main():
         old = it.get("v_shown")
         FX = st["fx"]
         if (old is None or old == v or not FX["motion"] or not FX["on"] or row.textual or row.special
-                or len({fmt(old + (v - old) * k / 3) for k in range(4)}) < 4):
+                or data_snap() or len({fmt(old + (v - old) * k / 3) for k in range(4)}) < 4):
             FX["anims"].pop(key, None)
             it["v_shown"] = v
             set_text(it["now"], fmt(v), col)
             return
-        t0, v0 = aurora.clock(), old
+        t0, v0 = anim_now(), old
 
         def step(now, dt):
             x = min(1.0, (now - t0) / NUM_S)
-            if x < 1.0 and FX["frame"] % 2:
-                return True                      # digits change at half rate (~30 Hz): the eye sees no difference
             val = v if x >= 1.0 else v0 + (v - v0) * ease_out(x)
             it["v_shown"] = val
             set_text(it["now"], fmt(val), col)
             return x < 1.0
         anim_set(key, step)
+
+    def data_snap():
+        """The pointer is on the panel: new readings take their place at once instead of gliding / counting.
+        A glide moves gauges and numbers all over the panel, so every frame repaints nearly the whole window
+        (13 - 30 ms with ~50 rows on a tall screen); with the pointer there that time goes to what it is doing
+        (the row swell, the balloon), which then stay at 60 fps."""
+        return bool(st.get("ptr_in"))
+
+    def hover_moving():
+        return any(k[0] == "hover" for k in st["fx"]["anims"] if isinstance(k, tuple))
 
     def bar_glide(it, frac, col):
         """Plain (non-Aurora) value bar: glides to its new length in the animation loop (motion on)."""
@@ -565,7 +652,7 @@ def main():
         it["bar_tgt"] = (tgt, col)
         cv.itemconfig(it["bar"], fill=col)
         FX = st["fx"]
-        if not FX["motion"] or not FX["on"] or "bar_x" not in it:
+        if not FX["motion"] or not FX["on"] or "bar_x" not in it or data_snap():
             it["bar_x"] = tgt
             FX["anims"].pop(("bar", it["bar"]), None)
             cv.coords(it["bar"], x0, y0, int(round(tgt)), y1)
@@ -591,9 +678,23 @@ def main():
         if hv:
             n = st.get("bench_i", 0) % len(hv)
             st["bench_i"] = n + 1
+            if FXBENCH == "row0":                    # tools/measure_visual_fps.py: always the first row, and say where
+                n = 0
+                out = os.environ.get("METRIQ_FXBENCH_OUT")
+                if out and not st.get("bench_said"):
+                    b_ = cv.bbox(hv[0].item)
+                    if b_:
+                        st["bench_said"] = True
+                        rx, ry = cv.winfo_rootx(), cv.winfo_rooty()
+                        with open(out, "w", encoding="utf-8") as f_:
+                            f_.write("%d %d %d %d" % (rx + b_[0], ry + b_[1], rx + b_[2], ry + b_[3]))
+            if FXBENCH == "row0" and os.environ.get("METRIQ_FXBENCH_OUT"):
+                with open(os.environ["METRIQ_FXBENCH_OUT"] + ".go", "a", encoding="utf-8") as f_:
+                    f_.write("%.6f " % time.perf_counter())          # when the swell was asked for (latency)
             hv[n](1.0)
-            root.after(260, lambda g=hv[n]: g(0.0))
-        root.after(300, bench_hover)
+            hold = 500 if FXBENCH == "row0" else 260       # row0: a whole swell and a whole shrink every second
+            root.after(hold, lambda g=hv[n]: g(0.0))
+        root.after(1000 if FXBENCH == "row0" else 300, bench_hover)
 
     def ui_check(out_path):
         """METRIQ_UICHECK=<file> (tools/check_hover_anim.py): drive the real panel once and write what happened as
@@ -616,21 +717,21 @@ def main():
             snap("start")
             hv = st["hovers"]
             if hv:
-                res["w0"] = width(hv[0].item)
+                res["w0"] = width(hv[0].shown())
                 hv[0](1.0)
             root.after(450, s2)
 
         def s2():
             hv = st["hovers"]
             if hv:
-                res["w1"] = width(hv[0].item)
+                res["w1"] = width(hv[0].shown())
                 hv[0](0.0)
             root.after(450, s3)
 
         def s3():
             hv = st["hovers"]
             if hv:
-                res["w2"] = width(hv[0].item)
+                res["w2"] = width(hv[0].shown())
             toggle_ui_mode()
             root.after(1800, s4)
 
@@ -658,6 +759,7 @@ def main():
                   ring_row=None, t_bg=0.0, last=aurora.clock(), frame=0)
         FX["motion"] = aurora.motion_on(cfg.get("motion"))
         st["hovers"] = []
+        st["hit_imgs"] = []
         st["mode_sliding"] = False
         if not pal:
             return None
@@ -728,7 +830,7 @@ def main():
     def fx_end(boxes, rh):
         """End of a build: cards rise into place one after another (motion on), then the effect loop runs."""
         FX = st["fx"]
-        now = aurora.clock()
+        now = anim_now()
         sky = FX["sky"].frame(FX["W"], FX["H"], 40.0)
         FX["photo"] = aurora.bake(sky, FX["cards"])
         FX["cards"] = []
@@ -783,7 +885,14 @@ def main():
                     n / (t2 - P["t"]), P["step"] / n * 1000, P["paint"] / n * 1000, P["gap"] / n * 1000, P["max"] * 1000,
                     busy, len(st["fx"]["gauges"])))
                 dn = sorted(P["dn"])
-                f.write("   start-to-start median %.1f ms  p10 %.1f  p90 %.1f\n" % (dn[len(dn)//2]*1000, dn[len(dn)//10]*1000, dn[int(len(dn)*0.9)]*1000))
+                f.write("   start-to-start median %.1f ms  p10 %.1f  p90 %.1f  max %.1f  >25ms %d\n" % (
+                    dn[len(dn)//2]*1000, dn[len(dn)//10]*1000, dn[int(len(dn)*0.9)]*1000, dn[-1]*1000,
+                    sum(1 for x in dn if x > 0.025)))
+                f.write("   pacer %s\n" % pacer.info())
+                tk_ = st.pop("tick_cost", [])
+                if tk_:
+                    f.write("   tick n %d  avg %.1f ms  max %.1f ms\n" % (len(tk_), sum(tk_) / len(tk_) * 1000,
+                                                                     max(tk_) * 1000))
                 P["dn"] = []
                 L_ = sorted(P["late"])
                 f.write("   late median %.1f ms  p90 %.1f ms\n" % (L_[len(L_) // 2] * 1000, L_[int(len(L_) * 0.9)] * 1000))
@@ -816,9 +925,16 @@ def main():
         if st["closing"] or not FX["on"]:
             fx_hires(False)
             return
-        now = aurora.clock()
-        dt = min(0.2, now - FX["last"])
-        FX["last"] = now
+        real = aurora.clock()
+        # animation time runs on its own clock: a frame never advances it by more than 1/30 s, so a hitch (a
+        # rebuild, a slow data read) only pauses the motion instead of making it jump ahead
+        dt = min(1 / 30, max(0.0, real - FX["last"]))
+        if FX.get("idle", True):
+            dt = min(dt, 1 / 60)                         # first frame after a still period
+            FX["idle"] = False
+            pacer.start()
+        FX["last"] = real
+        FX["vnow"] = now = FX.get("vnow", 0.0) + dt
         paused = bool(st.get("mini") or st.get("hidden"))
         busy = False
         try:
@@ -842,7 +958,7 @@ def main():
                 if now < g["hold"]:
                     busy = busy or g["tgt"] != g["cur"]
                     continue
-                g["cur"] = aurora.approach(g["cur"], g["tgt"], dt) if FX["motion"] else g["tgt"]
+                g["cur"] = aurora.approach(g["cur"], g["tgt"], dt) if FX["motion"] and not data_snap() else g["tgt"]
                 if g["cur"] != g["tgt"]:
                     busy = True
                 if paused:
@@ -872,12 +988,15 @@ def main():
         except tk.TclError:
             return
         if FXPROF:
-            fx_prof(now, busy)
+            fx_prof(real, busy)
         fx_hires(busy and not paused)
-        if busy and not paused:                          # ~60 fps while something moves, nothing otherwise
-            _d = max(1, int(16 - (aurora.clock() - now) * 1000))
+        if busy and not paused:          # every k-th refresh of the panel's monitor while something moves (vsync.py)
+            _d = pacer.delay_ms()
             FX["due"] = aurora.clock() + _d / 1000
             FX["job"] = root.after(_d, fx_step)
+        else:                                            # nothing moves: no frames at all
+            FX["idle"] = True
+            pacer.stop()
 
     def build(W, H):
         cv.delete("all")
@@ -973,7 +1092,8 @@ def main():
                 elif GFX:
                     bx0, by0 = int(round(cx0)), int(round(yy))
                     cv.create_image(bx0, by0, image=gfx.card(int(round(cx1)) - bx0, int(round(yy + ch)) - by0, R,
-                                                             C["card"], C["border"], accent), anchor="nw")
+                                                             C["card"], C["border"], accent, under=C["bg"]),
+                                    anchor="nw")
                     cv.create_image(col_name + isz * 1.6, hy, image=gfx.icon(sec.icon, isz, accent, bubble, bubble))
                 else:
                     round_rect(cv, cx0, yy, cx1, yy + ch, R, fill=C["card"], outline=C["border"])
@@ -1016,17 +1136,18 @@ def main():
                     nm_right = (fr["now"] * cw - nw - 10 if not p.with_bar else fr["now"] * cw - 10) if hint_row else name_right
                     nm_id = cv.create_text(col_name, my, text=fit_text(fnt_name, row.name, name_avail + nm_right - name_right),
                                            anchor="w", font=f_name, fill=C["name"], tags=(ent_tag,))
+                    hit = hit_area(nm_id, ent_tag)               # pointer target of the name (hover, balloon)
                     # one balloon per row name, no (i) icons: CPU / RAM / GPU / VRAM / disk / network rows list their
-                    # top programs (and open the process window on a click); a row with an explanation (every Basic
+                    # top programs (rows are not clickable: the process window has its own button); a row with an explanation (every Basic
                     # row, e.g. throttling in Advanced) shows it, above the program list when it has one
                     note = (lambda k=row.help: t("hp_" + k)) if row.help else None
-                    tagged = procs.tag_row(cv, nm_id, row, note)
+                    tagged = procs.tag_row(cv, hit, row, note)
                     if note and not tagged:
-                        Tooltip.for_canvas(cv, nm_id, note)
+                        Tooltip.for_canvas(cv, hit, note, delay_ms=50)
                     if hint_row:                                    # the hint row leads to the HWiNFO setting
-                        cv.tag_bind(nm_id, "<Button-1>", lambda e: show_hw_setting(), add="+")
-                        cv.tag_bind(nm_id, "<Enter>", lambda e: cv.config(cursor="hand2"), add="+")
-                        cv.tag_bind(nm_id, "<Leave>", lambda e: cv.config(cursor=""), add="+")
+                        cv.tag_bind(hit, "<Button-1>", lambda e: show_hw_setting(), add="+")
+                        cv.tag_bind(hit, "<Enter>", lambda e: cv.config(cursor="hand2"), add="+")
+                        cv.tag_bind(hit, "<Leave>", lambda e: cv.config(cursor=""), add="+")
                     it = {"accent": accent}
                     if row is FX.get("ring_row"):
                         it["ring"] = FX["ring_key"]
@@ -1055,9 +1176,9 @@ def main():
                         for k, xx in (("min", col_min), ("max", col_max), ("avg", col_avg)):
                             it[k] = cv.create_text(xx, my, text="–", anchor="e", font=f_num, fill=C["dim"],
                                                    tags=(ent_tag,))
-                    if tagged or note:                              # rows with a hover balloon: the row swells
-                        hover_grow(nm_id, fs_name, accent, nm_right - pad,
-                                   None if hint_row else it["now"], None if hint_row else fs_num_e)
+                    # rows with a hover balloon swell; a state row (throttling: yes / no) only explains itself
+                    if (tagged or note) and not row.textual:
+                        hover_grow(nm_id, fs_name, accent, nm_right - pad, hit)
                     st["items"][id(row)] = it
                     ry += rp
                 yy += ch + gc
@@ -1081,7 +1202,7 @@ def main():
         elif GFX:
             bx0, by0 = int(round(sx0)), int(round(sy))
             cv.create_image(bx0, by0, image=gfx.card(int(round(sx1)) - bx0, int(round(sy + sb_h)) - by0, R,
-                                                     C["card"], C["border"]), anchor="nw")
+                                                     C["card"], C["border"], under=C["bg"]), anchor="nw")
         else:
             round_rect(cv, sx0, sy, sx1, sy + sb_h, R, fill=C["card"], outline=C["border"])
         my = sy + sb_h / 2
@@ -1294,7 +1415,7 @@ def main():
         if pal:
             fx_end(sec_boxes, rh)
         if entry and entry_tags:
-            t0 = aurora.clock()
+            t0 = anim_now()
             dy = max(6, int(round(rh * 0.45)))
             gap = min(0.035, 0.6 / max(1, max(n for _, _, n in entry_tags)))     # whole entry stays under ~1 s
             for tag, ci, n in entry_tags:
@@ -1598,7 +1719,7 @@ def main():
             apply_settings({"ui_mode": to})
             return
         dx = geo
-        t0 = aurora.clock()
+        t0 = anim_now()
         a = {"applied": 0}
         st["mode_sliding"] = True
 
@@ -1639,8 +1760,8 @@ def main():
     root.bind("<KeyPress-b>", key_ui_mode)
     root.bind("<KeyPress-B>", key_ui_mode)
     cv.bind("<Button-1>", lambda e: cv.focus_set(), add="+")
-    root.bind("<F11>", lambda e: root.attributes("-fullscreen", not root.attributes("-fullscreen")))
-    root.bind("<Escape>", lambda e: root.attributes("-fullscreen", False))
+    root.bind("<F11>", lambda e: set_fullscreen(not root.attributes("-fullscreen")))
+    root.bind("<Escape>", lambda e: set_fullscreen(False))
 
     def on_resize(e):
         size = (e.width, e.height)
@@ -1872,6 +1993,26 @@ def main():
     procs = procwin.Controller(api)
     api.procs = procs
 
+    # the pointer on the panel warms the process sampler up (its first round is the costly one), so the top-programs
+    # balloon of a row opens with numbers and the hover swell never waits for it
+    def _warm(on):
+        st["ptr_in"] = on
+        try:
+            (procmon.MON.acquire if on else procmon.MON.release)("panel", *((1.0,) if on else ()))
+        except Exception:
+            pass
+        # 1 ms timers while the pointer is on the panel: the animation loop and the balloons react without the
+        # ~16 ms rounding of Windows' default timer
+        if os.name == "nt" and bool(st.get("hires_ptr")) != on:
+            try:
+                import ctypes
+                (ctypes.windll.winmm.timeBeginPeriod if on else ctypes.windll.winmm.timeEndPeriod)(1)
+                st["hires_ptr"] = on
+            except Exception:
+                pass
+    cv.bind("<Enter>", lambda e: _warm(True), add="+")
+    cv.bind("<Leave>", lambda e: _warm(False), add="+")
+
     def mm_notice(text):
         """Short notice in the toast stack above the status bar (e.g. the mini mode hotkey is taken)."""
         st["hk_msg"], st["hk_note"] = text, time.time()
@@ -2017,6 +2158,21 @@ def main():
 
     # ------------------------------------------------------------ data
     def tick():
+        # a row swell is moving: the new readings (a repaint of the whole panel) wait the ~0.15 s until it ends
+        if st.get("ptr_in") and hover_moving() and st.get("tick_wait", 0) < 12:
+            st["tick_wait"] = st.get("tick_wait", 0) + 1
+            root.after(20, tick)
+            return
+        st["tick_wait"] = 0
+        if FXPROF:                                   # diagnostics: how long a data tick holds the UI thread
+            t0_ = aurora.clock()
+            try:
+                return tick_()
+            finally:
+                st.setdefault("tick_cost", []).append(aurora.clock() - t0_)
+        return tick_()
+
+    def tick_():
         try:
             rd = src.read_all()
             ok = True
@@ -2411,11 +2567,72 @@ def main():
         st["mode_msg"], st["mode_note"] = t("ui_mode_hint"), time.time()
         refresh_status()
     root.after(1800, show_mode_hint)
+
+    def _prep_balloon():
+        try:
+            import tooltip
+            tooltip.prepare(root)                    # the balloon window, made before the first hover needs it
+        except Exception:
+            pass
+        try:                                         # the swell's font file and first images, likewise
+            sp = textsprite.Sprite.for_family(F_TXT) if GFX else None
+            if sp is not None:
+                for k in range(9):
+                    sp.photo("CPU", 15 + k * 0.25, C["name"], 17)
+        except Exception:
+            pass
+    root.after(1200, _prep_balloon)
     if is_basic() and cfg["logging"]:                 # e.g. a hand-edited config: Basic never records
         toggle()
     root.after(400, tick)
+    def bench_sweep():
+        """METRIQ_FXBENCH=sweep: a 1000 Hz mouse moving down and up over the row names (synthetic <Motion> events,
+        the real pointer is never touched), to measure what real mouse movement costs."""
+        import tooltip as _tt
+        _tt.Tooltip._pointer_over = lambda self: True
+        hv = st["hovers"]
+        if not hv:
+            root.after(500, bench_sweep)
+            return
+        boxes = [cv.bbox(g.item) for g in hv if cv.bbox(g.item)]
+        x = boxes[0][0] + 12
+        y0, y1 = min(b[1] for b in boxes), max(b[3] for b in boxes)
+        S = {"y": float(y0), "d": 1.0, "n": 0}
+        def mv():
+            if st["closing"]:
+                return
+            S["y"] += S["d"] * 0.6                    # 600 px/s at 1000 events per second
+            if S["y"] > y1 or S["y"] < y0:
+                S["d"] = -S["d"]
+            t0_ = time.perf_counter()
+            if FXPROF and not S.get("fh"):
+                import faulthandler
+                S["fh"] = open(FXPROF + ".stacks", "w")
+                S["fhm"] = faulthandler
+            if FXPROF:
+                S["fhm"].dump_traceback_later(0.3, repeat=False, file=S["fh"])
+            cv.event_generate("<Motion>", x=x, y=int(S["y"]))
+            if FXPROF:
+                S["fhm"].cancel_dump_traceback_later()
+            st.setdefault("ev_cost", []).append(time.perf_counter() - t0_)
+            S["n"] += 1
+            if S["n"] % 500 == 0 and FXPROF:
+                c_ = sorted(st.pop("ev_cost"))
+                with open(FXPROF, "a", encoding="utf-8") as f_:
+                    f_.write("   motion event cost p50 %.2f ms p90 %.2f ms max %.1f ms" % (
+                        c_[len(c_) // 2] * 1000, c_[int(len(c_) * 0.9)] * 1000, c_[-1] * 1000))
+            st["sweep_n"] = S["n"]
+            root.after(1, mv)
+        mv()
+
     if FXBENCH:
-        root.after(3000, bench_hover)
+        if FXBENCH == "sweep":
+            st["ptr_in"] = True
+            _warm(True)
+            root.after(3000, bench_sweep)
+        elif FXBENCH == "row0":
+            st["ptr_in"] = True                      # measure as with the pointer on the panel (data_snap)
+            root.after(3000, bench_hover)
     if os.environ.get("METRIQ_UICHECK"):
         ui_check(os.environ["METRIQ_UICHECK"])
     if os.environ.get("METRIQ_QUIT_AFTER"):           # tools/bench_fx.py: end cleanly after a measurement

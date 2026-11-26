@@ -33,11 +33,19 @@ def _get(key, make):
     return im
 
 
-def _render(w, h, paint):
-    """PhotoImage of w x h pixels; paint(draw, k) draws in k-times magnified pixel coordinates."""
-    im = Image.new("RGBA", (w * SS, h * SS), (0, 0, 0, 0))
+def _render(w, h, paint, under=None):
+    """PhotoImage of w x h pixels; paint(draw, k) draws in k-times magnified pixel coordinates.
+    under: a colour the image is painted on, making it fully opaque. Tk blends a photo with partial alpha pixel by
+    pixel in software on every redraw (a big card: 10 - 30 ms), an opaque one is a plain copy."""
+    im = Image.new("RGBA", (w * SS, h * SS), (0, 0, 0, 0) if under is None else _rgb(under) + (255,))
     paint(ImageDraw.Draw(im), SS)
     return ImageTk.PhotoImage(im.reduce(SS))          # box filter of the SSxSS block = same AA, several times faster than LANCZOS
+
+
+def _rgb(col):
+    """'#rrggbb' -> (r, g, b)"""
+    col = col.lstrip("#")
+    return tuple(int(col[i:i + 2], 16) for i in (0, 2, 4))
 
 
 def _px(v):
@@ -197,8 +205,9 @@ def button(kind, hit, s, col, bgc):
     return _get(("btn", kind, round(hit, 2), round(s, 2), col, bgc), make)
 
 
-def card(w, h, r, fill, outline, accent=None):
-    """Rounded card w x h with a 1 px border and, optionally, a 3 px accent stripe on the left edge."""
+def card(w, h, r, fill, outline, accent=None, under=None):
+    """Rounded card w x h with a 1 px border and, optionally, a 3 px accent stripe on the left edge.
+    under: the colour behind the card (its corners), for an opaque image (see _render)."""
     w, h = _px(w), _px(h)
 
     def make():
@@ -206,8 +215,8 @@ def card(w, h, r, fill, outline, accent=None):
             d.rounded_rectangle([0, 0, w * k - 1, h * k - 1], radius=r * k, fill=fill, outline=outline, width=k)
             if accent:
                 d.rectangle([0, r * k, 3 * k - 1, (h - r) * k], fill=accent)
-        return _render(w, h, paint)
-    return _get(("card", w, h, r, fill, outline, accent), make)
+        return _render(w, h, paint, under)
+    return _get(("card", w, h, r, fill, outline, accent, under), make)
 
 
 def pill(w, h, fill, dot=None, dot_x=0.0, dot_r=0.0):

@@ -52,7 +52,7 @@ a = Analysis(
         (os.path.join(SRC, "set_interval.ps1"), "."),
         (GPU_EXE, "."),
     ],
-    hiddenimports=['psutil', 'PIL', 'PIL.Image', 'PIL.ImageDraw', 'PIL.ImageTk',
+    hiddenimports=['psutil', 'PIL', 'PIL.Image', 'PIL.ImageDraw', 'PIL.ImageTk', 'PIL.ImageFont',
                    'lang', 'lang.de', 'lang.es', 'lang.ru', 'lang.pt'],     # i18n imports lang.<code> lazily
     hookspath=[],
     runtime_hooks=[],
