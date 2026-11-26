@@ -39,6 +39,7 @@ import throttle
 import tray
 import updater
 import vsync
+import winframe
 from tooltip import Tooltip
 from i18n import t
 
@@ -421,6 +422,7 @@ def main():
             root.state("zoomed")
 
     pacer = vsync.Pacer(lambda: int(root.wm_frame(), 16))     # frames locked to the refresh of the panel's monitor
+    frame = winframe.Frameless.inactive()            # replaced by the real one once the window is placed (below)
 
     def set_fullscreen(on):
         on = bool(on)
@@ -429,8 +431,15 @@ def main():
                 root.attributes("-fullscreen", on)
         except tk.TclError:
             pass
+        if frame.active and not on:
+            frame.reframe()
 
     place()
+    # no Windows title bar: the status row at the top is the panel's own title bar (window buttons at its right end,
+    # its empty parts move the window). Aero Snap, Win+arrows, the system menu and the shadow stay (winframe.py)
+    frame = winframe.Frameless(root)
+    if frame.active:
+        frame.set_colors(themes.current().is_dark(), C["border"])
 
     spin = tk.Spinbox(root, from_=config.INTERVAL_MIN, to=config.INTERVAL_MAX, increment=0.5, format="%.1f",
                       width=5, bg=C["track"], fg=C["fg"], insertbackground=C["fg"], buttonbackground=C["track"],
@@ -523,6 +532,108 @@ def main():
         return 1 - (1 - x) ** 3
 
     # ------------------------------------------------------------ hover: row names with a balloon swell a little
+    CLOSE_RED = "#c42b1c"
+
+    def title_row(W, sy, sb_h, wb_x0, wb_w, R, pal):
+        """The status row is the window's title bar (no Windows caption, winframe.Frameless):
+        * every empty part of it, and the margin above it, moves the window (Windows' own move loop: Aero Snap, drag
+          to the top to maximise, shake); double-click maximises / restores; right-click opens the system menu;
+          the top 5 px resize the window (not maximised);
+        * [ – ] [ □ ] [ ✕ ] at its right end, fading into their hover colour (close turns red)."""
+        y1 = sy + sb_h
+        ph = tk.PhotoImage(master=root, width=max(1, int(W)), height=max(1, int(y1)))   # transparent, still picked
+        st.setdefault("hit_imgs", []).append(ph)
+        drag = cv.create_image(0, 0, anchor="nw", image=ph, tags=("tdrag",))
+
+        def zoomed():
+            try:
+                return root.state() == "zoomed" or bool(root.attributes("-fullscreen"))
+            except tk.TclError:
+                return False
+
+        def edge(e):
+            return e.y < 5 and not zoomed()
+
+        def press(e):
+            if edge(e):
+                frame.start_size("top", cv, e)
+            else:
+                frame.start_move(cv, e)
+
+        def motion(e):
+            cv.config(cursor="sb_v_double_arrow" if edge(e) else "")
+
+        cv.tag_bind(drag, "<Button-1>", press)
+        cv.tag_bind(drag, "<Double-Button-1>", lambda e: None if edge(e) else toggle_max())
+        cv.tag_bind(drag, "<Button-3>", lambda e: frame.system_menu(e.x_root, e.y_root))
+        cv.tag_bind(drag, "<Motion>", motion)
+        cv.tag_bind(drag, "<Leave>", lambda e: cv.config(cursor=""))
+        # ---- window buttons
+        inset = max(3.0, sb_h * 0.10)
+        by0, by1 = sy + inset, y1 - inset
+        g = max(4.5, sb_h * 0.13)                                    # half size of a glyph
+        rest = C["fg"]
+        for i, kind in enumerate(("min", "max", "close")):
+            x0 = wb_x0 + i * wb_w + 1
+            x1 = x0 + wb_w - 2 - (inset if kind == "close" else 0)
+            cx, cy = (x0 + x1) / 2, (by0 + by1) / 2
+            tag = "wbtn_" + kind
+            bg_id = round_rect(cv, x0, by0, x1, by1, min(R, sb_h * 0.30), fill="", outline="", tags=(tag,))
+            w = max(1, int(round(sb_h / 30)))
+            ids = []
+            if kind == "min":
+                ids.append(cv.create_line(cx - g, cy, cx + g, cy, fill=rest, width=w, tags=(tag,)))
+            elif kind == "max":
+                if zoomed():                                         # restore glyph: two overlapping squares
+                    d = g * 0.35
+                    ids.append(cv.create_rectangle(cx - g, cy - g + d, cx + g - d, cy + g, outline=rest, width=w,
+                                                   tags=(tag,)))
+                    ids.append(cv.create_line(cx - g + d, cy - g + d, cx - g + d, cy - g, cx + g, cy - g, cx + g,
+                                              cy + g - d, cx + g - d, cy + g - d, fill=rest, width=w, tags=(tag,)))
+                else:
+                    ids.append(cv.create_rectangle(cx - g, cy - g, cx + g, cy + g, outline=rest, width=w, tags=(tag,)))
+            else:
+                ids.append(cv.create_line(cx - g, cy - g, cx + g, cy + g, fill=rest, width=w, tags=(tag,)))
+                ids.append(cv.create_line(cx - g, cy + g, cx + g, cy - g, fill=rest, width=w, tags=(tag,)))
+            # the pointer target: a transparent image over the whole button (an unfilled shape is not picked)
+            bph = tk.PhotoImage(master=root, width=max(1, int(x1 - x0)), height=max(1, int(by1 - by0)))
+            st["hit_imgs"].append(bph)
+            cv.create_image(x0, by0, anchor="nw", image=bph, tags=(tag,))
+            hov = CLOSE_RED if kind == "close" else mix(C["card"], C["fg"], 0.14)
+            glyph_on = "#ffffff" if kind == "close" else C["fg"]
+            a = {"v": 0.0, "to": 0.0}
+
+            def step(now, dt, a=a, bg_id=bg_id, ids=ids, hov=hov, glyph_on=glyph_on):
+                d = a["to"] - a["v"]
+                a["v"] = a["to"] if abs(d) < 0.03 else a["v"] + d * (1 - math.exp(-dt / 0.05))
+                v = a["v"]
+                cv.itemconfig(bg_id, fill="" if v <= 0.01 else mix(C["card"], hov, v))
+                col = mix(rest, glyph_on, v)
+                for i_ in ids:
+                    try:
+                        cv.itemconfig(i_, fill=col) if cv.type(i_) == "line" else cv.itemconfig(i_, outline=col)
+                    except tk.TclError:
+                        pass
+                return a["v"] != a["to"]
+
+            def hover(on, a=a, step=step, tag=tag):
+                a["to"] = 1.0 if on else 0.0
+                anim_set(("wbtn", tag), step)
+            cv.tag_bind(tag, "<Enter>", lambda e, h=hover: h(True))
+            cv.tag_bind(tag, "<Leave>", lambda e, h=hover: h(False))
+            act = {"min": lambda e: root.iconify(), "max": lambda e: toggle_max(), "close": lambda e: on_close()}[kind]
+            cv.tag_bind(tag, "<ButtonRelease-1>", act)
+
+    def toggle_max():
+        """Maximise / restore (the title bar's double-click and its middle button); full screen is left first."""
+        try:
+            if bool(root.attributes("-fullscreen")):
+                set_fullscreen(False)
+                return
+            root.state("normal" if root.state() == "zoomed" else "zoomed")
+        except tk.TclError:
+            pass
+
     def hit_area(nm_id, tags):
         """An invisible image over a row name that takes its pointer events (hover swell, balloon, click). The name
         itself can then be swapped for its swell image without the pointer "leaving" it. Images are picked by their
@@ -1076,7 +1187,7 @@ def main():
             col_avg = cx1 - pad
             col_min, col_max = (cx0 + cw * fr["mn"], cx0 + cw * fr["mx"]) if not basic else (0, 0)
             stat_w = col_avg - (col_now + 6 + unit_w) - 8   # room for the status word (Basic)
-            yy = m
+            yy = m + STATUS * rh                          # the status row is at the top (it is the title bar)
             ent_n = 0
             rp, gc = p.pitch[ci], p.gaps[ci]
             for sec in col_secs:
@@ -1183,14 +1294,16 @@ def main():
                     ry += rp
                 yy += ch + gc
         # ----- status bar (full width, a single row: record pill, mode switch, interval, reset, gear);
-        # messages are shown as small toasts just above it (see draw_toasts)
+        # it is at the top and is the window's title bar; messages are small toasts just below it (draw_toasts)
         sx0, sx1 = m, W - m
         sw_span = sx1 - sx0
         rs = min(rh, max(layout.MIN_RH, sw_span * 0.042))      # its text must not grow with a huge row height
         spad = min(sw_span * 0.035, rs * 1.0)
         col_name = sx0 + spad
         sb_h = rs * (STATUS - 0.2)
-        sy = H - m - sb_h
+        sy = m
+        wb_w = max(32.0, sb_h * 0.82) if frame.active else 0.0     # one window button (minimise / maximise / close)
+        wb_x0 = sx1 - 3 * wb_w                                       # where the window buttons start
         s = st["status"]
         s.clear()
         s["gfx"] = GFX
@@ -1206,6 +1319,8 @@ def main():
         else:
             round_rect(cv, sx0, sy, sx1, sy + sb_h, R, fill=C["card"], outline=C["border"])
         my = sy + sb_h / 2
+        if frame.active:
+            title_row(W, sy, sb_h, wb_x0, wb_w, R, pal)
         px0 = col_name - 6
         f_pill = (F_TXT, -max(10, int(rs * 0.50)), "bold")
         # Basic has no recording: no record pill (and no log viewer button, see below)
@@ -1232,7 +1347,7 @@ def main():
         # Basic: [gear] only (no recording, so no log viewer; no MIN / MAX / AVG to reset, no interval)
         gs = max(rs * 0.42, 8.0)
         hit = gs * 1.45
-        gx = sx1 - spad - hit
+        gx = (wb_x0 - hit - 8) if frame.active else (sx1 - spad - hit)
         rx = gx - hit * 2 - 4
         vx = rx - hit * 2 - 4
         if basic:
@@ -1355,9 +1470,9 @@ def main():
         if not basic:                            # Basic: no interval box (the recording keeps its interval)
             spin.config(font=(F_NUM, -max(10, int(rs * 0.52))))
             cv.create_window(spin_r, my, window=spin, anchor="e", width=spin_w, height=rs * 1.0)
-        # toasts sit centred just above the bar
+        # toasts sit centred just below the bar
         ft = -max(10, int(rs * 0.42))
-        s["toast_geo"] = ((sx0 + sx1) / 2, sy - max(4.0, rs * 0.25), sw_span - 2 * spad)
+        s["toast_geo"] = ((sx0 + sx1) / 2, sy + sb_h + max(4.0, rs * 0.25), sw_span - 2 * spad)
         s["f_toast"], s["f_toast_t"] = meas_font(F_TXT, ft, "bold"), (F_TXT, ft, "bold")
         for tag, fn in (("logbtn", toggle), ("modebtn", toggle_mode), ("gearbtn", open_settings),
                         ("uimodebtn", toggle_ui_mode), ("resetbtn", reset_stats), ("viewbtn", lambda e=None: logview.show(api)), ("procbtn", lambda e=None: procs.open()), ("updbtn", upd_click), ("updx", upd_dismiss), ("hwrestart", hw_restart_click)):
@@ -1552,7 +1667,7 @@ def main():
                 tw = min(maxw - 2 * th, f.measure(text) + xw)
                 text = fit_text(f, text, tw - xw)
             w = int(tw + th)
-            x0, y0 = int(round(cx - w / 2)), int(round(y - ph))
+            x0, y0 = int(round(cx - w / 2)), int(round(y))           # below the status row, stacking down
             fill, line = mix(C["card"], col, 0.22), mix(C["card"], col, 0.6)
             if st["fx"]["pal"]:                 # Aurora: frosted toast (nearly opaque: it must stay readable)
                 fill, line = aurora.hexa(fill, 0xe8), aurora.hexa(line, 0xc0)
@@ -1567,7 +1682,7 @@ def main():
             if kind == "upd":
                 cv.create_text(x0 + w - th / 2, y0 + th / 2, text="✕", anchor="e", font=s["f_toast_t"], fill=C["dim"],
                                tags=("toast", "updx"))
-            y -= ph + 6
+            y += ph + 6
 
     def refresh_status():
         s = st["status"]
