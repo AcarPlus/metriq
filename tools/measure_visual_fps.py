@@ -120,6 +120,24 @@ def main():
     durs = [b[-1] - b[0] for b in bursts]
     gaps = [(y - x) * 1000 for b in bursts for x, y in zip(b, b[1:])]
     fps = [(len(b) - 1) / (b[-1] - b[0]) for b in bursts if b[-1] > b[0]]
+    if os.environ.get("VFPS_DEBUG"):
+        for b_ in bursts[:8]:
+            print("   ", " ".join("%.0f" % ((y - x) * 1000) for x, y in zip(b_, b_[1:])))
+    lat = []
+    try:
+        gos = [float(x) for x in open(where + ".go").read().split()]
+        for g0 in gos:
+            if g0 < t0:                                   # asked before the capture ran
+                continue
+            first = next((t for t in times if t > g0), None)
+            if first is not None and first - g0 < 0.3:
+                lat.append((first - g0) * 1000)
+    except OSError:
+        pass
+    if lat:
+        if os.environ.get("VFPS_DEBUG"):
+            print("    latencies", " ".join("%.0f" % x for x in lat))
+        print(f"swell asked -> first change on screen: median {statistics.median(lat):.1f} ms, max {max(lat):.1f} ms")
     print(f"theme {cfg.get('theme')} / {cfg.get('ui_mode')}: {len(bursts)} motions, pictures per motion median "
           f"{statistics.median(frames):.0f}, motion {statistics.median(durs) * 1000:.0f} ms, on-screen fps median "
           f"{statistics.median(fps):.0f}, frame gap median {statistics.median(gaps):.1f} ms, max {max(gaps):.1f} ms, "

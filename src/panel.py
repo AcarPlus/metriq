@@ -492,7 +492,7 @@ def main():
     # fx_step, the single root.after loop: it runs at ~60 fps only while something moves and stops when all is still.
     # Steps only reconfigure their own canvas items, so Tk repaints just those regions over the baked background.
     NUM_S = 0.35                                    # number count-up / count-down length (seconds)
-    HOVER_S = 0.20                                  # row name swell length (seconds)
+    HOVER_S = 0.16                                  # row name swell length (seconds)
     FONTS = {}                                      # (family, px) -> tkfont.Font (px_font)
 
     def anim_now():
@@ -502,7 +502,8 @@ def main():
     def anim_wake():
         FX = st["fx"]
         if FX["on"] and not st["closing"] and not FX.get("job"):
-            FX["job"] = root.after(1, fx_step)
+            # the first frame right after the event (no timer: a Windows timer at rest rounds up to ~16 ms)
+            FX["job"] = root.after_idle(fx_step)
 
     def anim_set(key, fn):
         """fn(now, dt) -> still moving? is called once per frame until it returns False (same key: replaced)."""
@@ -548,7 +549,7 @@ def main():
         if w0 > 0 and avail > 0:
             size1 = max(size0, min(size1, size0 * avail / w0))
         fill0, fill1 = C["name"], mix(C["fg"], accent, 0.35)
-        a = {"p": 0.0, "to": 0.0, "size": int(size0), "img": None}
+        a = {"e": 0.0, "to": 0.0, "e0": 0.0, "t": 0.0, "size": int(size0), "img": None}
         sprite = textsprite.Sprite.for_family(F_TXT) if GFX else None
 
         def rest():
@@ -560,17 +561,16 @@ def main():
 
         def step(now, dt):
             FX = st["fx"]
-            if FX["motion"]:
-                k = dt / HOVER_S
-                a["p"] = min(a["to"], a["p"] + k) if a["to"] > a["p"] else max(a["to"], a["p"] - k)
-            else:
-                a["p"] = a["to"]
-            p = a["p"]
-            e = p * p * (3 - 2 * p)                     # smoothstep: eased in and out, the same curve both ways
+            e0, to = a["e0"], a["to"]
+            a["t"] += dt
+            # from wherever it is now (a reversal never jumps): grows at once (ease-out), settles back softly
+            x = min(1.0, a["t"] / (HOVER_S * max(0.35, abs(to - e0)))) if FX["motion"] else 1.0
+            k = 1 - (1 - x) ** 3 if to > e0 else x * x * (3 - 2 * x)
+            a["e"] = e = e0 + (to - e0) * k
             col = mix(fill0, fill1, e)
-            if p <= 0.0:
+            if e <= 0.0:
                 rest()
-                return a["p"] != a["to"]
+                return x < 1.0
             sz = size0 + (size1 - size0) * e
             ph = None
             if sprite is not None:
@@ -595,10 +595,12 @@ def main():
                     a["size"] = size
                     cv.itemconfig(nm_id, font=px_font(F_TXT, size))
                 cv.itemconfig(nm_id, fill=col)
-            return a["p"] != a["to"]
+            return x < 1.0
 
         def go(to):
-            a["to"] = to
+            if to == a["to"]:
+                return
+            a["to"], a["e0"], a["t"] = to, a["e"], 0.0
             anim_set(("hover", nm_id), step)
         src = hit if hit is not None else nm_id
         cv.tag_bind(src, "<Enter>", lambda e: go(1.0), add="+")
@@ -676,6 +678,9 @@ def main():
                         rx, ry = cv.winfo_rootx(), cv.winfo_rooty()
                         with open(out, "w", encoding="utf-8") as f_:
                             f_.write("%d %d %d %d" % (rx + b_[0], ry + b_[1], rx + b_[2], ry + b_[3]))
+            if FXBENCH == "row0" and os.environ.get("METRIQ_FXBENCH_OUT"):
+                with open(os.environ["METRIQ_FXBENCH_OUT"] + ".go", "a", encoding="utf-8") as f_:
+                    f_.write("%.6f " % time.perf_counter())          # when the swell was asked for (latency)
             hv[n](1.0)
             hold = 500 if FXBENCH == "row0" else 260       # row0: a whole swell and a whole shrink every second
             root.after(hold, lambda g=hv[n]: g(0.0))
@@ -1077,7 +1082,8 @@ def main():
                 elif GFX:
                     bx0, by0 = int(round(cx0)), int(round(yy))
                     cv.create_image(bx0, by0, image=gfx.card(int(round(cx1)) - bx0, int(round(yy + ch)) - by0, R,
-                                                             C["card"], C["border"], accent), anchor="nw")
+                                                             C["card"], C["border"], accent, under=C["bg"]),
+                                    anchor="nw")
                     cv.create_image(col_name + isz * 1.6, hy, image=gfx.icon(sec.icon, isz, accent, bubble, bubble))
                 else:
                     round_rect(cv, cx0, yy, cx1, yy + ch, R, fill=C["card"], outline=C["border"])
@@ -1186,7 +1192,7 @@ def main():
         elif GFX:
             bx0, by0 = int(round(sx0)), int(round(sy))
             cv.create_image(bx0, by0, image=gfx.card(int(round(sx1)) - bx0, int(round(sy + sb_h)) - by0, R,
-                                                     C["card"], C["border"]), anchor="nw")
+                                                     C["card"], C["border"], under=C["bg"]), anchor="nw")
         else:
             round_rect(cv, sx0, sy, sx1, sy + sb_h, R, fill=C["card"], outline=C["border"])
         my = sy + sb_h / 2
@@ -1984,6 +1990,15 @@ def main():
             (procmon.MON.acquire if on else procmon.MON.release)("panel", *((1.0,) if on else ()))
         except Exception:
             pass
+        # 1 ms timers while the pointer is on the panel: the animation loop and the balloons react without the
+        # ~16 ms rounding of Windows' default timer
+        if os.name == "nt" and bool(st.get("hires_ptr")) != on:
+            try:
+                import ctypes
+                (ctypes.windll.winmm.timeBeginPeriod if on else ctypes.windll.winmm.timeEndPeriod)(1)
+                st["hires_ptr"] = on
+            except Exception:
+                pass
     cv.bind("<Enter>", lambda e: _warm(True), add="+")
     cv.bind("<Leave>", lambda e: _warm(False), add="+")
 
@@ -2535,6 +2550,21 @@ def main():
         st["mode_msg"], st["mode_note"] = t("ui_mode_hint"), time.time()
         refresh_status()
     root.after(1800, show_mode_hint)
+
+    def _prep_balloon():
+        try:
+            import tooltip
+            tooltip.prepare(root)                    # the balloon window, made before the first hover needs it
+        except Exception:
+            pass
+        try:                                         # the swell's font file and first images, likewise
+            sp = textsprite.Sprite.for_family(F_TXT) if GFX else None
+            if sp is not None:
+                for k in range(9):
+                    sp.photo("CPU", 15 + k * 0.25, C["name"], 17)
+        except Exception:
+            pass
+    root.after(1200, _prep_balloon)
     if is_basic() and cfg["logging"]:                 # e.g. a hand-edited config: Basic never records
         toggle()
     root.after(400, tick)

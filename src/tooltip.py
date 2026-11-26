@@ -9,6 +9,7 @@
 or a string. Colours always come from the active theme, so balloons follow theme changes.
 tip.note = callable -> str: an explanation shown above the content (e.g. Basic view: what a row means + its top programs).
 """
+import sys
 import tkinter as tk
 import tkinter.font as tkfont
 
@@ -19,6 +20,10 @@ WRAP_PX = 360
 FADE_IN_S = 0.14          # opening: fades in and rises a few pixels into place (ease-out)
 FADE_OUT_S = 0.09         # closing: fades out
 RISE_PX = 6
+SWITCH_S = 0.5            # a balloon closed less than this ago: the next one opens at once (moving along rows)
+FULL_ALPHA = 0.999        # not 1.0: Tk would drop the layered style, and with it the pointer pass-through
+_last_open = [0.0]        # time a balloon was last visible (shared by all balloons)
+_SHARED = {}              # root -> the one balloon window (Tooltip._take)
 FRAME_MS = 10             # (Windows timers round this up to the next ~15.6 ms tick: ~60 fps)
 
 
@@ -59,9 +64,11 @@ class Tooltip:
 
     # ---------------------------------------------------------------- events
     def _enter(self, e):
+        import time
         self._xy = (e.x_root, e.y_root)
         self._cancel()
-        self._after = self.w.after(self.delay_ms, self.show)
+        quick = self.delay_ms and time.perf_counter() - _last_open[0] < SWITCH_S
+        self._after = self.w.after(15 if quick else self.delay_ms, self.show)
 
     def _motion(self, e):
         # the balloon stays where it opened (under the row): chasing the pointer made it jitter on every mouse move
@@ -151,13 +158,13 @@ class Tooltip:
                 rows.append((left, right, bold))
         p = themes.palette()
         shape = (bool(note), tuple((r[1] is None, r[2]) for r in rows), p["card"], p["fg"], p["name"])
-        if self.tip is not None and self._closing:     # shown again while it fades out: back in, at the new place
+        win = self._take()
+        if self._closing:                         # shown again while it fades out: back in, at the new place
             self._closing = False
             self._anchor = None
-            self._fade_to(1.0, FADE_IN_S)
-        if self.tip is not None and getattr(self, "_shape", None) == shape:
-            # live refresh: same rows, new numbers -> only the texts change (no window rebuilt, no flicker)
-            labels = self._labels
+        if getattr(win, "_mshape", None) == shape:
+            # same rows as on screen (a live refresh, or the next row of the same kind): only the texts change
+            labels = win._mlabels
             k = 0
             if note:
                 labels[0].config(text=note)
@@ -168,52 +175,82 @@ class Tooltip:
                 if right is not None:
                     labels[k].config(text=right)
                     k += 1
-            self._place(resize=True)
-            self._arm()
-            return
-        if self.tip is None:
-            self.tip = tk.Toplevel(self.w)
-            self.tip.withdraw()                       # shown by _place, once it has its position
-            self.tip.wm_overrideredirect(True)
+        else:
+            for ch in win.winfo_children():
+                ch.destroy()
+            win._mshape = shape
+            win._mlabels = labels = []
+            fnt, fbold = self._fonts()
+            outer = tk.Frame(win, bg=p["border"], bd=0)
+            outer.pack()
+            body = tk.Frame(outer, bg=p["card"], padx=10, pady=7)
+            body.pack(padx=1, pady=1)
+            if len(rows) == 1 and rows[0][1] is None:
+                lb = tk.Label(body, text=rows[0][0], bg=p["card"], fg=p["fg"], font=fnt, justify="left",
+                              wraplength=self.wrap)
+                lb.pack(anchor="w")
+                labels.append(lb)
+            else:
+                off = 0
+                if note:
+                    lb = tk.Label(body, text=note, bg=p["card"], fg=p["fg"], font=fnt, justify="left",
+                                  wraplength=self.wrap)
+                    lb.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+                    labels.append(lb)
+                    off = 1
+                for i, (left, right, bold) in enumerate(rows):
+                    f = fbold if bold else fnt
+                    lb = tk.Label(body, text=left, bg=p["card"], fg=p["fg"] if bold else p["name"], font=f,
+                                  anchor="w")
+                    lb.grid(row=i + off, column=0, sticky="w")
+                    labels.append(lb)
+                    rb = tk.Label(body, text=right or "", bg=p["card"], fg=p["fg"], font=f, anchor="e")
+                    rb.grid(row=i + off, column=1, sticky="e", padx=(14, 0))
+                    labels.append(rb)
+        self._place(resize=True)
+        f = self._fade
+        if self._alpha < FULL_ALPHA and not (f and f["a1"] == FULL_ALPHA):
+            self._fade_to(FULL_ALPHA, FADE_IN_S)
+        self._arm()
+
+    def _take(self):
+        """The balloon window: ONE per application, made once and never destroyed. It stays mapped, invisible
+        (alpha 0) and pointer-transparent between balloons, so opening one costs no window creation or mapping
+        (that held the UI thread for 20 - 45 ms, right in the middle of the row's hover swell). A balloon that
+        takes it from another one (moving along the rows) goes on from that one's opacity: it changes in place."""
+        win = prepare(self.w)
+        prev = win._owner
+        if prev is not None and prev is not self:
+            prev._let_go()
+        win._owner = self
+        if self.tip is not win:
+            self.tip = win
+            self._alpha = win._a
+            self._anchor = None
+            self._pos = self._size = None
+        return win
+
+    def _let_go(self):
+        """Another balloon took the shared window: stop fading it, forget it (nothing is destroyed)."""
+        f = self._fade
+        if f and f.get("job"):
             try:
-                self.tip.attributes("-topmost", True)
-                self.tip.attributes("-alpha", 0.0)        # fades in (_fade_to) once it is placed
+                self.w.after_cancel(f["job"])
             except tk.TclError:
                 pass
-            self._alpha = 0.0
-            self._anchor = None
-        for ch in self.tip.winfo_children():
-            ch.destroy()
-        self._shape = shape
-        self._labels = labels = []
-        fnt, fbold = self._fonts()
-        outer = tk.Frame(self.tip, bg=p["border"], bd=0)
-        outer.pack()
-        body = tk.Frame(outer, bg=p["card"], padx=10, pady=7)
-        body.pack(padx=1, pady=1)
-        if len(rows) == 1 and rows[0][1] is None:
-            lb = tk.Label(body, text=rows[0][0], bg=p["card"], fg=p["fg"], font=fnt, justify="left",
-                          wraplength=self.wrap)
-            lb.pack(anchor="w")
-            labels.append(lb)
-        else:
-            off = 0
-            if note:
-                lb = tk.Label(body, text=note, bg=p["card"], fg=p["fg"], font=fnt, justify="left",
-                              wraplength=self.wrap)
-                lb.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
-                labels.append(lb)
-                off = 1
-            for i, (left, right, bold) in enumerate(rows):
-                f = fbold if bold else fnt
-                lb = tk.Label(body, text=left, bg=p["card"], fg=p["fg"] if bold else p["name"], font=f, anchor="w")
-                lb.grid(row=i + off, column=0, sticky="w")
-                labels.append(lb)
-                rb = tk.Label(body, text=right or "", bg=p["card"], fg=p["fg"], font=f, anchor="e")
-                rb.grid(row=i + off, column=1, sticky="e", padx=(14, 0))
-                labels.append(rb)
-        self._place(resize=True)
-        self._arm()
+        self._fade = None
+        for name in ("_watch", "_live"):
+            job = getattr(self, name)
+            if job:
+                try:
+                    self.w.after_cancel(job)
+                except tk.TclError:
+                    pass
+                setattr(self, name, None)
+        self.tip = None
+        self._closing = False
+        self._alpha = 0.0
+        self._size = self._pos = self._anchor = None
 
     def _arm(self):
         if self._watch is None:
@@ -225,6 +262,9 @@ class Tooltip:
         self._live = None
         if self.tip:
             self.show()
+
+    def _pass_through(self):
+        _pass_through(self.tip)
 
     def _anchor_rect(self):
         """Screen rectangle (x0, y0, x1, y1) the balloon belongs to: the canvas item(s) with our tag, else the widget."""
@@ -272,7 +312,7 @@ class Tooltip:
         if self.tip.state() == "withdrawn":
             self.tip.deiconify()
             self._closing = False
-            self._fade_to(1.0, FADE_IN_S)
+            self._fade_to(FULL_ALPHA, FADE_IN_S)
 
     def _move(self):
         """Geometry for the current fade: while it opens it rises the last few pixels into place."""
@@ -304,6 +344,8 @@ class Tooltip:
         try:
             # 1.0 would make Windows drop the layered style mid-fade; it is set exactly once at the end
             self.tip.attributes("-alpha", self._alpha if x < 1.0 else f["a1"])
+            if getattr(self.tip, "_shared", False):
+                self.tip._a = self._alpha
             if self._pos is not None:
                 self._move()
         except tk.TclError:
@@ -329,17 +371,75 @@ class Tooltip:
             except tk.TclError:
                 pass
             self._live = None
+        if self.tip is not None and self._alpha > 0.05:
+            import time
+            _last_open[0] = time.perf_counter()
         if self.tip is not None and not self._closing:
             self._closing = True
             self._fade_to(0.0, FADE_OUT_S, self._destroy)
 
     def _destroy(self):
-        if self.tip is not None:
+        tip = self.tip
+        if tip is not None and getattr(tip, "_shared", False):
+            if tip._owner is self:                # faded out: it stays, invisible, for the next balloon
+                tip._owner = None
+                tip._a = 0.0
+        elif tip is not None:                     # a window of its own (logview.ChartTip)
             try:
-                self.tip.destroy()
+                tip.destroy()
             except tk.TclError:
                 pass
         self.tip = None
         self._closing = False
         self._alpha = 0.0
         self._shape = self._size = self._pos = self._anchor = None
+
+
+def _pass_through(win):
+    """The balloon never takes the pointer (Windows: layered + transparent, no activation): moving on to the row
+    below it reaches that row at once instead of the balloon."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        win.update_idletasks()
+        hwnd = int(win.wm_frame(), 16)
+        u = ctypes.windll.user32
+        u.GetWindowLongW.restype = ctypes.c_long
+        ex = u.GetWindowLongW(hwnd, -20)
+        u.SetWindowLongW(hwnd, -20, ex | 0x20 | 0x80000 | 0x80 | 0x08000000)
+    except Exception:
+        pass
+
+
+def prepare(widget):
+    """The application's one balloon window (made on the first call): the panel calls this once after start, so
+    even the first balloon opens without making a window."""
+    root = widget._root()
+    win = _SHARED.get(root)
+    try:
+        if win is not None and win.winfo_exists():
+            return win
+    except tk.TclError:
+        pass
+    win = tk.Toplevel(root)
+    win.withdraw()
+    win.wm_overrideredirect(True)
+    try:
+        win.attributes("-topmost", True)
+        win.attributes("-alpha", 0.0)
+    except tk.TclError:
+        pass
+    win._owner, win._a, win._shared, win._mshape = None, 0.0, True, None
+    _pass_through(win)
+    win.geometry("+%d+%d" % (root.winfo_rootx() + 20, root.winfo_rooty() + 20))
+    win.deiconify()
+    _SHARED[root] = win
+    try:                                          # fonts and a first layout pass, also before the first hover
+        fnt, fbold = Tooltip._fonts()
+        tk.Label(win, text="0", font=fnt).pack()
+        tk.Label(win, text="0", font=fbold).pack()
+        win.update_idletasks()
+    except tk.TclError:
+        pass
+    return win

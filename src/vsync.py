@@ -53,6 +53,62 @@ if sys.platform == "win32":
         _fields_ = [("hAdapter", ctypes.c_uint)]
 
 
+    class _GUID(ctypes.Structure):
+        _fields_ = [("a", ctypes.c_uint32), ("b", ctypes.c_uint16), ("c", ctypes.c_uint16), ("d", ctypes.c_ubyte * 8)]
+
+    class _OUTDESC(ctypes.Structure):
+        _fields_ = [("DeviceName", W.WCHAR * 32), ("rc", W.RECT), ("att", W.BOOL), ("rot", ctypes.c_uint),
+                    ("mon", W.HMONITOR)]
+
+    def _vcall(obj, idx, restype, *argtypes):
+        vt = ctypes.cast(obj, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+        return ctypes.WINFUNCTYPE(restype, ctypes.c_void_p, *argtypes)(vt[idx])
+
+    def _release(obj):
+        if obj:
+            try:
+                _vcall(obj, 2, ctypes.c_ulong)(obj)
+            except Exception:
+                pass
+
+    def _dxgi_output(dev):
+        """IDXGIOutput of the monitor `dev` (its GDI device name), or None. Its WaitForVBlank waits for THAT monitor's
+        refresh; D3DKMTWaitForVerticalBlankEvent answered with the primary monitor's blanks on a mixed 180 / 60 Hz
+        setup, so frames could not be locked to a 60 Hz side monitor."""
+        try:
+            iid = _GUID(0x770aae78, 0xf26f, 0x4dba, (ctypes.c_ubyte * 8)(0xa8, 0x29, 0x25, 0x3c, 0x83, 0xd1, 0xb3, 0x87))
+            f = ctypes.c_void_p()
+            if ctypes.windll.dxgi.CreateDXGIFactory1(ctypes.byref(iid), ctypes.byref(f)) != 0:
+                return None
+        except Exception:
+            return None
+        found = None
+        try:
+            i = 0
+            while found is None:
+                ad = ctypes.c_void_p()
+                if _vcall(f, 12, ctypes.c_long, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(f, i, ctypes.byref(ad)):
+                    break                                       # EnumAdapters1: no more adapters
+                j = 0
+                while found is None:
+                    o = ctypes.c_void_p()
+                    if _vcall(ad, 7, ctypes.c_long, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(ad, j, ctypes.byref(o)):
+                        break                                   # EnumOutputs: no more outputs
+                    d = _OUTDESC()
+                    _vcall(o, 7, ctypes.c_long, ctypes.POINTER(_OUTDESC))(o, ctypes.byref(d))
+                    if d.DeviceName == dev:
+                        found = o
+                    else:
+                        _release(o)
+                    j += 1
+                _release(ad)
+                i += 1
+        except Exception:
+            found = None
+        _release(f)
+        return found
+
+
 def _monitor_of(hwnd):
     """(monitor handle, device name, refresh Hz) of the monitor that holds most of the window."""
     mon = _u32.MonitorFromWindow(hwnd, 2)                    # MONITOR_DEFAULTTONEAREST
@@ -141,6 +197,19 @@ class Pacer:
         return max(1, int(round((nxt - now) * 1000)))
 
     # ------------------------------------------------------------ vblank thread
+    def _blank(self, last, periods):
+        """A vertical blank just happened: remember its time, measure the real refresh period."""
+        t = time.perf_counter()
+        if last is not None and self._want.is_set():
+            d = t - last
+            if 0.5 / self.hz < d < 1.5 / self.hz:            # a real refresh interval (not a pause)
+                periods.append(d)
+                if len(periods) >= 30:
+                    periods.sort()
+                    self._vb_period = periods[len(periods) // 2]
+                    periods.clear()
+        self._vb = t
+
     def _run(self):
         try:
             gdi = ctypes.windll.gdi32
@@ -150,7 +219,7 @@ class Pacer:
         except Exception:
             self._ok = False
             return
-        adapter, dev = None, None
+        adapter, dev, out, out_wait = None, None, None, None
         last, periods = None, []
         try:
             while True:
@@ -159,7 +228,25 @@ class Pacer:
                     if adapter is not None:
                         close(ctypes.byref(_CLOSEADAPTER(adapter.hAdapter)))
                         adapter = None
+                    _release(out)
+                    out, out_wait = None, None
                     dev = self.dev
+                    out = _dxgi_output(dev)                # preferred: the blanks of exactly this monitor
+                    if out:
+                        out_wait = _vcall(out, 10, ctypes.c_long)
+                        last, periods = None, []
+                if out_wait is not None:
+                    if out_wait(out) != 0:
+                        _release(out)
+                        out, out_wait, dev = None, None, None   # (re-opened on the next round)
+                        time.sleep(0.05)
+                        continue
+                    self._blank(last, periods)
+                    last = self._vb
+                    if not self._want.is_set():
+                        last = None
+                    continue
+                if adapter is None:
                     hdc = _gdi.CreateDCW(dev, dev, None, None)
                     if not hdc:
                         self._ok = False
@@ -177,22 +264,14 @@ class Pacer:
                 if wait(ctypes.byref(wv)) != 0:
                     self._ok = False
                     return
-                t = time.perf_counter()
-                if last is not None and self._want.is_set():
-                    d = t - last
-                    if 0.5 / self.hz < d < 1.5 / self.hz:        # a real refresh interval (not a pause)
-                        periods.append(d)
-                        if len(periods) >= 30:
-                            periods.sort()
-                            self._vb_period = periods[len(periods) // 2]
-                            periods = []
-                last = t
-                self._vb = t
+                self._blank(last, periods)
+                last = self._vb
                 if not self._want.is_set():
                     last = None
         except Exception:
             self._ok = False
         finally:
+            _release(out)
             if adapter is not None:
                 try:
                     close(ctypes.byref(_CLOSEADAPTER(adapter.hAdapter)))
