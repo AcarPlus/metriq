@@ -90,7 +90,9 @@ class Tooltip:
             if self._tag is None:
                 return True
             cx, cy = px - self.w.winfo_rootx(), py - self.w.winfo_rooty()
-            return any(self._tag in self.w.gettags(i) for i in self.w.find_overlapping(cx, cy, cx, cy))
+            # (an item id or a tag: canvas items are found by either)
+            return any(i == self._tag or self._tag in self.w.gettags(i)
+                       for i in self.w.find_overlapping(cx, cy, cx, cy))
         except tk.TclError:
             return False
 

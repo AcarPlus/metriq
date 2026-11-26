@@ -141,6 +141,7 @@ class UsageTip(Tooltip):
         super().__init__(cv, self._rows, live_ms=1000, delay_ms=TIP_DELAY_MS, _bind=False)
         self.note = note
         self.metric, self.ctl, self.tag = metric, ctl, tag
+        self._tag = tag                          # the balloon opens under this item, and only while it is pointed at
         self.owner = "tip:" + metric
         self.held = False
         self._wd = None

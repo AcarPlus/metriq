@@ -31,6 +31,7 @@ import logview
 import minimode
 import perf_core
 import procmon
+import textsprite
 import procwin
 import settings_ui
 import themes
@@ -491,6 +492,7 @@ def main():
     # fx_step, the single root.after loop: it runs at ~60 fps only while something moves and stops when all is still.
     # Steps only reconfigure their own canvas items, so Tk repaints just those regions over the baked background.
     NUM_S = 0.35                                    # number count-up / count-down length (seconds)
+    HOVER_S = 0.20                                  # row name swell length (seconds)
     FONTS = {}                                      # (family, px) -> tkfont.Font (px_font)
 
     def anim_now():
@@ -520,48 +522,89 @@ def main():
         return 1 - (1 - x) ** 3
 
     # ------------------------------------------------------------ hover: row names with a balloon swell a little
-    def hover_grow(nm_id, fs, accent, avail, num=None, num_fs=None):
-        """Name of a row with a hover balloon (top programs, plain-language help): on hover it grows (eased, ~150 ms)
-        and lights up, the row's number swells a little with it. Never wider than `avail` px (the bar column)."""
-        size0 = -fs                                     # (font sizes are negative = pixels)
-        size1 = size0 + max(2, int(round(size0 * 0.16)))
+    def hit_area(nm_id, tags):
+        """An invisible image over a row name that takes its pointer events (hover swell, balloon, click). The name
+        itself can then be swapped for its swell image without the pointer "leaving" it. Images are picked by their
+        box, transparent or not."""
+        bb = cv.bbox(nm_id)
+        if not bb:
+            return nm_id
+        ph = tk.PhotoImage(master=root, width=max(1, bb[2] - bb[0]), height=max(1, bb[3] - bb[1]))
+        st.setdefault("hit_imgs", []).append(ph)
+        return cv.create_image(bb[0], bb[1], anchor="nw", image=ph, tags=tags)
+
+    def hover_grow(nm_id, fs, accent, avail, hit=None):
+        """Name of a row with a hover balloon (top programs, plain-language help): on hover it grows (~0.2 s, eased in
+        and out) and lights up. Never wider than `avail` px (the bar column).
+        While it moves the name is an anti-aliased image at a fractional size (textsprite.py): Tk fonts only have whole
+        pixel sizes, which gave 2 - 3 different pictures per swell (stutter at any frame rate). At rest the Tk text item
+        is shown again. The text item stays under the image (invisible) and keeps the pointer events."""
+        size0 = float(-fs)                              # (font sizes are negative = pixels)
+        size1 = size0 + max(2.0, size0 * 0.16)
         try:
             w0 = meas_font(F_TXT, fs).measure(cv.itemcget(nm_id, "text"))
         except tk.TclError:
             w0 = 0
         if w0 > 0 and avail > 0:
-            size1 = max(size0, min(size1, int(size0 * avail / w0)))
-        n0 = -num_fs if num is not None and num_fs else 0
-        n1 = n0 + max(1, int(round(n0 * 0.10))) if n0 else 0
+            size1 = max(size0, min(size1, size0 * avail / w0))
         fill0, fill1 = C["name"], mix(C["fg"], accent, 0.35)
-        a = {"v": 0.0, "to": 0.0, "size": size0, "nsize": n0}
+        a = {"p": 0.0, "to": 0.0, "size": int(size0), "img": None}
+        sprite = textsprite.Sprite.for_family(F_TXT) if GFX else None
+
+        def rest():
+            if a["img"] is not None:
+                cv.delete(a["img"])
+                a["img"] = None
+            cv.itemconfig(nm_id, fill=fill0, font=px_font(F_TXT, int(size0)), state="normal")
+            a["size"] = int(size0)
 
         def step(now, dt):
             FX = st["fx"]
             if FX["motion"]:
-                d = a["to"] - a["v"]
-                a["v"] = a["to"] if abs(d) < 0.02 else a["v"] + d * (1 - math.exp(-dt / 0.045))
+                k = dt / HOVER_S
+                a["p"] = min(a["to"], a["p"] + k) if a["to"] > a["p"] else max(a["to"], a["p"] - k)
             else:
-                a["v"] = a["to"]
-            e = a["v"]
-            size = int(round(size0 + (size1 - size0) * e))
-            if size != a["size"]:
-                a["size"] = size
-                cv.itemconfig(nm_id, font=px_font(F_TXT, size))
-            cv.itemconfig(nm_id, fill=mix(fill0, fill1, e))
-            if n0:
-                ns = int(round(n0 + (n1 - n0) * e))
-                if ns != a["nsize"]:
-                    a["nsize"] = ns
-                    cv.itemconfig(num, font=px_font(F_NUM, ns))
-            return a["v"] != a["to"]
+                a["p"] = a["to"]
+            p = a["p"]
+            e = p * p * (3 - 2 * p)                     # smoothstep: eased in and out, the same curve both ways
+            col = mix(fill0, fill1, e)
+            if p <= 0.0:
+                rest()
+                return a["p"] != a["to"]
+            sz = size0 + (size1 - size0) * e
+            ph = None
+            if sprite is not None:
+                try:
+                    xy = cv.coords(nm_id)
+                    if xy:
+                        ph = sprite.photo(cv.itemcget(nm_id, "text"), sz, col, size1)
+                except tk.TclError:
+                    ph = None
+            if ph is not None:
+                img, dx = ph
+                if a["img"] is None or not cv.type(a["img"]):
+                    # (disabled: never the pointer's item; the hit area above the name keeps the events)
+                    a["img"] = cv.create_image(xy[0] - dx, xy[1], anchor="w", image=img, state="disabled")
+                    cv.itemconfig(nm_id, state="hidden")
+                else:
+                    cv.coords(a["img"], xy[0] - dx, xy[1])
+                    cv.itemconfig(a["img"], image=img)
+            else:                                       # no sprite: whole-pixel Tk font steps
+                size = int(round(sz))
+                if size != a["size"]:
+                    a["size"] = size
+                    cv.itemconfig(nm_id, font=px_font(F_TXT, size))
+                cv.itemconfig(nm_id, fill=col)
+            return a["p"] != a["to"]
 
         def go(to):
             a["to"] = to
             anim_set(("hover", nm_id), step)
-        cv.tag_bind(nm_id, "<Enter>", lambda e: go(1.0), add="+")
-        cv.tag_bind(nm_id, "<Leave>", lambda e: go(0.0), add="+")
+        src = hit if hit is not None else nm_id
+        cv.tag_bind(src, "<Enter>", lambda e: go(1.0), add="+")
+        cv.tag_bind(src, "<Leave>", lambda e: go(0.0), add="+")
         go.item = nm_id
+        go.shown = lambda: a["img"] if a["img"] is not None and cv.type(a["img"]) else nm_id    # what is on screen
         st["hovers"].append(go)
         return go
 
@@ -582,8 +625,6 @@ def main():
 
         def step(now, dt):
             x = min(1.0, (now - t0) / NUM_S)
-            if x < 1.0 and FX["frame"] % 2:
-                return True                      # digits change at half rate (~30 Hz): the eye sees no difference
             val = v if x >= 1.0 else v0 + (v - v0) * ease_out(x)
             it["v_shown"] = val
             set_text(it["now"], fmt(val), col)
@@ -625,9 +666,20 @@ def main():
         if hv:
             n = st.get("bench_i", 0) % len(hv)
             st["bench_i"] = n + 1
+            if FXBENCH == "row0":                    # tools/measure_visual_fps.py: always the first row, and say where
+                n = 0
+                out = os.environ.get("METRIQ_FXBENCH_OUT")
+                if out and not st.get("bench_said"):
+                    b_ = cv.bbox(hv[0].item)
+                    if b_:
+                        st["bench_said"] = True
+                        rx, ry = cv.winfo_rootx(), cv.winfo_rooty()
+                        with open(out, "w", encoding="utf-8") as f_:
+                            f_.write("%d %d %d %d" % (rx + b_[0], ry + b_[1], rx + b_[2], ry + b_[3]))
             hv[n](1.0)
-            root.after(260, lambda g=hv[n]: g(0.0))
-        root.after(300, bench_hover)
+            hold = 500 if FXBENCH == "row0" else 260       # row0: a whole swell and a whole shrink every second
+            root.after(hold, lambda g=hv[n]: g(0.0))
+        root.after(1000 if FXBENCH == "row0" else 300, bench_hover)
 
     def ui_check(out_path):
         """METRIQ_UICHECK=<file> (tools/check_hover_anim.py): drive the real panel once and write what happened as
@@ -650,21 +702,21 @@ def main():
             snap("start")
             hv = st["hovers"]
             if hv:
-                res["w0"] = width(hv[0].item)
+                res["w0"] = width(hv[0].shown())
                 hv[0](1.0)
             root.after(450, s2)
 
         def s2():
             hv = st["hovers"]
             if hv:
-                res["w1"] = width(hv[0].item)
+                res["w1"] = width(hv[0].shown())
                 hv[0](0.0)
             root.after(450, s3)
 
         def s3():
             hv = st["hovers"]
             if hv:
-                res["w2"] = width(hv[0].item)
+                res["w2"] = width(hv[0].shown())
             toggle_ui_mode()
             root.after(1800, s4)
 
@@ -692,6 +744,7 @@ def main():
                   ring_row=None, t_bg=0.0, last=aurora.clock(), frame=0)
         FX["motion"] = aurora.motion_on(cfg.get("motion"))
         st["hovers"] = []
+        st["hit_imgs"] = []
         st["mode_sliding"] = False
         if not pal:
             return None
@@ -1067,17 +1120,18 @@ def main():
                     nm_right = (fr["now"] * cw - nw - 10 if not p.with_bar else fr["now"] * cw - 10) if hint_row else name_right
                     nm_id = cv.create_text(col_name, my, text=fit_text(fnt_name, row.name, name_avail + nm_right - name_right),
                                            anchor="w", font=f_name, fill=C["name"], tags=(ent_tag,))
+                    hit = hit_area(nm_id, ent_tag)               # pointer target of the name (hover, balloon)
                     # one balloon per row name, no (i) icons: CPU / RAM / GPU / VRAM / disk / network rows list their
                     # top programs (rows are not clickable: the process window has its own button); a row with an explanation (every Basic
                     # row, e.g. throttling in Advanced) shows it, above the program list when it has one
                     note = (lambda k=row.help: t("hp_" + k)) if row.help else None
-                    tagged = procs.tag_row(cv, nm_id, row, note)
+                    tagged = procs.tag_row(cv, hit, row, note)
                     if note and not tagged:
-                        Tooltip.for_canvas(cv, nm_id, note)
+                        Tooltip.for_canvas(cv, hit, note)
                     if hint_row:                                    # the hint row leads to the HWiNFO setting
-                        cv.tag_bind(nm_id, "<Button-1>", lambda e: show_hw_setting(), add="+")
-                        cv.tag_bind(nm_id, "<Enter>", lambda e: cv.config(cursor="hand2"), add="+")
-                        cv.tag_bind(nm_id, "<Leave>", lambda e: cv.config(cursor=""), add="+")
+                        cv.tag_bind(hit, "<Button-1>", lambda e: show_hw_setting(), add="+")
+                        cv.tag_bind(hit, "<Enter>", lambda e: cv.config(cursor="hand2"), add="+")
+                        cv.tag_bind(hit, "<Leave>", lambda e: cv.config(cursor=""), add="+")
                     it = {"accent": accent}
                     if row is FX.get("ring_row"):
                         it["ring"] = FX["ring_key"]
@@ -1108,8 +1162,7 @@ def main():
                                                    tags=(ent_tag,))
                     # rows with a hover balloon swell; a state row (throttling: yes / no) only explains itself
                     if (tagged or note) and not row.textual:
-                        hover_grow(nm_id, fs_name, accent, nm_right - pad,
-                                   None if hint_row else it["now"], None if hint_row else fs_num_e)
+                        hover_grow(nm_id, fs_name, accent, nm_right - pad, hit)
                     st["items"][id(row)] = it
                     ry += rp
                 yy += ch + gc
