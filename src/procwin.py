@@ -65,7 +65,21 @@ def tip_metric_for_row(row):
     if m:
         return m
     m = metric_for_row(row)
-    return m if m in _INFO else ("dread" if m == "disk" else None)
+    if m == "disk":
+        try:
+            return "dwrite" if row.lre.search("Write Rate") else "dread"
+        except Exception:
+            return "dread"
+    if m in _INFO:
+        return m
+    # layouts saved before rows carried an id: network rows are known by their reading label
+    try:
+        if row.sre is not None and "Network" in row.sre.pattern and any(
+                row.lre.search(s) for s in ("Current DL rate", "Current UP rate", "Download Speed", "Upload Speed")):
+            return "net"
+    except Exception:
+        pass
+    return None
 
 
 def metric_for_row(row):
@@ -138,8 +152,20 @@ class UsageTip(Tooltip):
         if not self.held:
             self.held = True
             procmon.MON.acquire(self.owner, 1.0)
+        self._cold = 0
         self._watch_start()
         super()._enter(e)
+
+    def show(self):
+        """A cold sampler has no rates yet: wait for its second round (up to ~1.3 s) instead of opening a "measuring"
+        balloon that changes its size a moment later."""
+        snap = procmon.MON.snapshot()
+        cold = snap is None or (self.metric in ("cpu", "dread", "dwrite") and not snap.warm)
+        if self.tip is None and cold and getattr(self, "_cold", 0) < 13:
+            self._cold = getattr(self, "_cold", 0) + 1
+            self._after = self.w.after(100, self.show)
+            return
+        super().show()
 
     def _leave(self, e=None):
         super()._leave(e)
@@ -200,18 +226,14 @@ class Controller:
         self.tips = []
 
     def tag_row(self, cv, item, row, note=None):
-        """Panel hook (called for every row name): makes CPU / RAM / GPU / VRAM / disk rows open the window and
-        shows their top programs in a balloon while the pointer is on the name (no separate (i) icon, in both views).
+        """Panel hook (called for every row name): CPU / RAM / GPU / VRAM / disk rows show their top programs in a balloon while the pointer is on the name (no separate (i) icon, in both views).
         note: optional callable -> plain-language explanation shown above the list (Basic view).
         Returns None for other rows, else (metric, None)."""
         metric = metric_for_row(row)
         tip = tip_metric_for_row(row)
         if not metric and not tip:
             return None
-        win_metric = metric or ("disk" if tip in ("dread", "dwrite") else "cpu")
-        cv.tag_bind(item, "<Button-1>", lambda e, m=win_metric: self.open(m))
-        cv.tag_bind(item, "<Enter>", lambda e: cv.config(cursor="hand2"))
-        cv.tag_bind(item, "<Leave>", lambda e: cv.config(cursor=""))
+        # rows are not clickable: the process window has its own button (bottom right)
         if tip:                                  # hovering the name itself shows the top programs
             self.tips.append(UsageTip(cv, item, tip, self, note))
             self.tips = self.tips[-40:]

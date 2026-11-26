@@ -30,12 +30,14 @@ import proclog
 import logview
 import minimode
 import perf_core
+import procmon
 import procwin
 import settings_ui
 import themes
 import throttle
 import tray
 import updater
+import vsync
 from tooltip import Tooltip
 from i18n import t
 
@@ -334,6 +336,24 @@ def main():
     root.configure(bg=C["bg"])
     root.attributes("-topmost", bool(cfg["topmost"]))
     root.minsize(400, 480)
+    if FXPROF:                     # diagnostics: name every root.after callback that holds the UI thread > 12 ms
+        _after = root.after
+
+        def _timed_after(ms, func=None, *args):
+            if func is None:
+                return _after(ms)
+
+            def run(*a):
+                t0_ = time.perf_counter()
+                try:
+                    return func(*a)
+                finally:
+                    d_ = time.perf_counter() - t0_
+                    if d_ > 0.012:
+                        with open(FXPROF, "a", encoding="utf-8") as f_:
+                            f_.write("   slow %s %.1f ms\n" % (getattr(func, "__qualname__", func), d_ * 1000))
+            return _after(ms, run, *args)
+        root.after = _timed_after
 
     F_TXT = F_HEAD = F_NUM = "TkDefaultFont"
 
@@ -388,16 +408,26 @@ def main():
         else:
             w, h = min(900, root.winfo_screenwidth() - 40), min(1400, root.winfo_screenheight() - 80)
             x, y = 20, 20
-        root.attributes("-fullscreen", False)
+        set_fullscreen(False)
         root.state("normal")
         root.geometry(f"{w}x{h}+{x}+{y}")
         if not final:
             return
         root.update_idletasks()
         if mode == "fullscreen":
-            root.attributes("-fullscreen", True)
+            set_fullscreen(True)
         elif mode != "window":
             root.state("zoomed")
+
+    pacer = vsync.Pacer(int(root.wm_frame(), 16))     # animation frames locked to the display's refresh
+
+    def set_fullscreen(on):
+        on = bool(on)
+        try:
+            if bool(root.attributes("-fullscreen")) != on:
+                root.attributes("-fullscreen", on)
+        except tk.TclError:
+            pass
 
     place()
 
@@ -462,6 +492,10 @@ def main():
     # Steps only reconfigure their own canvas items, so Tk repaints just those regions over the baked background.
     NUM_S = 0.35                                    # number count-up / count-down length (seconds)
     FONTS = {}                                      # (family, px) -> tkfont.Font (px_font)
+
+    def anim_now():
+        """Current time of the animation clock (fx_step): start times of animations are taken from it."""
+        return st["fx"].get("vnow", 0.0)
 
     def anim_wake():
         FX = st["fx"]
@@ -544,7 +578,7 @@ def main():
             it["v_shown"] = v
             set_text(it["now"], fmt(v), col)
             return
-        t0, v0 = aurora.clock(), old
+        t0, v0 = anim_now(), old
 
         def step(now, dt):
             x = min(1.0, (now - t0) / NUM_S)
@@ -728,7 +762,7 @@ def main():
     def fx_end(boxes, rh):
         """End of a build: cards rise into place one after another (motion on), then the effect loop runs."""
         FX = st["fx"]
-        now = aurora.clock()
+        now = anim_now()
         sky = FX["sky"].frame(FX["W"], FX["H"], 40.0)
         FX["photo"] = aurora.bake(sky, FX["cards"])
         FX["cards"] = []
@@ -783,7 +817,14 @@ def main():
                     n / (t2 - P["t"]), P["step"] / n * 1000, P["paint"] / n * 1000, P["gap"] / n * 1000, P["max"] * 1000,
                     busy, len(st["fx"]["gauges"])))
                 dn = sorted(P["dn"])
-                f.write("   start-to-start median %.1f ms  p10 %.1f  p90 %.1f\n" % (dn[len(dn)//2]*1000, dn[len(dn)//10]*1000, dn[int(len(dn)*0.9)]*1000))
+                f.write("   start-to-start median %.1f ms  p10 %.1f  p90 %.1f  max %.1f  >25ms %d\n" % (
+                    dn[len(dn)//2]*1000, dn[len(dn)//10]*1000, dn[int(len(dn)*0.9)]*1000, dn[-1]*1000,
+                    sum(1 for x in dn if x > 0.025)))
+                f.write("   pacer %s\n" % pacer.info())
+                tk_ = st.pop("tick_cost", [])
+                if tk_:
+                    f.write("   tick n %d  avg %.1f ms  max %.1f ms\n" % (len(tk_), sum(tk_) / len(tk_) * 1000,
+                                                                     max(tk_) * 1000))
                 P["dn"] = []
                 L_ = sorted(P["late"])
                 f.write("   late median %.1f ms  p90 %.1f ms\n" % (L_[len(L_) // 2] * 1000, L_[int(len(L_) * 0.9)] * 1000))
@@ -816,9 +857,16 @@ def main():
         if st["closing"] or not FX["on"]:
             fx_hires(False)
             return
-        now = aurora.clock()
-        dt = min(0.2, now - FX["last"])
-        FX["last"] = now
+        real = aurora.clock()
+        # animation time runs on its own clock: a frame never advances it by more than 1/30 s, so a hitch (a
+        # rebuild, a slow data read) only pauses the motion instead of making it jump ahead
+        dt = min(1 / 30, max(0.0, real - FX["last"]))
+        if FX.get("idle", True):
+            dt = min(dt, 1 / 60)                         # first frame after a still period
+            FX["idle"] = False
+            pacer.start()
+        FX["last"] = real
+        FX["vnow"] = now = FX.get("vnow", 0.0) + dt
         paused = bool(st.get("mini") or st.get("hidden"))
         busy = False
         try:
@@ -872,12 +920,15 @@ def main():
         except tk.TclError:
             return
         if FXPROF:
-            fx_prof(now, busy)
+            fx_prof(real, busy)
         fx_hires(busy and not paused)
-        if busy and not paused:                          # ~60 fps while something moves, nothing otherwise
-            _d = max(1, int(16 - (aurora.clock() - now) * 1000))
+        if busy and not paused:          # every k-th refresh of the panel's monitor while something moves (vsync.py)
+            _d = pacer.delay_ms()
             FX["due"] = aurora.clock() + _d / 1000
             FX["job"] = root.after(_d, fx_step)
+        else:                                            # nothing moves: no frames at all
+            FX["idle"] = True
+            pacer.stop()
 
     def build(W, H):
         cv.delete("all")
@@ -1017,7 +1068,7 @@ def main():
                     nm_id = cv.create_text(col_name, my, text=fit_text(fnt_name, row.name, name_avail + nm_right - name_right),
                                            anchor="w", font=f_name, fill=C["name"], tags=(ent_tag,))
                     # one balloon per row name, no (i) icons: CPU / RAM / GPU / VRAM / disk / network rows list their
-                    # top programs (and open the process window on a click); a row with an explanation (every Basic
+                    # top programs (rows are not clickable: the process window has its own button); a row with an explanation (every Basic
                     # row, e.g. throttling in Advanced) shows it, above the program list when it has one
                     note = (lambda k=row.help: t("hp_" + k)) if row.help else None
                     tagged = procs.tag_row(cv, nm_id, row, note)
@@ -1055,7 +1106,8 @@ def main():
                         for k, xx in (("min", col_min), ("max", col_max), ("avg", col_avg)):
                             it[k] = cv.create_text(xx, my, text="–", anchor="e", font=f_num, fill=C["dim"],
                                                    tags=(ent_tag,))
-                    if tagged or note:                              # rows with a hover balloon: the row swells
+                    # rows with a hover balloon swell; a state row (throttling: yes / no) only explains itself
+                    if (tagged or note) and not row.textual:
                         hover_grow(nm_id, fs_name, accent, nm_right - pad,
                                    None if hint_row else it["now"], None if hint_row else fs_num_e)
                     st["items"][id(row)] = it
@@ -1294,7 +1346,7 @@ def main():
         if pal:
             fx_end(sec_boxes, rh)
         if entry and entry_tags:
-            t0 = aurora.clock()
+            t0 = anim_now()
             dy = max(6, int(round(rh * 0.45)))
             gap = min(0.035, 0.6 / max(1, max(n for _, _, n in entry_tags)))     # whole entry stays under ~1 s
             for tag, ci, n in entry_tags:
@@ -1598,7 +1650,7 @@ def main():
             apply_settings({"ui_mode": to})
             return
         dx = geo
-        t0 = aurora.clock()
+        t0 = anim_now()
         a = {"applied": 0}
         st["mode_sliding"] = True
 
@@ -1639,8 +1691,8 @@ def main():
     root.bind("<KeyPress-b>", key_ui_mode)
     root.bind("<KeyPress-B>", key_ui_mode)
     cv.bind("<Button-1>", lambda e: cv.focus_set(), add="+")
-    root.bind("<F11>", lambda e: root.attributes("-fullscreen", not root.attributes("-fullscreen")))
-    root.bind("<Escape>", lambda e: root.attributes("-fullscreen", False))
+    root.bind("<F11>", lambda e: set_fullscreen(not root.attributes("-fullscreen")))
+    root.bind("<Escape>", lambda e: set_fullscreen(False))
 
     def on_resize(e):
         size = (e.width, e.height)
@@ -1872,6 +1924,16 @@ def main():
     procs = procwin.Controller(api)
     api.procs = procs
 
+    # the pointer on the panel warms the process sampler up (its first round is the costly one), so the top-programs
+    # balloon of a row opens with numbers and the hover swell never waits for it
+    def _warm(on):
+        try:
+            (procmon.MON.acquire if on else procmon.MON.release)("panel", *((1.0,) if on else ()))
+        except Exception:
+            pass
+    cv.bind("<Enter>", lambda e: _warm(True), add="+")
+    cv.bind("<Leave>", lambda e: _warm(False), add="+")
+
     def mm_notice(text):
         """Short notice in the toast stack above the status bar (e.g. the mini mode hotkey is taken)."""
         st["hk_msg"], st["hk_note"] = text, time.time()
@@ -2017,6 +2079,15 @@ def main():
 
     # ------------------------------------------------------------ data
     def tick():
+        if FXPROF:                                   # diagnostics: how long a data tick holds the UI thread
+            t0_ = aurora.clock()
+            try:
+                return tick_()
+            finally:
+                st.setdefault("tick_cost", []).append(aurora.clock() - t0_)
+        return tick_()
+
+    def tick_():
         try:
             rd = src.read_all()
             ok = True

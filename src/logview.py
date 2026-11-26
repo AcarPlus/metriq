@@ -1383,7 +1383,7 @@ class Viewer:
             ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(ctypes.c_int(2)), 4)
         except Exception:
             pass
-        pop.deiconify()
+        uikit.popup_fade(pop, True)
         pop.lift()
         pop.focus_force()
         sf.entry.focus_set()

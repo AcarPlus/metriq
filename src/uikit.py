@@ -642,7 +642,7 @@ class Combo(Field):
             ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(ctypes.c_int(2)), 4)
         except Exception:
             pass
-        pop.deiconify()
+        popup_fade(pop, True)
         pop.lift()
         pop.focus_force()
         self.draw()
@@ -659,10 +659,16 @@ class Combo(Field):
         pop, self._pop = self._pop, None
         self._closed_at = time.time()
         if pop is not None:
+            def gone(pop=pop):
+                try:
+                    pop.destroy()
+                except tk.TclError:
+                    pass
             try:
-                pop.destroy()
+                pop.unbind("<FocusOut>")
+                popup_fade(pop, False, gone)
             except tk.TclError:
-                pass
+                gone()
         try:
             self.draw()
         except tk.TclError:
@@ -676,6 +682,59 @@ class Combo(Field):
                 pass
             self._pop = None
         super().destroy()
+
+
+# ---------------------------------------------------------------- popup fade
+def popup_fade(pop, show=True, done=None, dur=None, rise=None):
+    """Fade a borderless popup in (after its geometry is set; it rises the last few pixels into place) or out (then
+    done(), e.g. destroy). Uses the window's -alpha; ~60 fps, eased. Never raises; without -alpha it just appears."""
+    import time
+    dur = dur if dur is not None else (0.13 if show else 0.08)
+    rise = px(6) if rise is None else rise
+    import re
+    x0 = y0 = None
+    geo = ""
+    try:                                   # "WxH+X+Y" as set (X / Y may be negative: "+-1080"); a withdrawn window
+        m = re.match(r"^(\d+x\d+)\+(-?\d+)\+(-?\d+)$", pop.geometry())   # has no winfo_x yet
+        if m:
+            geo, x0, y0 = m.group(1), int(m.group(2)), int(m.group(3))
+    except tk.TclError:
+        pass
+    job = getattr(pop, "_fade_job", None)
+    if job:
+        try:
+            pop.after_cancel(job)
+        except tk.TclError:
+            pass
+    a0 = getattr(pop, "_fade_a", 0.0 if show else 1.0)
+    a1 = 1.0 if show else 0.0
+    t0 = time.perf_counter()
+    if show:
+        try:
+            pop.attributes("-alpha", a0)
+            if pop.state() == "withdrawn":
+                pop.deiconify()
+        except tk.TclError:
+            return
+
+    def step():
+        pop._fade_job = None
+        x = min(1.0, (time.perf_counter() - t0) / max(0.01, dur * abs(a1 - a0)))
+        e = 1.0 - (1.0 - x) ** 3
+        a = a0 + (a1 - a0) * e
+        pop._fade_a = a
+        try:
+            pop.attributes("-alpha", a if x < 1.0 else a1)
+            if show and x0 is not None and rise:
+                off = int(round((1.0 - a) * rise))
+                pop.geometry("%s+%d+%d" % (geo, x0, y0 + off))
+        except tk.TclError:
+            return
+        if x < 1.0:
+            pop._fade_job = pop.after(10, step)
+        elif done is not None:
+            done()
+    step()
 
 
 # ---------------------------------------------------------------- buttons
