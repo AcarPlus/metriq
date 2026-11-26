@@ -210,6 +210,7 @@ class Tooltip:
         self._place(resize=True)
         f = self._fade
         if self._alpha < FULL_ALPHA and not (f and f["a1"] == FULL_ALPHA):
+            _to_front(win)                        # opening: above the panel again (see _to_front)
             self._fade_to(FULL_ALPHA, FADE_IN_S)
         self._arm()
 
@@ -443,3 +444,24 @@ def prepare(widget):
     except tk.TclError:
         pass
     return win
+
+
+def _to_front(win):
+    """Put the balloon on top of the always-on-top windows without activating it. It is made once and stays; the
+    panel (topmost too) comes above it whenever it is clicked or activated - e.g. dragging the window by its title
+    row - and the balloon then opened hidden behind the panel."""
+    if sys.platform != "win32":
+        try:
+            win.lift()
+        except tk.TclError:
+            pass
+        return
+    try:
+        import ctypes
+        u = ctypes.WinDLL("user32")
+        u.SetWindowPos.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                   ctypes.c_int, ctypes.c_uint]
+        # HWND_TOPMOST, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
+        u.SetWindowPos(int(win.wm_frame(), 16), ctypes.c_void_p(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
+    except Exception:
+        pass
