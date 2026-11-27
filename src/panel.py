@@ -293,11 +293,33 @@ def launch_command():
     return f'"{exe}" "{os.path.join(HERE, "panel.py")}"'
 
 
+def _end_process(code=0):
+    """End the process now, after our own clean-up, WITHOUT Tk's and Python's teardown.
+    Tk 9 (the frozen build) can corrupt its memory while it destroys the windows and images at exit: Tcl then
+    panics ("alloc: invalid block", the "Fatal Error" box, 0x80000003 in tcl90.dll) on nearly every close.
+    TerminateProcess skips all of that (no DLL detach either); the logs and benchmarks are closed by then."""
+    for f in (sys.stdout, sys.stderr):
+        try:
+            f.flush()
+        except Exception:
+            pass
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            k = ctypes.WinDLL("kernel32")
+            k.GetCurrentProcess.restype = ctypes.c_void_p
+            k.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+            k.TerminateProcess(k.GetCurrentProcess(), code)
+        except Exception:
+            pass
+    os._exit(code)
+
+
 def _arm_hard_exit(seconds):
     """Last resort: end the process when a clean exit takes longer than `seconds` (a stuck child process or driver)."""
     def go():
         time.sleep(seconds)
-        os._exit(0)
+        _end_process(0)
     threading.Thread(target=go, name="hard-exit", daemon=True).start()
 
 
@@ -2676,8 +2698,9 @@ def main():
         except tk.TclError:
             pass
         _arm_hard_exit(3.0)                              # something blocking below must not keep the process alive
-        steps = [tr.close, mm.shutdown, procs.close, logger.ext.shutdown, logger.close, perf_core.kill_all_jobs,
-                 src.close]
+        # no Tk window is destroyed here (mini mode, process window): Tk 9 can crash while it tears windows / images
+        # down, and _end_process below ends the process (windows, hotkey and all) anyway
+        steps = [tr.close, logger.ext.shutdown, logger.close, perf_core.kill_all_jobs, src.close]
         if bool(cfg["manage_hwinfo"]) and st["tasks"] and (hw_active() or st.get("hw_used")):
             steps.append(lambda: hwctl.run_task(hwctl.TASK_STOP))
         for fn in steps:
@@ -2685,7 +2708,8 @@ def main():
                 fn()
             except Exception:
                 traceback.print_exc()
-        try:
+        _end_process(0)                                  # no Tk teardown: it crashes in Tk 9 (see _end_process)
+        try:                                             # (only reached if ending the process failed)
             root.quit()
             root.destroy()
         except tk.TclError:
