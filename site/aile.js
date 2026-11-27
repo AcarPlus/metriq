@@ -42,7 +42,7 @@
     { id: 'nextwin', name: 'nextwin', url: 'https://acarplus.github.io/nextwin/', c1: '#a693ff', c2: '#5fd4ff', logo: 'logo.png',
       glyph: '<circle cx="12" cy="12" r="8.5"/><path d="M6.5 12.5h2.2l1.2-2.8 1.8 5.2 1.4-3.6.8 1.2h2.6"/>',
       tr: 'Windows bakımı, ayarlar ve uygulamalar tek yerde', en: 'Windows maintenance, tweaks and apps in one place' },
-    { id: 'stremio-offline', name: 'Stremio Offline', url: 'https://acarplus.github.io/stremio-offline/', c1: '#22c55e', c2: '#8b7cf6',
+    { id: 'stremio-offline', name: 'Stremio Offline', url: 'https://acarplus.github.io/stremio-offline/', c1: '#22c55e', c2: '#8b7cf6', logo: 'logo.png',
       glyph: '<path d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M6 20h12"/>',
       tr: "Stremio'yu internetsiz izle", en: 'Watch Stremio offline' }
   ];
