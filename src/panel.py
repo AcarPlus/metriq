@@ -2698,8 +2698,9 @@ def main():
         except tk.TclError:
             pass
         _arm_hard_exit(3.0)                              # something blocking below must not keep the process alive
-        steps = [tr.close, mm.shutdown, procs.close, logger.ext.shutdown, logger.close, perf_core.kill_all_jobs,
-                 src.close]
+        # no Tk window is destroyed here (mini mode, process window): Tk 9 can crash while it tears windows / images
+        # down, and _end_process below ends the process (windows, hotkey and all) anyway
+        steps = [tr.close, logger.ext.shutdown, logger.close, perf_core.kill_all_jobs, src.close]
         if bool(cfg["manage_hwinfo"]) and st["tasks"] and (hw_active() or st.get("hw_used")):
             steps.append(lambda: hwctl.run_task(hwctl.TASK_STOP))
         for fn in steps:
